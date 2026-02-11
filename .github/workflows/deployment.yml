@@ -1,4 +1,4 @@
-name: Deploy Docs to External Repository
+name: Deploy OpenAPI Docs to GitHub Pages
 
 on:
   push:
@@ -7,86 +7,52 @@ on:
     paths:
       - "supabase/functions/docs/**"
       - ".github/workflows/deployment.yml"
-  pull_request:
-    branches:
-      - development
-    paths:
-      - "supabase/functions/docs/**"
-      - ".github/workflows/deployment.yml"
+
+# Sets permissions of the GITHUB_TOKEN to allow deployment to GitHub Pages
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Allow only one concurrent deployment, skipping runs queued between the run in-progress and latest queued.
+# However, do NOT cancel in-progress runs as we want to allow these production deployments to complete.
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
 
 jobs:
-  deploy-docs:
+  # Build job
+  build:
     runs-on: ubuntu-latest
-
-    # Only run on push events, not on PRs (to avoid deploying from PRs)
-    if: github.event_name == 'push'
-
     steps:
-      - name: Checkout source repository
+      - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v4
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
         with:
-          fetch-depth: 0
+          path: "supabase/functions/docs"
 
-      - name: Configure Git
-        run: |
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
-
-      - name: Clone target repository
-        env:
-          TARGET_REPO: junaiiiid/door-knocker-api-docs
-          GITHUB_TOKEN: ${{ secrets.DOCS_DEPLOY_TOKEN }}
-        run: |
-          git clone https://${GITHUB_TOKEN}@github.com/${TARGET_REPO}.git target-repo
-          cd target-repo
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
-      - name: Sync docs folder to target repository
-        run: |
-          # Remove all files from target repo except .git
-          find target-repo -mindepth 1 -maxdepth 1 ! -name '.git' -exec rm -rf {} +
-
-          # Copy all files from supabase/functions/docs/ to target repo
-          cp -r supabase/functions/docs/* target-repo/
-
-          # Verify files were copied
-          ls -la target-repo/
-
-      - name: Commit and push changes
-        env:
-          GITHUB_TOKEN: ${{ secrets.DOCS_DEPLOY_TOKEN }}
-        run: |
-          cd target-repo
-
-          # Add all changes
-          git add -A
-
-          # Check if there are any changes to commit
-          if git diff --staged --quiet; then
-            echo "No changes to commit"
-            exit 0
-          fi
-
-          # Commit with a meaningful message
-          git commit -m "Update docs from development branch
-
-          Source commit: ${{ github.sha }}
-          Triggered by: ${{ github.actor }}
-          Workflow: ${{ github.workflow }}
-          Repository: ${{ github.repository }}"
-
-          # Configure remote URL with token for authentication
-          git remote set-url origin https://${GITHUB_TOKEN}@github.com/junaiiiid/door-knocker-api-docs.git
-
-          # Push to target repository
-          git push origin main
+  # Deployment job
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
 
       - name: Report deployment status
         if: success()
         run: |
           echo "✅ Documentation deployed successfully!"
-          echo "📚 View at: https://junaiiiid.github.io/door-knocker-api-docs/"
+          echo "📚 View at: ${{ steps.deployment.outputs.page_url }}"
 
       - name: Report deployment failure
         if: failure()
