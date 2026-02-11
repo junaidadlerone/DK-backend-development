@@ -11332,6 +11332,7 @@ paths:
       operationId: getAllTemplatesBundles
       security:
         - BearerAuth: []
+        - SupabaseAuth: []
       parameters:
         - name: page
           in: query
@@ -11479,6 +11480,7 @@ paths:
       operationId: getTemplateBundleById
       security:
         - BearerAuth: []
+        - SupabaseAuth: []
       parameters:
         - name: bundle_id
           in: query
@@ -11626,6 +11628,7 @@ paths:
       operationId: getTemplateBundleHistory
       security:
         - BearerAuth: []
+        - SupabaseAuth: []
       parameters:
         - name: bundle_id
           in: query
@@ -11939,6 +11942,7 @@ paths:
       operationId: createCampaignV2
       security:
         - BearerAuth: []
+        - SupabaseAuth: []
       requestBody:
         required: true
         content:
@@ -12131,6 +12135,7 @@ paths:
       operationId: linkQRCodeToCampaign
       security:
         - BearerAuth: []
+        - SupabaseAuth: []
       parameters:
         - name: x-linkly-api-key
           in: header
