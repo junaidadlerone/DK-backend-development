@@ -10878,6 +10878,7 @@ paths:
       operationId: createNewTemplateBundle
       security:
         - BearerAuth: []
+        - SupabaseAuth: []
       requestBody:
         required: true
         content:
@@ -11005,6 +11006,7 @@ paths:
       operationId: createNewUniversalTemplateBundle
       security:
         - BearerAuth: []
+        - SupabaseAuth: []
       requestBody:
         required: true
         content:
@@ -11126,6 +11128,7 @@ paths:
       operationId: updateTemplateBundle
       security:
         - BearerAuth: []
+        - SupabaseAuth: []
       requestBody:
         required: true
         content:
@@ -11230,6 +11233,7 @@ paths:
       operationId: deleteTemplateBundle
       security:
         - BearerAuth: []
+        - SupabaseAuth: []
       requestBody:
         required: true
         content:
