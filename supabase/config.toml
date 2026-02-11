@@ -479,3 +479,9 @@ verify_jwt = true
 
 [functions.getAllTemplatesBundles]
 verify_jwt = true
+
+[functions.createCampaignV2]
+verify_jwt = true
+
+[functions.linkQRCodeToCampaign]
+verify_jwt = true

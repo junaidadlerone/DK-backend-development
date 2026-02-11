@@ -11424,6 +11424,489 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
+  /createCampaignV2:
+    post:
+      tags:
+        - Version 2 APIs
+      summary: Create campaign (V2 simplified 4-step workflow)
+      description: |
+        **Simplified 4-step campaign creation process using template bundles**
+
+        This is a streamlined version of the original 6-step `/createCampaign` workflow:
+        - Step 1: Create campaign with name, optional referral, and optional disclaimer
+        - Step 2: Assign template bundle (automatically sets front and back templates)
+        - Step 3: Link location zone
+        - Step 4: Campaign consents and disclaimers
+
+        **Key Differences from V1:**
+        - Uses template bundles instead of separate front/back selection (Step 2)
+        - No detailed offer data or business data collection
+        - QR code linking moved to separate optional API
+        - 4 steps instead of 6
+
+        **Access Control:**
+        - Requires authentication
+        - User must be ADMIN or MARKETER role
+        - User must be in an organization
+
+        ---
+
+        ## Step 1: Create Campaign
+
+        Create a new campaign with name and optionally link a referral.
+
+        **Request:**
+        ```json
+        {
+          "step": 1,
+          "campaign_name": "Summer Promotion 2025",
+          "referral_id": "550e8400-e29b-41d4-a716-446655440000",
+          "disclaimer_text": "Offer valid for new customers only"
+        }
+        ```
+
+        **Required Fields:**
+        - `step`: Must be 1
+        - `campaign_name`: Campaign name (string, not empty)
+
+        **Optional Fields:**
+        - `referral_id`: UUID of referral to link (can be omitted for campaigns without referrals)
+        - `disclaimer_text`: Disclaimer text to save in offer_data
+
+        **What Happens:**
+        - Creates campaign with status "Draft" and current_step: 1
+        - If referral_id provided:
+          - Links referral to campaign
+          - Changes referral status to "Ready"
+        - Saves disclaimer_text to offer_data if provided
+        - Logs history and creates notification
+
+        ---
+
+        ## Step 2: Assign Template Bundle
+
+        Link a template bundle which automatically assigns front and back templates.
+
+        **Request:**
+        ```json
+        {
+          "step": 2,
+          "campaign_id": "660e8400-e29b-41d4-a716-446655440001",
+          "template_bundle_id": "bundle-uuid"
+        }
+        ```
+
+        **Required Fields:**
+        - `step`: Must be 2
+        - `campaign_id`: UUID of campaign from Step 1
+        - `template_bundle_id`: UUID of template bundle
+
+        **What Happens:**
+        - Fetches template bundle (must be organization or universal)
+        - Gets template_front_id and template_back_id from bundle
+        - Looks up templates to get postgrid_template_id
+        - Updates campaign with front_template_id and back_template_id
+        - Updates campaigns_used array in both templates
+        - Sets current_step: 2
+        - Logs history and creates ADMIN notification
+
+        ---
+
+        ## Step 3: Link Location Zone
+
+        Associate a location zone with verified addresses to the campaign.
+
+        **Request:**
+        ```json
+        {
+          "step": 3,
+          "campaign_id": "660e8400-e29b-41d4-a716-446655440001",
+          "zone_id": "123e4567-e89b-12d3-a456-426614174000"
+        }
+        ```
+
+        **Required Fields:**
+        - `step`: Must be 3
+        - `campaign_id`: UUID of campaign
+        - `zone_id`: UUID of location zone
+
+        **What Happens:**
+        - Verifies zone exists and belongs to organization
+        - **Smart duplication**: If zone already used by another campaign, creates a duplicate
+        - Updates campaign with zone_id
+        - Sets current_step: 3
+        - Logs history
+
+        **Why Duplicate?**
+        Prevents campaigns from interfering with each other's address lists.
+
+        ---
+
+        ## Step 4: Campaign Consents
+
+        Final step requiring all disclaimers to be accepted.
+
+        **Request:**
+        ```json
+        {
+          "step": 4,
+          "campaign_id": "660e8400-e29b-41d4-a716-446655440001",
+          "consent": {
+            "123e4567-e89b-12d3-a456-426614174000": true,
+            "223e4567-e89b-12d3-a456-426614174001": true,
+            "323e4567-e89b-12d3-a456-426614174002": true
+          }
+        }
+        ```
+
+        **Required Fields:**
+        - `step`: Must be 4
+        - `campaign_id`: UUID of campaign
+        - `consent`: Object mapping disclaimer IDs to boolean values (all must be true)
+
+        **What Happens:**
+        - Fetches all disclaimers from campaign_disclaimers table
+        - Validates ALL required consents are provided and set to true
+        - Updates campaign with consents
+        - Sets current_step: 4
+        - **Campaign setup complete!**
+      operationId: createCampaignV2
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: "#/components/schemas/CampaignV2Step1"
+                - $ref: "#/components/schemas/CampaignV2Step2"
+                - $ref: "#/components/schemas/CampaignV2Step3"
+                - $ref: "#/components/schemas/CampaignV2Step4"
+            examples:
+              step1:
+                summary: Step 1 - Create Campaign
+                value:
+                  step: 1
+                  campaign_name: "Summer Promotion 2025"
+                  referral_id: "550e8400-e29b-41d4-a716-446655440000"
+                  disclaimer_text: "Offer valid for new customers only"
+              step2:
+                summary: Step 2 - Assign Template Bundle
+                value:
+                  step: 2
+                  campaign_id: "660e8400-e29b-41d4-a716-446655440001"
+                  template_bundle_id: "bundle-uuid"
+              step3:
+                summary: Step 3 - Link Location Zone
+                value:
+                  step: 3
+                  campaign_id: "660e8400-e29b-41d4-a716-446655440001"
+                  zone_id: "123e4567-e89b-12d3-a456-426614174000"
+              step4:
+                summary: Step 4 - Campaign Consents
+                value:
+                  step: 4
+                  campaign_id: "660e8400-e29b-41d4-a716-446655440001"
+                  consent:
+                    "123e4567-e89b-12d3-a456-426614174000": true
+                    "223e4567-e89b-12d3-a456-426614174001": true
+      responses:
+        "201":
+          description: Campaign created successfully (Step 1 only)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  message:
+                    type: string
+                  data:
+                    type: object
+                    properties:
+                      id:
+                        type: string
+                        format: uuid
+                      campaign_name:
+                        type: string
+                      referral_id:
+                        type: string
+                        format: uuid
+                        nullable: true
+                      offer_data:
+                        type: object
+                        properties:
+                          disclaimer_text:
+                            type: string
+                      current_step:
+                        type: integer
+                      status:
+                        type: object
+                      image_url:
+                        type: string
+                        nullable: true
+        "200":
+          description: Step completed successfully (Steps 2-4)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  message:
+                    type: string
+                  data:
+                    type: object
+        "400":
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              examples:
+                invalidStep:
+                  summary: Invalid step number
+                  value:
+                    error: INVALID_INPUT
+                    message: "Valid step (1-4) is required"
+                missingCampaignName:
+                  summary: Missing campaign name (Step 1)
+                  value:
+                    error: INVALID_INPUT
+                    message: "campaign_name is required for step 1"
+                missingBundleId:
+                  summary: Missing template bundle ID (Step 2)
+                  value:
+                    error: INVALID_INPUT
+                    message: "template_bundle_id is required for step 2"
+                missingConsents:
+                  summary: Missing required consents (Step 4)
+                  value:
+                    error: MISSING_CONSENTS
+                    message: "Missing required consents: Terms of Service, Privacy Policy"
+                consentNotAccepted:
+                  summary: Consent not accepted (Step 4)
+                  value:
+                    error: CONSENT_NOT_ACCEPTED
+                    message: "All consents must be accepted (set to true)"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Forbidden - requires ADMIN or MARKETER role
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Resource not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              examples:
+                campaignNotFound:
+                  summary: Campaign not found
+                  value:
+                    error: CAMPAIGN_NOT_FOUND
+                    message: "Campaign not found in your organization"
+                bundleNotFound:
+                  summary: Template bundle not found (Step 2)
+                  value:
+                    error: BUNDLE_NOT_FOUND
+                    message: "Template bundle not found or not accessible"
+                zoneNotFound:
+                  summary: Zone not found (Step 3)
+                  value:
+                    error: ZONE_NOT_FOUND
+                    message: "Zone not found in your organization"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /linkQRCodeToCampaign:
+    post:
+      tags:
+        - Version 2 APIs
+      summary: Link QR code to campaign (Optional)
+      description: |
+        Optional endpoint to add QR code tracking to a campaign via Linkly API.
+        Creates a shortened URL and saves it to the campaign's business_data.
+
+        **Purpose:**
+        - Shorten long URLs for cleaner QR codes
+        - Enable click tracking via Linkly
+        - Optional - only needed if QR code tracking desired
+
+        **Access Control:**
+        - Requires authentication
+        - User must be ADMIN or MARKETER role
+        - User must be in an organization
+
+        **Required Headers:**
+        - `x-linkly-api-key`: Linkly API key for URL shortening
+        - `x-linkly-workspace-id`: Linkly workspace ID
+
+        **What Happens:**
+        - Verifies campaign exists and belongs to organization
+        - Calls Linkly API to create shortened URL
+        - Updates campaign's business_data with shortened QR URL
+        - Saves Linkly tracker ID to postgrid_tracker_id
+        - Logs history
+      operationId: linkQRCodeToCampaign
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: x-linkly-api-key
+          in: header
+          required: true
+          description: Linkly API key
+          schema:
+            type: string
+        - name: x-linkly-workspace-id
+          in: header
+          required: true
+          description: Linkly workspace ID
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - campaign_id
+                - qr_url
+              properties:
+                campaign_id:
+                  type: string
+                  format: uuid
+                  description: UUID of campaign to link QR code to
+                qr_url:
+                  type: string
+                  format: uri
+                  description: URL to shorten and use in QR code
+            example:
+              campaign_id: "660e8400-e29b-41d4-a716-446655440001"
+              qr_url: "https://example.com/promo?utm_source=postcard&id=12345"
+      responses:
+        "200":
+          description: QR code linked successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  message:
+                    type: string
+                  data:
+                    type: object
+                    properties:
+                      campaign_id:
+                        type: string
+                        format: uuid
+                      campaign_name:
+                        type: string
+                      original_url:
+                        type: string
+                      shortened_url:
+                        type: string
+                      tracker_id:
+                        type: integer
+                      business_data:
+                        type: object
+                        properties:
+                          qr_url:
+                            type: string
+              example:
+                status: success
+                message: "QR code linked to campaign successfully"
+                data:
+                  campaign_id: "660e8400-e29b-41d4-a716-446655440001"
+                  campaign_name: "Summer Promotion 2025"
+                  original_url: "https://example.com/promo?utm_source=postcard&id=12345"
+                  shortened_url: "https://linkly.link/2Yz0o"
+                  tracker_id: 12345
+                  business_data:
+                    qr_url: "https://linkly.link/2Yz0o"
+        "400":
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              examples:
+                missingCampaignId:
+                  summary: Missing campaign ID
+                  value:
+                    error: INVALID_INPUT
+                    message: "campaign_id is required"
+                missingQrUrl:
+                  summary: Missing QR URL
+                  value:
+                    error: INVALID_INPUT
+                    message: "qr_url is required and must be a valid URL string"
+                missingLinklyKey:
+                  summary: Missing Linkly API key
+                  value:
+                    error: MISSING_LINKLY_API_KEY
+                    message: "x-linkly-api-key header is required"
+                missingWorkspaceId:
+                  summary: Missing Linkly workspace ID
+                  value:
+                    error: MISSING_LINKLY_WORKSPACE_ID
+                    message: "x-linkly-workspace-id header is required"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Forbidden - requires ADMIN or MARKETER role
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Campaign not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: CAMPAIGN_NOT_FOUND
+                message: "Campaign not found in your organization"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              examples:
+                linklyApiError:
+                  summary: Linkly API error
+                  value:
+                    error: LINKLY_API_ERROR
+                    message: "Failed to create short link: API key invalid"
+                updateFailed:
+                  summary: Failed to update campaign
+                  value:
+                    error: UPDATE_FAILED
+                    message: "Failed to update campaign with QR code"
+
 components:
   schemas:
     SignUpRequest:
@@ -13109,6 +13592,88 @@ components:
                 format: float
                 description: "Running ROI percentage"
                 example: -70.83
+
+    CampaignV2Step1:
+      type: object
+      required:
+        - step
+        - campaign_name
+      properties:
+        step:
+          type: integer
+          enum: [1]
+          description: Must be 1 for Step 1
+        campaign_name:
+          type: string
+          description: Name for the campaign
+        referral_id:
+          type: string
+          format: uuid
+          description: Optional UUID of referral to link
+        disclaimer_text:
+          type: string
+          description: Optional disclaimer text
+
+    CampaignV2Step2:
+      type: object
+      required:
+        - step
+        - campaign_id
+        - template_bundle_id
+      properties:
+        step:
+          type: integer
+          enum: [2]
+          description: Must be 2 for Step 2
+        campaign_id:
+          type: string
+          format: uuid
+          description: UUID of campaign from Step 1
+        template_bundle_id:
+          type: string
+          format: uuid
+          description: UUID of template bundle
+
+    CampaignV2Step3:
+      type: object
+      required:
+        - step
+        - campaign_id
+        - zone_id
+      properties:
+        step:
+          type: integer
+          enum: [3]
+          description: Must be 3 for Step 3
+        campaign_id:
+          type: string
+          format: uuid
+          description: UUID of campaign
+        zone_id:
+          type: string
+          format: uuid
+          description: UUID of location zone
+
+    CampaignV2Step4:
+      type: object
+      required:
+        - step
+        - campaign_id
+        - consent
+      properties:
+        step:
+          type: integer
+          enum: [4]
+          description: Must be 4 for Step 4
+        campaign_id:
+          type: string
+          format: uuid
+          description: UUID of campaign
+        consent:
+          type: object
+          description: Object mapping disclaimer IDs to boolean (all must be true)
+          additionalProperties:
+            type: boolean
 
   securitySchemes:
     SupabaseAuth:
