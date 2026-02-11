@@ -463,3 +463,19 @@ verify_jwt = true
 
 [functions.getAllAddresses]
 verify_jwt = true
+
+# Template Bundle endpoints - JWT verification required
+[functions.createNewTemplateBundle]
+verify_jwt = true
+
+[functions.createNewUniversalTemplateBundle]
+verify_jwt = true
+
+[functions.updateTemplateBundle]
+verify_jwt = true
+
+[functions.deleteTemplateBundle]
+verify_jwt = true
+
+[functions.getAllTemplatesBundles]
+verify_jwt = true
