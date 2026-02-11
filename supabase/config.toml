@@ -485,3 +485,9 @@ verify_jwt = true
 
 [functions.linkQRCodeToCampaign]
 verify_jwt = true
+
+[functions.getTemplateBundleById]
+verify_jwt = true
+
+[functions.getTemplateBundleHistory]
+verify_jwt = true

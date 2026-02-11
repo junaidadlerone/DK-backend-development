@@ -11424,6 +11424,337 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
+  /getTemplateBundleById:
+    get:
+      tags:
+        - Version 2 APIs
+      summary: Get template bundle by ID with full template details
+      description: |
+        Returns detailed template bundle data including full front and back template objects.
+
+        **Access Control:**
+        - Requires authentication
+        - User must be in an organization
+        - Template bundle must be accessible (organization or universal)
+
+        **Returns:**
+        - Bundle metadata (id, organization_id, is_universal, timestamps)
+        - Complete front template object (all fields)
+        - Complete back template object (all fields)
+      operationId: getTemplateBundleById
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: bundle_id
+          in: query
+          required: true
+          description: UUID of the template bundle to retrieve
+          schema:
+            type: string
+            format: uuid
+          example: "550e8400-e29b-41d4-a716-446655440000"
+      responses:
+        "200":
+          description: Template bundle retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  message:
+                    type: string
+                  data:
+                    type: object
+                    properties:
+                      bundle:
+                        type: object
+                        properties:
+                          id:
+                            type: string
+                            format: uuid
+                          organization_id:
+                            type: string
+                            format: uuid
+                            nullable: true
+                          is_universal:
+                            type: boolean
+                          created_at:
+                            type: string
+                            format: date-time
+                          updated_at:
+                            type: string
+                            format: date-time
+                      front_template:
+                        type: object
+                        description: Complete front template object with all fields
+                      back_template:
+                        type: object
+                        description: Complete back template object with all fields
+              example:
+                status: success
+                message: "Template bundle retrieved successfully"
+                data:
+                  bundle:
+                    id: "550e8400-e29b-41d4-a716-446655440000"
+                    organization_id: "660e8400-e29b-41d4-a716-446655440001"
+                    is_universal: false
+                    created_at: "2025-01-15T10:30:00Z"
+                    updated_at: "2025-01-15T10:30:00Z"
+                  front_template:
+                    id: "template-front-uuid"
+                    postgrid_template_id: "tmpl_xxx"
+                    description: "Summer Sale Front"
+                    size: "4x6"
+                    deleted: false
+                  back_template:
+                    id: "template-back-uuid"
+                    postgrid_template_id: "tmpl_yyy"
+                    description: "Summer Sale Back"
+                    size: "4x6"
+                    deleted: false
+        "400":
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: INVALID_INPUT
+                message: "bundle_id query parameter is required"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Forbidden - User not in organization
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Template bundle not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              examples:
+                bundleNotFound:
+                  summary: Bundle not found
+                  value:
+                    error: BUNDLE_NOT_FOUND
+                    message: "Template bundle not found or not accessible"
+                frontTemplateNotFound:
+                  summary: Front template not found
+                  value:
+                    error: FRONT_TEMPLATE_NOT_FOUND
+                    message: "Front template not found"
+                backTemplateNotFound:
+                  summary: Back template not found
+                  value:
+                    error: BACK_TEMPLATE_NOT_FOUND
+                    message: "Back template not found"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /getTemplateBundleHistory:
+    get:
+      tags:
+        - Version 2 APIs
+      summary: Get combined history of template bundle
+      description: |
+        Returns combined history of both front and back templates in a template bundle.
+        Merges and sorts history entries by timestamp (newest first).
+
+        **Access Control:**
+        - Requires authentication
+        - User must be in an organization
+        - Template bundle must be accessible (organization or universal)
+
+        **Features:**
+        - Combines history from both front and back templates
+        - Enriches each entry with template context (type, id, description)
+        - Sorts by timestamp (newest first)
+        - Provides metadata about entry counts
+
+        **Use Cases:**
+        - Audit trail for template bundle changes
+        - Understanding template evolution
+        - Debugging template issues
+      operationId: getTemplateBundleHistory
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: bundle_id
+          in: query
+          required: true
+          description: UUID of the template bundle to retrieve history for
+          schema:
+            type: string
+            format: uuid
+          example: "550e8400-e29b-41d4-a716-446655440000"
+      responses:
+        "200":
+          description: Template bundle history retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  message:
+                    type: string
+                  data:
+                    type: object
+                    properties:
+                      bundle_id:
+                        type: string
+                        format: uuid
+                      is_universal:
+                        type: boolean
+                      templates:
+                        type: object
+                        properties:
+                          front:
+                            type: object
+                            properties:
+                              id:
+                                type: string
+                                format: uuid
+                              description:
+                                type: string
+                              postgrid_template_id:
+                                type: string
+                          back:
+                            type: object
+                            properties:
+                              id:
+                                type: string
+                                format: uuid
+                              description:
+                                type: string
+                              postgrid_template_id:
+                                type: string
+                      history:
+                        type: array
+                        description: Combined and sorted history entries (newest first)
+                        items:
+                          type: object
+                          properties:
+                            template_type:
+                              type: string
+                              enum: [front, back]
+                            template_id:
+                              type: string
+                              format: uuid
+                            template_description:
+                              type: string
+                            postgrid_template_id:
+                              type: string
+                            timestamp:
+                              type: string
+                              format: date-time
+                      metadata:
+                        type: object
+                        properties:
+                          total_entries:
+                            type: integer
+                          front_entries:
+                            type: integer
+                          back_entries:
+                            type: integer
+              example:
+                status: success
+                message: "Found 15 history entries"
+                data:
+                  bundle_id: "550e8400-e29b-41d4-a716-446655440000"
+                  is_universal: false
+                  templates:
+                    front:
+                      id: "template-front-uuid"
+                      description: "Summer Sale Front"
+                      postgrid_template_id: "tmpl_xxx"
+                    back:
+                      id: "template-back-uuid"
+                      description: "Summer Sale Back"
+                      postgrid_template_id: "tmpl_yyy"
+                  history:
+                    - template_type: "front"
+                      template_id: "template-front-uuid"
+                      template_description: "Summer Sale Front"
+                      postgrid_template_id: "tmpl_xxx"
+                      action: "updated"
+                      timestamp: "2025-01-20T14:30:00Z"
+                      details: "Updated template design"
+                    - template_type: "back"
+                      template_id: "template-back-uuid"
+                      template_description: "Summer Sale Back"
+                      postgrid_template_id: "tmpl_yyy"
+                      action: "created"
+                      timestamp: "2025-01-15T10:30:00Z"
+                      details: "Template created"
+                  metadata:
+                    total_entries: 15
+                    front_entries: 8
+                    back_entries: 7
+        "400":
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: INVALID_INPUT
+                message: "bundle_id query parameter is required"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Forbidden - User not in organization
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Template bundle or templates not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              examples:
+                bundleNotFound:
+                  summary: Bundle not found
+                  value:
+                    error: BUNDLE_NOT_FOUND
+                    message: "Template bundle not found or not accessible"
+                frontTemplateNotFound:
+                  summary: Front template not found
+                  value:
+                    error: FRONT_TEMPLATE_NOT_FOUND
+                    message: "Front template not found"
+                backTemplateNotFound:
+                  summary: Back template not found
+                  value:
+                    error: BACK_TEMPLATE_NOT_FOUND
+                    message: "Back template not found"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
   /createCampaignV2:
     post:
       tags:
