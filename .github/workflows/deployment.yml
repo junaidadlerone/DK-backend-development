@@ -5,7 +5,7 @@ on:
     branches:
       - development
     paths:
-      - "supabase/functions/docs/**"
+      - "docs/**"
       - ".github/workflows/deployment.yml"
 
 # Sets permissions of the GITHUB_TOKEN to allow deployment to GitHub Pages
@@ -34,7 +34,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: "supabase/functions/docs"
+          path: "docs"
 
   # Deployment job
   deploy:

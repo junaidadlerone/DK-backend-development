@@ -1,0 +1,2787 @@
+openapi: 3.0.3
+info:
+  title: Door Knocker Role-Based Authentication API
+  description: |
+    Complete role-based authentication and organization management system built with Supabase Edge Functions and Supabase Auth.
+
+    ## Features
+    - Role-based access control (ADMIN, MARKETER, TECHNICIAN)
+    - User registration with role assignment
+    - Organization management with multi-user support
+    - Automatic organization creation on ADMIN signup
+    - Organization member tracking
+    - Secure authentication using Supabase Auth
+    - JWT-based session management
+    - Password reset flow
+    - Row Level Security (RLS) policies
+    - CORS support
+    - Comprehensive error handling
+
+    ## User Roles
+    - **ADMIN**: Full system access, owns organization, can manage all users and create team members
+    - **MARKETER**: Marketing team member, associated with an organization
+    - **TECHNICIAN**: Technical operations team member, associated with an organization
+
+    ## Organization Management
+    - ADMIN users automatically get an organization on signup
+    - Organization stores business information (name, address, contact details)
+    - Team members (MARKETER/TECHNICIAN) are automatically added to organization_members
+    - Role-based organization retrieval (owner vs member access)
+
+    ## Security
+    - Strong password requirements enforced:
+      - Minimum 8 characters
+      - At least one uppercase letter (A-Z)
+      - At least one lowercase letter (a-z)
+      - At least one number (0-9)
+      - At least one special character (!@#$%^&* etc.)
+    - Passwords managed by Supabase Auth
+    - JWT access tokens for authentication
+    - Row Level Security (RLS) on database tables
+    - Only ADMINs can create other users and manage organizations
+    - Secure password reset with one-time tokens
+
+  version: 3.0.0
+  contact:
+    name: Door Knocker API Support
+    email: support@doorknocker.example.com
+
+servers:
+  - url: https://iywivotqnphrjijztxtu.supabase.co/functions/v1
+    description: Production server
+  - url: http://localhost:54321/functions/v1
+    description: Local development server
+
+security:
+  - SupabaseAuth: []
+
+tags:
+  - name: Authentication
+    description: User authentication and registration operations
+  - name: User Management
+    description: User profile and information operations
+  - name: Password Management
+    description: Password reset operations
+  - name: Organization Management
+    description: Organization information and management operations
+  - name: Job Management
+    description: Job types and job-related operations
+  - name: Referral Management
+    description: Referral creation, retrieval, and management operations
+  - name: Gallery Management
+    description: Photo gallery and image management operations for referrals
+
+paths:
+  /signUp:
+    post:
+      tags:
+        - Authentication
+      summary: Register a new ADMIN user and create organization
+      description: |
+        Creates a new ADMIN user account with email and password, and automatically creates an associated organization.
+
+        **Important:**
+        - This endpoint is for public ADMIN user registration only
+        - Role is always set to ADMIN (cannot be changed)
+        - Automatically creates an empty organization entry for the ADMIN
+        - Organization can be updated later via /saveOrganization endpoint
+        - MARKETER and TECHNICIAN users must be created by ADMIN via /createUser endpoint
+        - No authentication required for ADMIN signup
+      operationId: signUp
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - email
+                - password
+              properties:
+                email:
+                  type: string
+                  format: email
+                fullName:
+                  type: string
+                password:
+                  type: string
+                  format: password
+                  minLength: 8
+                  description: |
+                    Password must meet the following requirements:
+                    - At least 8 characters long
+                    - At least one uppercase letter (A-Z)
+                    - At least one lowercase letter (a-z)
+                    - At least one number (0-9)
+                    - At least one special character (!@#$%^&* etc.)
+            example:
+              email: admin@example.com
+              password: SecurePass123!
+              fullName: Admin User
+      responses:
+        '201':
+          description: User created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SignUpResponse'
+              example:
+                status: success
+                message: User created successfully
+                user:
+                  id: 550e8400-e29b-41d4-a716-446655440000
+                  email: admin@example.com
+                  fullName: Admin User
+                  role: ADMIN
+        '400':
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                missingFields:
+                  summary: Missing required fields
+                  value:
+                    error: INVALID_INPUT
+                    message: Email and password are required
+                invalidEmail:
+                  summary: Invalid email format
+                  value:
+                    error: INVALID_EMAIL
+                    message: Invalid email format
+                weakPassword:
+                  summary: Password too weak - too short
+                  value:
+                    error: WEAK_PASSWORD
+                    message: Password must be at least 8 characters long
+                missingUppercase:
+                  summary: Password missing uppercase letter
+                  value:
+                    error: WEAK_PASSWORD
+                    message: Password must contain at least one uppercase letter
+                missingLowercase:
+                  summary: Password missing lowercase letter
+                  value:
+                    error: WEAK_PASSWORD
+                    message: Password must contain at least one lowercase letter
+                missingNumber:
+                  summary: Password missing number
+                  value:
+                    error: WEAK_PASSWORD
+                    message: Password must contain at least one number
+                missingSpecialChar:
+                  summary: Password missing special character
+                  value:
+                    error: WEAK_PASSWORD
+                    message: Password must contain at least one special character (!@#$%^&* etc.)
+                invalidRole:
+                  summary: Invalid role - trying to create non-ADMIN user
+                  value:
+                    error: INVALID_ROLE
+                    message: signUp endpoint only creates ADMIN users. Use /createUser endpoint for MARKETER and TECHNICIAN roles.
+        '409':
+          description: Email already exists
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: EMAIL_EXISTS
+                message: An account with this email already exists
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /createUser:
+    post:
+      tags:
+        - User Management
+      summary: Create MARKETER or TECHNICIAN user and add to organization (ADMIN only)
+      description: |
+        Allows ADMIN users to create new MARKETER or TECHNICIAN users and automatically adds them to the organization.
+
+        **Access Control:**
+        - Only authenticated ADMIN users can access this endpoint
+        - Cannot create ADMIN users via this endpoint (use /signUp for ADMIN creation)
+        - Requires valid JWT Bearer token from an ADMIN user
+
+        **Automatic Organization Membership:**
+        - Created user is automatically added to the ADMIN's organization_members array
+        - Includes member_uid and member_role in the organization record
+
+        **Created User Roles:**
+        - MARKETER: Marketing-specific dashboard access, member of organization
+        - TECHNICIAN: Technical operations dashboard access, member of organization
+      operationId: createUser
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - email
+                - password
+                - role
+              properties:
+                email:
+                  type: string
+                  format: email
+                  description: Email address for the new user
+                password:
+                  type: string
+                  format: password
+                  minLength: 8
+                  description: |
+                    Password must meet the following requirements:
+                    - At least 8 characters long
+                    - At least one uppercase letter (A-Z)
+                    - At least one lowercase letter (a-z)
+                    - At least one number (0-9)
+                    - At least one special character (!@#$%^&* etc.)
+                fullName:
+                  type: string
+                  description: Full name of the user
+                role:
+                  type: string
+                  enum: [MARKETER, TECHNICIAN]
+                  description: "Role to assign (MARKETER or TECHNICIAN only)"
+            examples:
+              marketer:
+                summary: Create marketer user
+                value:
+                  email: marketer@example.com
+                  password: SecurePass123!
+                  fullName: Jane Marketer
+                  role: MARKETER
+              technician:
+                summary: Create technician user
+                value:
+                  email: tech@example.com
+                  password: SecurePass123!
+                  fullName: John Technician
+                  role: TECHNICIAN
+      responses:
+        '201':
+          description: User created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SignUpResponse'
+              example:
+                status: success
+                message: User created successfully
+                user:
+                  id: 660e8400-e29b-41d4-a716-446655440001
+                  email: marketer@example.com
+                  fullName: Jane Marketer
+                  role: MARKETER
+        '400':
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                missingFields:
+                  summary: Missing required fields
+                  value:
+                    error: INVALID_INPUT
+                    message: Email, password, and role are required
+                invalidEmail:
+                  summary: Invalid email format
+                  value:
+                    error: INVALID_EMAIL
+                    message: Invalid email format
+                weakPassword:
+                  summary: Password too weak - too short
+                  value:
+                    error: WEAK_PASSWORD
+                    message: Password must be at least 8 characters long
+                missingUppercase:
+                  summary: Password missing uppercase letter
+                  value:
+                    error: WEAK_PASSWORD
+                    message: Password must contain at least one uppercase letter
+                missingLowercase:
+                  summary: Password missing lowercase letter
+                  value:
+                    error: WEAK_PASSWORD
+                    message: Password must contain at least one lowercase letter
+                missingNumber:
+                  summary: Password missing number
+                  value:
+                    error: WEAK_PASSWORD
+                    message: Password must contain at least one number
+                missingSpecialChar:
+                  summary: Password missing special character
+                  value:
+                    error: WEAK_PASSWORD
+                    message: Password must contain at least one special character (!@#$%^&* etc.)
+                invalidRole:
+                  summary: Invalid role
+                  value:
+                    error: INVALID_ROLE
+                    message: Invalid role. Must be MARKETER or TECHNICIAN
+                adminRole:
+                  summary: Attempting to create ADMIN user
+                  value:
+                    error: INVALID_ROLE
+                    message: Cannot create ADMIN users via this endpoint. ADMIN users should use /signUp endpoint.
+        '401':
+          description: Unauthorized - Missing or invalid token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                missingAuth:
+                  summary: Missing authorization header
+                  value:
+                    error: UNAUTHORIZED
+                    message: Authorization header is required. Only ADMIN users can create users.
+                invalidToken:
+                  summary: Invalid token
+                  value:
+                    error: INVALID_TOKEN
+                    message: Invalid or expired token
+        '403':
+          description: Forbidden - Non-admin user attempting to create users
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: FORBIDDEN
+                message: Only ADMIN users can create new users
+        '409':
+          description: Email already exists
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: EMAIL_EXISTS
+                message: An account with this email already exists
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /login:
+    post:
+      tags:
+        - Authentication
+      summary: Login existing user
+      description: |
+        Authenticates a user with email and password using Supabase Auth.
+        Returns JWT access token, refresh token, and user information including their role.
+
+        **Token Information:**
+        - Access token expires in 1 hour (3600 seconds)
+        - Refresh token can be used to obtain new access tokens via /refreshToken endpoint
+        - Store both tokens securely on the client side
+      operationId: login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+            example:
+              email: user@example.com
+              password: SecurePass123!
+      responses:
+        '200':
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+              example:
+                status: success
+                message: Login successful
+                token: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+                refreshToken: xYz123RefreshToken456...
+                expiresIn: 3600
+                role: TECHNICIAN
+                user:
+                  id: 550e8400-e29b-41d4-a716-446655440000
+                  email: user@example.com
+                  fullName: John Doe
+        '400':
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                missingFields:
+                  summary: Missing required fields
+                  value:
+                    error: INVALID_INPUT
+                    message: Email and password are required
+                invalidEmail:
+                  summary: Invalid email format
+                  value:
+                    error: INVALID_EMAIL
+                    message: Invalid email format
+        '401':
+          description: Invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: INVALID_CREDENTIALS
+                message: Invalid email or password
+        '404':
+          description: User profile not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: PROFILE_NOT_FOUND
+                message: User profile not found. Please contact support.
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /logout:
+    post:
+      tags:
+        - Authentication
+      summary: Logout user
+      description: |
+        Invalidates the user's current session.
+        Requires a valid JWT token in the Authorization header.
+        Client should also clear local storage/cookies after logout.
+      operationId: logout
+      security:
+        - SupabaseAuth: []
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Logout successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+              example:
+                status: success
+                message: Logout successful
+        '401':
+          description: Unauthorized - Missing or invalid token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                missingAuth:
+                  summary: Missing authorization header
+                  value:
+                    error: UNAUTHORIZED
+                    message: Authorization header is required
+                invalidToken:
+                  summary: Invalid token
+                  value:
+                    error: INVALID_TOKEN
+                    message: Invalid or expired token
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /refreshToken:
+    post:
+      tags:
+        - Authentication
+      summary: Refresh access token
+      description: |
+        Exchanges a refresh token for a new access token and refresh token pair.
+
+        **Use Case:**
+        - When the access token expires (after 1 hour)
+        - Client receives 401 error from protected endpoints
+        - Use this endpoint to get new tokens without re-login
+
+        **Token Rotation:**
+        - Returns both new access token AND new refresh token
+        - Store both tokens and use the new refresh token for next refresh
+      operationId: refreshToken
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - refreshToken
+              properties:
+                refreshToken:
+                  type: string
+                  description: The refresh token obtained from login
+            example:
+              refreshToken: xYz123RefreshToken456...
+      responses:
+        '200':
+          description: Token refreshed successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: success
+                  message:
+                    type: string
+                    example: Token refreshed successfully
+                  token:
+                    type: string
+                    description: New access token
+                  refreshToken:
+                    type: string
+                    description: New refresh token
+                  expiresIn:
+                    type: number
+                    description: Token expiry time in seconds
+                    example: 3600
+              example:
+                status: success
+                message: Token refreshed successfully
+                token: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+                refreshToken: aBc456NewRefreshToken789...
+                expiresIn: 3600
+        '400':
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: INVALID_INPUT
+                message: Refresh token is required
+        '401':
+          description: Invalid or expired refresh token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: INVALID_TOKEN
+                message: Invalid or expired refresh token
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /getUser:
+    get:
+      tags:
+        - User Management
+      summary: Fetch user profile and role
+      description: |
+        Retrieves the authenticated user's profile information including role, email, and full name.
+
+        **Admin Access:**
+        - ADMIN users can fetch any user's profile by providing the `user_id` query parameter
+        - Non-admin users can only fetch their own profile
+
+        **Returns:**
+        - User ID, email, role, full name, and account creation date
+      operationId: getUser
+      security:
+        - SupabaseAuth: []
+        - BearerAuth: []
+      parameters:
+        - name: user_id
+          in: query
+          required: false
+          description: User ID to fetch (ADMIN only). If omitted, returns the authenticated user's profile.
+          schema:
+            type: string
+            format: uuid
+          example: 550e8400-e29b-41d4-a716-446655440000
+      responses:
+        '200':
+          description: User profile retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GetUserResponse'
+              examples:
+                ownProfile:
+                  summary: Get own profile
+                  value:
+                    status: success
+                    data:
+                      id: 550e8400-e29b-41d4-a716-446655440000
+                      email: tech@example.com
+                      role: TECHNICIAN
+                      full_name: John Technician
+                      created_at: '2025-01-13T10:00:00.000Z'
+                adminViewingOther:
+                  summary: Admin viewing another user (with user_id param)
+                  value:
+                    status: success
+                    data:
+                      id: 660e8400-e29b-41d4-a716-446655440001
+                      email: marketer@example.com
+                      role: MARKETER
+                      full_name: Jane Marketer
+                      created_at: '2025-01-12T15:30:00.000Z'
+        '401':
+          description: Unauthorized - Missing or invalid token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                missingAuth:
+                  summary: Missing authorization header
+                  value:
+                    error: UNAUTHORIZED
+                    message: Authorization header is required
+                invalidToken:
+                  summary: Invalid token
+                  value:
+                    error: INVALID_TOKEN
+                    message: Invalid or expired token
+        '403':
+          description: Forbidden - Non-admin trying to access another user's profile
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: FORBIDDEN
+                message: Only ADMIN users can view other users' profiles
+        '404':
+          description: User or profile not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                userNotFound:
+                  summary: User not found
+                  value:
+                    error: USER_NOT_FOUND
+                    message: User not found
+                profileNotFound:
+                  summary: Profile not found
+                  value:
+                    error: PROFILE_NOT_FOUND
+                    message: User profile not found. Please contact support.
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /forgotPassword:
+    post:
+      tags:
+        - Password Management
+      summary: Request password reset
+      description: |
+        Sends a password reset email to the user using Supabase Auth.
+        Always returns success to prevent email enumeration attacks.
+
+        **Reset Flow:**
+        - User receives email with a reset link pointing to: `https://doorknocker.texasgrowthfactory.com/reset-password`
+        - The link contains an access token in the URL parameters
+        - Frontend extracts the token and calls /resetPassword endpoint
+
+        The reset email contains a secure link with an access token that can be used
+        with the /resetPassword endpoint.
+      operationId: forgotPassword
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ForgotPasswordRequest'
+            example:
+              email: user@example.com
+      responses:
+        '200':
+          description: Request processed (always returns success)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+              example:
+                status: success
+                message: If the email exists in our system, a password reset link has been sent
+        '400':
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                missingEmail:
+                  summary: Missing email
+                  value:
+                    error: INVALID_INPUT
+                    message: Email is required
+                invalidEmail:
+                  summary: Invalid email format
+                  value:
+                    error: INVALID_EMAIL
+                    message: Invalid email format
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /resetPassword:
+    post:
+      tags:
+        - Password Management
+      summary: Reset password with token
+      description: |
+        Resets the user's password using the access token from the password reset email.
+
+        **Flow:**
+        1. User receives password reset email from /forgotPassword
+        2. User clicks the reset link (contains access_token in URL)
+        3. Frontend extracts the access_token and calls this endpoint with new password
+        4. Password is updated and user can login with new credentials
+
+        **Security:**
+        - New password must meet all password requirements
+        - New password cannot be the same as the current password
+      operationId: resetPassword
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResetPasswordRequest'
+            example:
+              access_token: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+              newPassword: NewSecurePass123!
+      responses:
+        '200':
+          description: Password reset successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+              example:
+                status: success
+                message: Password has been reset successfully
+        '400':
+          description: Invalid input or weak password
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                missingFields:
+                  summary: Missing required fields
+                  value:
+                    error: INVALID_INPUT
+                    message: Access token and new password are required
+                weakPassword:
+                  summary: Password too weak - too short
+                  value:
+                    error: WEAK_PASSWORD
+                    message: Password must be at least 8 characters long
+                missingUppercase:
+                  summary: Password missing uppercase letter
+                  value:
+                    error: WEAK_PASSWORD
+                    message: Password must contain at least one uppercase letter
+                missingLowercase:
+                  summary: Password missing lowercase letter
+                  value:
+                    error: WEAK_PASSWORD
+                    message: Password must contain at least one lowercase letter
+                missingNumber:
+                  summary: Password missing number
+                  value:
+                    error: WEAK_PASSWORD
+                    message: Password must contain at least one number
+                missingSpecialChar:
+                  summary: Password missing special character
+                  value:
+                    error: WEAK_PASSWORD
+                    message: Password must contain at least one special character (!@#$%^&* etc.)
+                samePassword:
+                  summary: New password same as current password
+                  value:
+                    error: SAME_PASSWORD
+                    message: New password cannot be the same as your current password
+        '401':
+          description: Invalid or expired token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: INVALID_TOKEN
+                message: Invalid or expired reset token
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /saveOrganization:
+    post:
+      tags:
+        - Organization Management
+      summary: Save/update organization information
+      description: |
+        Allows authenticated users (typically ADMIN) to update their organization information.
+
+        **Access Control:**
+        - Only organization owners can update their organization
+        - Updates the organization where owner_id matches the authenticated user's UID
+
+        **Required Fields:**
+        - business_name
+        - business_address
+        - business_email
+
+        **Optional Fields:**
+        - registration_number
+        - industry
+        - phone_number
+        - website_url
+
+        **Note:** This endpoint updates an existing organization entry that was created during ADMIN signup.
+      operationId: saveOrganization
+      security:
+        - SupabaseAuth: []
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SaveOrganizationRequest'
+            example:
+              business_name: Tech Solutions Inc
+              business_address: 123 Main Street, Silicon Valley, CA 94025
+              business_email: contact@techsolutions.com
+              registration_number: REG-2025-12345
+              industry: Technology
+              phone_number: +1-555-123-4567
+              website_url: https://techsolutions.com
+      responses:
+        '200':
+          description: Organization updated successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: success
+                  message:
+                    type: string
+                    example: Organization updated successfully
+                  data:
+                    $ref: '#/components/schemas/Organization'
+              example:
+                status: success
+                message: Organization updated successfully
+                data:
+                  id: 770e8400-e29b-41d4-a716-446655440003
+                  owner_id: 550e8400-e29b-41d4-a716-446655440000
+                  business_name: Tech Solutions Inc
+                  business_address: 123 Main Street, Silicon Valley, CA 94025
+                  business_email: contact@techsolutions.com
+                  registration_number: REG-2025-12345
+                  industry: Technology
+                  phone_number: +1-555-123-4567
+                  website_url: https://techsolutions.com
+                  organization_members:
+                    - member_uid: 660e8400-e29b-41d4-a716-446655440001
+                      member_role: MARKETER
+                    - member_uid: 660e8400-e29b-41d4-a716-446655440002
+                      member_role: TECHNICIAN
+                  created_at: '2025-01-18T10:00:00.000Z'
+                  updated_at: '2025-01-18T15:30:00.000Z'
+        '400':
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                missingFields:
+                  summary: Missing required fields
+                  value:
+                    error: INVALID_INPUT
+                    message: business_name, business_address, and business_email are required
+                invalidEmail:
+                  summary: Invalid business email format
+                  value:
+                    error: INVALID_EMAIL
+                    message: Invalid business email format
+        '401':
+          description: Unauthorized - Missing or invalid token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                missingAuth:
+                  summary: Missing authorization header
+                  value:
+                    error: UNAUTHORIZED
+                    message: Authorization header is required
+                invalidToken:
+                  summary: Invalid token
+                  value:
+                    error: INVALID_TOKEN
+                    message: Invalid or expired token
+        '404':
+          description: Organization not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: ORGANIZATION_NOT_FOUND
+                message: Organization not found. Please contact support.
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /getIndustry:
+    get:
+      tags:
+        - Organization Management
+      summary: Get list of available industries
+      description: |
+        Returns a predefined list of business industries for dropdown selection.
+
+        **Use Case:**
+        - Used when users are filling out organization details
+        - Provides a standardized list of industry options
+        - No authentication required - public endpoint
+
+        **Returns:**
+        - Sorted alphabetical list of industries
+        - Total count of available industries
+      operationId: getIndustry
+      responses:
+        '200':
+          description: Industries retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: success
+                  data:
+                    type: object
+                    properties:
+                      industries:
+                        type: array
+                        items:
+                          type: string
+                        description: Sorted list of industry names
+                        example:
+                          - Accounting
+                          - Advertising & Marketing
+                          - Aerospace & Defense
+                          - Agriculture & Farming
+                          - Information Technology
+                          - Software Development
+                      total:
+                        type: number
+                        description: Total number of industries
+                        example: 40
+              example:
+                status: success
+                data:
+                  industries:
+                    - Accounting
+                    - Advertising & Marketing
+                    - Aerospace & Defense
+                    - Agriculture & Farming
+                    - Architecture & Planning
+                    - Automotive
+                    - Banking & Financial Services
+                    - Biotechnology
+                    - Construction
+                    - Consulting
+                    - Consumer Electronics
+                    - Consumer Goods
+                    - E-commerce
+                    - Education & Training
+                    - Energy & Utilities
+                    - Engineering
+                    - Entertainment & Media
+                    - Environmental Services
+                    - Fashion & Apparel
+                    - Food & Beverage
+                    - Government & Public Sector
+                    - Healthcare & Medical
+                    - Hospitality & Tourism
+                    - Human Resources
+                    - Information Technology
+                    - Insurance
+                    - Legal Services
+                    - Logistics & Supply Chain
+                    - Manufacturing
+                    - Mining & Metals
+                    - Non-Profit & NGO
+                    - Oil & Gas
+                    - Other
+                    - Pharmaceuticals
+                    - Real Estate
+                    - Retail
+                    - Security Services
+                    - Software Development
+                    - Sports & Recreation
+                    - Telecommunications
+                    - Transportation
+                  total: 40
+        '405':
+          description: Method not allowed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: METHOD_NOT_ALLOWED
+                message: Only GET method is allowed
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /getAllJobs:
+    get:
+      tags:
+        - Job Management
+      summary: Get all available job types
+      description: |
+        Returns a comprehensive list of all available job types for construction and home services.
+
+        **Use Case:**
+        - Used for dropdown/selection in job creation or scheduling forms
+        - Provides standardized list of service types
+        - No authentication required - public endpoint
+        - Includes 200+ job types across categories: HVAC, Plumbing, Electrical, Roofing, Carpentry, etc.
+
+        **Returns:**
+        - Array of job types with id and name
+        - Sorted alphabetically by name
+      operationId: getAllJobs
+      responses:
+        '200':
+          description: Job types retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                          format: uuid
+                          description: Unique identifier for the job type
+                          example: 550e8400-e29b-41d4-a716-446655440000
+                        name:
+                          type: string
+                          description: Name of the job type
+                          example: HVAC Installation
+              example:
+                data:
+                  - id: 550e8400-e29b-41d4-a716-446655440000
+                    name: AC Installation
+                  - id: 660e8400-e29b-41d4-a716-446655440001
+                    name: AC Maintenance
+                  - id: 770e8400-e29b-41d4-a716-446655440002
+                    name: AC Repair
+                  - id: 880e8400-e29b-41d4-a716-446655440003
+                    name: Appliance Installation
+                  - id: 990e8400-e29b-41d4-a716-446655440004
+                    name: Appliance Repair
+                  - id: aa0e8400-e29b-41d4-a716-446655440005
+                    name: Attic Conversion
+                  - id: bb0e8400-e29b-41d4-a716-446655440006
+                    name: Bathroom Remodeling
+                  - id: cc0e8400-e29b-41d4-a716-446655440007
+                    name: Carpet Cleaning
+                  - id: dd0e8400-e29b-41d4-a716-446655440008
+                    name: Concrete Installation
+                  - id: ee0e8400-e29b-41d4-a716-446655440009
+                    name: Door Installation
+                  - id: ff0e8400-e29b-41d4-a716-446655440010
+                    name: Drain Cleaning
+                  - id: 110e8400-e29b-41d4-a716-446655440011
+                    name: Duct Cleaning
+                  - id: 220e8400-e29b-41d4-a716-446655440012
+                    name: Electrical Installation
+                  - id: 330e8400-e29b-41d4-a716-446655440013
+                    name: Furnace Tune-Up
+                  - id: 440e8400-e29b-41d4-a716-446655440014
+                    name: HVAC Installation
+                  - id: 5550e8400-e29b-41d4-a716-446655440015
+                    name: Other
+        '405':
+          description: Method not allowed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: METHOD_NOT_ALLOWED
+                message: Only GET method is allowed
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /getAllJobStatus:
+    get:
+      tags:
+        - Job Management
+      summary: Get all available job status types
+      description: |
+        Returns a list of all available job status types for job workflow management.
+
+        **Use Case:**
+        - Used for dropdown/selection in job management and tracking forms
+        - Provides standardized list of job status stages
+        - No authentication required - public endpoint
+        - Three status types: Draft, In Use, Ready
+
+        **Returns:**
+        - Array of job status types with id and name
+        - Sorted alphabetically by name
+      operationId: getAllJobStatus
+      responses:
+        '200':
+          description: Job status types retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                          format: uuid
+                          description: Unique identifier for the job status type
+                          example: 550e8400-e29b-41d4-a716-446655440000
+                        name:
+                          type: string
+                          description: Name of the job status type
+                          example: Draft
+              example:
+                data:
+                  - id: 550e8400-e29b-41d4-a716-446655440000
+                    name: Draft
+                  - id: 660e8400-e29b-41d4-a716-446655440001
+                    name: In Use
+                  - id: 770e8400-e29b-41d4-a716-446655440002
+                    name: Ready
+        '405':
+          description: Method not allowed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: METHOD_NOT_ALLOWED
+                message: Only GET method is allowed
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /getAllStates:
+    get:
+      tags:
+        - Referral Management
+      summary: Get all US states
+      description: |
+        Returns a list of all 50 US states with their standard abbreviations.
+
+        **Use Case:**
+        - Used for dropdown/selection in address forms
+        - Provides standardized list of US states
+        - No authentication required - public endpoint
+
+        **Returns:**
+        - Array of states with name and abbreviation
+        - Sorted alphabetically by name
+      operationId: getAllStates
+      responses:
+        '200':
+          description: States retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        name:
+                          type: string
+                          description: Full state name
+                          example: California
+                        abbreviation:
+                          type: string
+                          description: Two-letter state abbreviation
+                          example: CA
+              example:
+                data:
+                  - name: Alabama
+                    abbreviation: AL
+                  - name: Alaska
+                    abbreviation: AK
+                  - name: California
+                    abbreviation: CA
+        '405':
+          description: Method not allowed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /createReferral:
+    post:
+      tags:
+        - Referral Management
+      summary: Create a new referral
+      description: |
+        Creates a new referral with Draft status. All fields are optional - if no data is provided, creates an empty referral with default values.
+
+        **Business Rules:**
+        - Status is always set to "Draft" on creation
+        - All fields have default empty values
+        - Returns the complete created referral object
+      operationId: createReferral
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              description: All fields are optional
+      responses:
+        '201':
+          description: Referral created successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: success
+                  message:
+                    type: string
+                    example: Referral created successfully
+                  data:
+                    $ref: '#/components/schemas/Referral'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /getReferralById:
+    post:
+      tags:
+        - Referral Management
+      summary: Get referral by ID
+      description: |
+        Retrieves a specific referral by its ID.
+
+        **Required:**
+        - id: UUID of the referral
+      operationId: getReferralById
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - id
+              properties:
+                id:
+                  type: string
+                  format: uuid
+                  description: Referral ID
+                  example: 550e8400-e29b-41d4-a716-446655440000
+      responses:
+        '200':
+          description: Referral retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: success
+                  data:
+                    $ref: '#/components/schemas/Referral'
+        '400':
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Referral not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /getAllReferrals:
+    get:
+      tags:
+        - Referral Management
+      summary: Get all referrals
+      description: |
+        Returns a list of all referrals from the database, ordered by creation date (newest first).
+
+        **Returns:**
+        - Array of complete referral objects
+        - Includes all referral details
+      operationId: getAllReferrals
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Referrals retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Referral'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /updateReferralById:
+    patch:
+      tags:
+        - Referral Management
+      summary: Update referral by ID
+      description: |
+        Updates a specific referral by its ID. Can update any field except the ID itself.
+
+        **Validation:**
+        - address must be a JSON object
+        - job_details must be a JSON object
+        - job_type must be a JSON object with id and name
+        - status can be passed as string ("Draft", "In Use", "Ready") or JSON object
+
+        **Supported Fields:**
+        - name, phone, email (home_owner_info)
+        - address, street, city, state, zip (address fields)
+        - job_type, value, currency, referral_percentage, notes (job_details)
+        - status
+
+        **Note:** Automatically updates the updated_at timestamp
+      operationId: updateReferralById
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - id
+              properties:
+                id:
+                  type: string
+                  format: uuid
+                  description: Referral ID (required)
+                name:
+                  type: string
+                  description: Home owner name
+                phone:
+                  type: string
+                  description: Home owner phone
+                email:
+                  type: string
+                  format: email
+                  description: Home owner email
+                address:
+                  type: object
+                  description: Complete address object
+                street:
+                  type: string
+                  description: Street address
+                city:
+                  type: string
+                  description: City name
+                state:
+                  description: State (string abbreviation or object)
+                  oneOf:
+                    - type: string
+                    - type: object
+                zip:
+                  type: string
+                  description: ZIP code
+                job_type:
+                  type: object
+                  description: Job type object with id and name
+                value:
+                  type: number
+                  description: Job value
+                currency:
+                  type: string
+                  description: Currency code
+                referral_percentage:
+                  type: number
+                  description: Referral percentage
+                notes:
+                  type: string
+                  description: Job notes
+                status:
+                  description: Status (string name or object)
+                  oneOf:
+                    - type: string
+                    - type: object
+            examples:
+              updateName:
+                summary: Update home owner name
+                value:
+                  id: 550e8400-e29b-41d4-a716-446655440000
+                  name: Jane Smith
+              updateStatus:
+                summary: Update status (string)
+                value:
+                  id: 550e8400-e29b-41d4-a716-446655440000
+                  status: In Use
+              updateMultipleFields:
+                summary: Update multiple fields
+                value:
+                  id: 550e8400-e29b-41d4-a716-446655440000
+                  name: John Doe
+                  phone: +1-555-987-6543
+                  city: San Francisco
+                  value: 3500
+      responses:
+        '200':
+          description: Referral updated successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: success
+                  message:
+                    type: string
+                    example: Referral updated successfully
+                  data:
+                    $ref: '#/components/schemas/Referral'
+        '400':
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Referral not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /searchReferral:
+    post:
+      tags:
+        - Referral Management
+      summary: Search referrals
+      description: |
+        Searches referrals based on query and/or filters.
+
+        **Business Rules:**
+        - Either `query` or `filters` must be provided (at least one is mandatory)
+        - Query searches by home owner name or phone number (case-insensitive, partial match)
+        - Filters can include: job_type, status, and/or value
+        - If both query and filters are provided, all criteria are combined (AND logic)
+
+        **Query:**
+        - Searches in home_owner_info.name and home_owner_info.phone
+        - Partial string matching, case-insensitive
+
+        **Filters:**
+        - job_type: Must be a JSON object with id and/or name
+        - status: Must be a JSON object with id and/or name
+        - value: Must be a number (exact match)
+        - At least one filter field must be provided if using filters
+
+        **Returns:** Array of matching referrals ordered by created_at (newest first)
+      operationId: searchReferral
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                query:
+                  type: string
+                  description: Search term for home owner name or phone number
+                filters:
+                  type: object
+                  description: Filter criteria
+                  properties:
+                    job_type:
+                      type: object
+                      description: Filter by job type
+                      properties:
+                        id:
+                          type: integer
+                        name:
+                          type: string
+                    status:
+                      type: object
+                      description: Filter by status
+                      properties:
+                        id:
+                          type: string
+                          format: uuid
+                        name:
+                          type: string
+                    value:
+                      type: number
+                      description: Filter by exact job value
+            examples:
+              searchByName:
+                summary: Search by home owner name
+                value:
+                  query: John Doe
+              searchByPhone:
+                summary: Search by phone number
+                value:
+                  query: "555-123"
+              filterByStatus:
+                summary: Filter by status only
+                value:
+                  filters:
+                    status:
+                      name: Draft
+              filterByJobType:
+                summary: Filter by job type
+                value:
+                  filters:
+                    job_type:
+                      id: 3
+                      name: Plumbing
+              filterByValue:
+                summary: Filter by job value
+                value:
+                  filters:
+                    value: 2500
+              combinedSearch:
+                summary: Query with multiple filters
+                value:
+                  query: John
+                  filters:
+                    status:
+                      id: d7db3360-6d15-4379-989c-560ae96bfa28
+                      name: Draft
+                    job_type:
+                      id: 3
+                      name: Plumbing
+                    value: 2500
+      responses:
+        '200':
+          description: Search results returned successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: success
+                  message:
+                    type: string
+                    example: Found 5 referral(s)
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Referral'
+              examples:
+                foundResults:
+                  summary: Results found
+                  value:
+                    status: success
+                    message: Found 2 referral(s)
+                    data:
+                      - id: 550e8400-e29b-41d4-a716-446655440000
+                        home_owner_info:
+                          name: John Doe
+                          address:
+                            street: 123 Main St
+                            city: Anytown
+                            state:
+                              name: California
+                              abbreviation: CA
+                            zip: "90210"
+                          phone: +1-555-123-4567
+                          email: john@example.com
+                        job_details:
+                          job_type:
+                            id: 3
+                            name: Plumbing
+                          value: 2500
+                          currency: USD
+                          referral_percentage: 10
+                          notes: Customer requested urgent service
+                        status:
+                          id: d7db3360-6d15-4379-989c-560ae96bfa28
+                          name: Draft
+                        created_at: "2025-01-19T10:00:00.000Z"
+                        updated_at: "2025-01-19T10:00:00.000Z"
+                noResults:
+                  summary: No results found
+                  value:
+                    status: success
+                    message: Found 0 referral(s)
+                    data: []
+        '400':
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                missingBoth:
+                  summary: Neither query nor filters provided
+                  value:
+                    error: INVALID_INPUT
+                    message: Either 'query' or 'filters' must be provided
+                invalidFilters:
+                  summary: Filters not an object
+                  value:
+                    error: INVALID_INPUT
+                    message: filters must be a JSON object
+                noFilterFields:
+                  summary: Empty filters object
+                  value:
+                    error: INVALID_INPUT
+                    message: At least one filter (job_type, status, or value) must be provided
+                invalidJobType:
+                  summary: Invalid job_type format
+                  value:
+                    error: INVALID_INPUT
+                    message: job_type must be a JSON object with id and name
+                invalidValue:
+                  summary: Invalid value type
+                  value:
+                    error: INVALID_INPUT
+                    message: value must be a number
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /uploadImage:
+    post:
+      tags:
+        - Gallery Management
+      summary: Upload image to referral gallery
+      description: |
+        Uploads an image to a referral's photo gallery.
+
+        **Business Rules:**
+        - Requires referral_id and image file in multipart/form-data
+        - If no gallery exists for the referral, creates one automatically
+        - Uploads image to Supabase Storage in folder: gallery/{gallery_id}
+        - Default image type is "none" (can be changed later with changePhotoTypeById)
+        - Supported formats: JPEG, PNG, WebP, HEIC, HEIF
+        - Maximum file size: 4MB
+
+        **Returns:** Updated gallery with the newly uploaded image
+      operationId: uploadImage
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - referral_id
+                - image
+              properties:
+                referral_id:
+                  type: string
+                  format: uuid
+                  description: Referral ID to upload image for
+                image:
+                  type: string
+                  format: binary
+                  description: "Image file to upload (max 4MB, JPEG/PNG/WebP/HEIC/HEIF)"
+      responses:
+        '201':
+          description: Image uploaded successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: success
+                  message:
+                    type: string
+                    example: Image uploaded successfully
+                  data:
+                    type: object
+                    properties:
+                      gallery:
+                        $ref: '#/components/schemas/Gallery'
+                      uploaded_image:
+                        type: object
+                        properties:
+                          id:
+                            type: string
+                            format: uuid
+                          url:
+                            type: string
+                            format: uri
+                          type:
+                            type: string
+                            enum: [before, after, none]
+        '400':
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                missingReferralId:
+                  summary: Missing referral_id
+                  value:
+                    error: INVALID_INPUT
+                    message: referral_id is required and must be a string
+                missingImage:
+                  summary: Missing image file
+                  value:
+                    error: INVALID_INPUT
+                    message: image file is required
+                invalidFileType:
+                  summary: Invalid file type
+                  value:
+                    error: INVALID_INPUT
+                    message: Only image files (JPEG, PNG, WebP, HEIC, HEIF) are allowed
+                fileTooLarge:
+                  summary: File size exceeds limit
+                  value:
+                    error: INVALID_INPUT
+                    message: Image file size must not exceed 4MB
+        '404':
+          description: Referral not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: REFERRAL_NOT_FOUND
+                message: Referral not found
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /getPhotoGallery:
+    post:
+      tags:
+        - Gallery Management
+      summary: Get photo gallery for referral
+      description: |
+        Retrieves the photo gallery for a specific referral.
+
+        **Business Rules:**
+        - Requires referral_id in request body
+        - Returns gallery with all images (before/after/none types)
+        - Returns empty gallery structure if no gallery exists for the referral
+
+        **Returns:** Gallery object with images array
+      operationId: getPhotoGallery
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - referral_id
+              properties:
+                referral_id:
+                  type: string
+                  format: uuid
+                  description: Referral ID to get gallery for
+            example:
+              referral_id: 550e8400-e29b-41d4-a716-446655440000
+      responses:
+        '200':
+          description: Gallery retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: success
+                  message:
+                    type: string
+                    example: Gallery retrieved successfully
+                  data:
+                    $ref: '#/components/schemas/Gallery'
+              examples:
+                withImages:
+                  summary: Gallery with images
+                  value:
+                    status: success
+                    message: Gallery retrieved successfully
+                    data:
+                      id: 660e8400-e29b-41d4-a716-446655440001
+                      referral_id: 550e8400-e29b-41d4-a716-446655440000
+                      images:
+                        - id: 770e8400-e29b-41d4-a716-446655440002
+                          url: https://example.supabase.co/storage/v1/object/public/images/gallery/660e8400/image1.jpg
+                          type: before
+                        - id: 880e8400-e29b-41d4-a716-446655440003
+                          url: https://example.supabase.co/storage/v1/object/public/images/gallery/660e8400/image2.jpg
+                          type: after
+                        - id: 990e8400-e29b-41d4-a716-446655440004
+                          url: https://example.supabase.co/storage/v1/object/public/images/gallery/660e8400/image3.jpg
+                          type: none
+                      created_at: "2025-01-19T10:00:00.000Z"
+                      updated_at: "2025-01-19T11:30:00.000Z"
+                emptyGallery:
+                  summary: No gallery found
+                  value:
+                    status: success
+                    message: No gallery found for this referral
+                    data:
+                      id: null
+                      referral_id: 550e8400-e29b-41d4-a716-446655440000
+                      images: []
+                      created_at: null
+                      updated_at: null
+        '400':
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: INVALID_INPUT
+                message: referral_id is required
+        '404':
+          description: Referral not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: REFERRAL_NOT_FOUND
+                message: Referral not found
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /changePhotoTypeById:
+    patch:
+      tags:
+        - Gallery Management
+      summary: Change photo type by ID
+      description: |
+        Updates the type of a specific photo in a gallery.
+
+        **Business Rules:**
+        - Requires id (photo ID) and type in request body
+        - Valid types: "before", "after", "none"
+        - Type is case-insensitive (automatically converted to lowercase)
+        - Searches across all galleries to find the photo
+        - Updates the photo type in the gallery's images array
+
+        **Returns:** Updated gallery with modified photo
+      operationId: changePhotoTypeById
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - id
+                - type
+              properties:
+                id:
+                  type: string
+                  format: uuid
+                  description: Photo ID to update
+                type:
+                  type: string
+                  enum: [before, after, none, BEFORE, AFTER, NONE]
+                  description: New type for the photo (case-insensitive)
+            examples:
+              changeToBefore:
+                summary: Change to before type
+                value:
+                  id: 770e8400-e29b-41d4-a716-446655440002
+                  type: before
+              changeToAfter:
+                summary: Change to after type
+                value:
+                  id: 880e8400-e29b-41d4-a716-446655440003
+                  type: AFTER
+              changeToNone:
+                summary: Change to none type
+                value:
+                  id: 990e8400-e29b-41d4-a716-446655440004
+                  type: none
+      responses:
+        '200':
+          description: Photo type updated successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: success
+                  message:
+                    type: string
+                    example: Photo type updated successfully
+                  data:
+                    type: object
+                    properties:
+                      gallery:
+                        $ref: '#/components/schemas/Gallery'
+                      updated_photo:
+                        type: object
+                        properties:
+                          id:
+                            type: string
+                            format: uuid
+                          url:
+                            type: string
+                            format: uri
+                          type:
+                            type: string
+                            enum: [before, after, none]
+        '400':
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                missingId:
+                  summary: Missing photo ID
+                  value:
+                    error: INVALID_INPUT
+                    message: Photo ID is required
+                missingType:
+                  summary: Missing type
+                  value:
+                    error: INVALID_INPUT
+                    message: Type is required
+                invalidType:
+                  summary: Invalid type value
+                  value:
+                    error: INVALID_INPUT
+                    message: "Invalid type. Must be one of: before, after, none"
+        '404':
+          description: Photo not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: PHOTO_NOT_FOUND
+                message: Photo not found in any gallery
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /getOrganization:
+    get:
+      tags:
+        - Organization Management
+      summary: Get organization information
+      description: |
+        Retrieves organization information based on the authenticated user's role.
+
+        **Intelligent Role-Based Retrieval:**
+        - **ADMIN users:** Returns the organization where they are the owner (owner_id = their UID)
+        - **MARKETER users:** Returns the organization where they are listed as a member
+        - **TECHNICIAN users:** Returns the organization where they are listed as a member
+
+        **Returns:**
+        - Complete organization details including business information
+        - List of all organization members (with their UIDs and roles)
+        - Organization owner information
+        - Timestamps for creation and last update
+      operationId: getOrganization
+      security:
+        - SupabaseAuth: []
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Organization retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GetOrganizationResponse'
+              examples:
+                adminView:
+                  summary: Admin viewing their organization
+                  value:
+                    status: success
+                    data:
+                      id: 770e8400-e29b-41d4-a716-446655440003
+                      owner_id: 550e8400-e29b-41d4-a716-446655440000
+                      business_name: Tech Solutions Inc
+                      business_address: 123 Main Street, Silicon Valley, CA 94025
+                      business_email: contact@techsolutions.com
+                      registration_number: REG-2025-12345
+                      industry: Technology
+                      phone_number: +1-555-123-4567
+                      website_url: https://techsolutions.com
+                      organization_members:
+                        - member_uid: 660e8400-e29b-41d4-a716-446655440001
+                          member_role: MARKETER
+                        - member_uid: 660e8400-e29b-41d4-a716-446655440002
+                          member_role: TECHNICIAN
+                      created_at: '2025-01-18T10:00:00.000Z'
+                      updated_at: '2025-01-18T15:30:00.000Z'
+                memberView:
+                  summary: MARKETER/TECHNICIAN viewing their organization
+                  value:
+                    status: success
+                    data:
+                      id: 770e8400-e29b-41d4-a716-446655440003
+                      owner_id: 550e8400-e29b-41d4-a716-446655440000
+                      business_name: Tech Solutions Inc
+                      business_address: 123 Main Street, Silicon Valley, CA 94025
+                      business_email: contact@techsolutions.com
+                      registration_number: REG-2025-12345
+                      industry: Technology
+                      phone_number: +1-555-123-4567
+                      website_url: https://techsolutions.com
+                      organization_members:
+                        - member_uid: 660e8400-e29b-41d4-a716-446655440001
+                          member_role: MARKETER
+                        - member_uid: 660e8400-e29b-41d4-a716-446655440002
+                          member_role: TECHNICIAN
+                      created_at: '2025-01-18T10:00:00.000Z'
+                      updated_at: '2025-01-18T15:30:00.000Z'
+        '401':
+          description: Unauthorized - Missing or invalid token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                missingAuth:
+                  summary: Missing authorization header
+                  value:
+                    error: UNAUTHORIZED
+                    message: Authorization header is required
+                invalidToken:
+                  summary: Invalid token
+                  value:
+                    error: INVALID_TOKEN
+                    message: Invalid or expired token
+        '404':
+          description: Organization not found or user not associated with any organization
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                notFound:
+                  summary: Organization not found
+                  value:
+                    error: ORGANIZATION_NOT_FOUND
+                    message: Organization not found
+                notMember:
+                  summary: User not associated with organization
+                  value:
+                    error: ORGANIZATION_NOT_FOUND
+                    message: You are not associated with any organization
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+components:
+  schemas:
+    SignUpRequest:
+      type: object
+      required:
+        - email
+        - password
+      properties:
+        email:
+          type: string
+          format: email
+          description: User's email address
+          example: user@example.com
+        password:
+          type: string
+          format: password
+          minLength: 8
+          description: |
+            User's password must meet the following requirements:
+            - At least 8 characters long
+            - At least one uppercase letter (A-Z)
+            - At least one lowercase letter (a-z)
+            - At least one number (0-9)
+            - At least one special character (!@#$%^&* etc.)
+          example: SecurePass123!
+        fullName:
+          type: string
+          description: User's full name (optional)
+          example: John Doe
+        role:
+          type: string
+          enum: [ADMIN, MARKETER, TECHNICIAN]
+          description: User role (default is TECHNICIAN). ADMIN role requires authenticated ADMIN user.
+          example: TECHNICIAN
+
+    SignUpResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          example: success
+        message:
+          type: string
+          example: User created successfully
+        user:
+          type: object
+          properties:
+            id:
+              type: string
+              format: uuid
+              example: 550e8400-e29b-41d4-a716-446655440000
+            email:
+              type: string
+              format: email
+              example: user@example.com
+            fullName:
+              type: string
+              nullable: true
+              example: John Doe
+            role:
+              type: string
+              enum: [ADMIN, MARKETER, TECHNICIAN]
+              example: TECHNICIAN
+
+    LoginRequest:
+      type: object
+      required:
+        - email
+        - password
+      properties:
+        email:
+          type: string
+          format: email
+          description: User's email address
+          example: user@example.com
+        password:
+          type: string
+          format: password
+          description: |
+            User's password must meet the following requirements:
+            - At least 8 characters long
+            - At least one uppercase letter (A-Z)
+            - At least one lowercase letter (a-z)
+            - At least one number (0-9)
+            - At least one special character (!@#$%^&* etc.)
+          example: SecurePass123!
+
+    LoginResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          example: success
+        message:
+          type: string
+          example: Login successful
+        token:
+          type: string
+          description: JWT access token from Supabase Auth (expires in 1 hour)
+          example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI1NTBlODQwMC1lMjliLTQxZDQtYTcxNi00NDY2NTU0NDAwMDAiLCJlbWFpbCI6InVzZXJAZXhhbXBsZS5jb20iLCJpYXQiOjE3MDAwMDAwMDAsImV4cCI6MTcwMDAwMzYwMH0.signature
+        refreshToken:
+          type: string
+          description: Refresh token for obtaining new access tokens
+          example: xYz123RefreshToken456...
+        expiresIn:
+          type: number
+          description: Access token expiry time in seconds
+          example: 3600
+        role:
+          type: string
+          enum: [ADMIN, MARKETER, TECHNICIAN]
+          description: User's assigned role
+          example: TECHNICIAN
+        user:
+          type: object
+          properties:
+            id:
+              type: string
+              format: uuid
+              example: 550e8400-e29b-41d4-a716-446655440000
+            email:
+              type: string
+              format: email
+              example: user@example.com
+            fullName:
+              type: string
+              nullable: true
+              example: John Doe
+
+    ForgotPasswordRequest:
+      type: object
+      required:
+        - email
+      properties:
+        email:
+          type: string
+          format: email
+          description: User's email address
+          example: user@example.com
+
+    ResetPasswordRequest:
+      type: object
+      required:
+        - access_token
+        - newPassword
+      properties:
+        access_token:
+          type: string
+          description: Access token from password reset email URL
+          example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+        newPassword:
+          type: string
+          format: password
+          minLength: 8
+          description: |
+            New password must meet the following requirements:
+            - At least 8 characters long
+            - At least one uppercase letter (A-Z)
+            - At least one lowercase letter (a-z)
+            - At least one number (0-9)
+            - At least one special character (!@#$%^&* etc.)
+          example: NewSecurePass123!
+
+    GetUserResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          example: success
+        data:
+          type: object
+          properties:
+            id:
+              type: string
+              format: uuid
+              description: User's unique identifier
+              example: 550e8400-e29b-41d4-a716-446655440000
+            email:
+              type: string
+              format: email
+              description: User's email address
+              example: tech@example.com
+            role:
+              type: string
+              enum: [ADMIN, MARKETER, TECHNICIAN]
+              description: User's assigned role
+              example: TECHNICIAN
+            full_name:
+              type: string
+              nullable: true
+              description: User's full name
+              example: John Technician
+            created_at:
+              type: string
+              format: date-time
+              description: Account creation timestamp
+              example: '2025-01-13T10:00:00.000Z'
+
+    MessageResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          example: success
+        message:
+          type: string
+          description: Success message
+          example: Operation completed successfully
+
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+          description: Error code
+          example: INVALID_INPUT
+        message:
+          type: string
+          description: Human-readable error message
+          example: Email and password are required
+
+    OrganizationMember:
+      type: object
+      properties:
+        member_uid:
+          type: string
+          format: uuid
+          description: User ID of the organization member
+          example: 660e8400-e29b-41d4-a716-446655440001
+        member_role:
+          type: string
+          enum: [ADMIN, MARKETER, TECHNICIAN]
+          description: Role of the member in the organization
+          example: MARKETER
+
+    Organization:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Organization's unique identifier
+          example: 770e8400-e29b-41d4-a716-446655440003
+        owner_id:
+          type: string
+          format: uuid
+          description: User ID of the organization owner (ADMIN)
+          example: 550e8400-e29b-41d4-a716-446655440000
+        business_name:
+          type: string
+          nullable: true
+          description: Name of the business/organization
+          example: Tech Solutions Inc
+        registration_number:
+          type: string
+          nullable: true
+          description: Business registration number
+          example: REG-2025-12345
+        industry:
+          type: string
+          nullable: true
+          description: Industry sector
+          example: Technology
+        business_address:
+          type: string
+          nullable: true
+          description: Business physical address
+          example: 123 Main Street, Silicon Valley, CA 94025
+        business_email:
+          type: string
+          format: email
+          nullable: true
+          description: Business contact email
+          example: contact@techsolutions.com
+        phone_number:
+          type: string
+          nullable: true
+          description: Business phone number
+          example: +1-555-123-4567
+        website_url:
+          type: string
+          format: uri
+          nullable: true
+          description: Business website URL
+          example: https://techsolutions.com
+        organization_members:
+          type: array
+          items:
+            $ref: '#/components/schemas/OrganizationMember'
+          description: List of organization members (MARKETER and TECHNICIAN users)
+        created_at:
+          type: string
+          format: date-time
+          description: Organization creation timestamp
+          example: '2025-01-18T10:00:00.000Z'
+        updated_at:
+          type: string
+          format: date-time
+          description: Organization last update timestamp
+          example: '2025-01-18T15:30:00.000Z'
+
+    SaveOrganizationRequest:
+      type: object
+      required:
+        - business_name
+        - business_address
+        - business_email
+      properties:
+        business_name:
+          type: string
+          description: Name of the business/organization (required)
+          example: Tech Solutions Inc
+        registration_number:
+          type: string
+          description: Business registration number (optional)
+          example: REG-2025-12345
+        industry:
+          type: string
+          description: Industry sector (optional)
+          example: Technology
+        business_address:
+          type: string
+          description: Business physical address (required)
+          example: 123 Main Street, Silicon Valley, CA 94025
+        business_email:
+          type: string
+          format: email
+          description: Business contact email (required)
+          example: contact@techsolutions.com
+        phone_number:
+          type: string
+          description: Business phone number (optional)
+          example: +1-555-123-4567
+        website_url:
+          type: string
+          format: uri
+          description: Business website URL (optional)
+          example: https://techsolutions.com
+
+    GetOrganizationResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          example: success
+        data:
+          $ref: '#/components/schemas/Organization'
+
+    Referral:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Referral unique identifier
+          example: 550e8400-e29b-41d4-a716-446655440000
+        home_owner_info:
+          type: object
+          properties:
+            name:
+              type: string
+              description: Home owner name
+              example: John Doe
+            address:
+              type: object
+              properties:
+                street:
+                  type: string
+                  description: Street address
+                  example: 123 Main St
+                city:
+                  type: string
+                  description: City name
+                  example: Anytown
+                state:
+                  type: object
+                  properties:
+                    name:
+                      type: string
+                      description: Full state name
+                      example: California
+                    abbreviation:
+                      type: string
+                      description: State abbreviation
+                      example: CA
+                zip:
+                  type: string
+                  description: ZIP code
+                  example: '90210'
+            phone:
+              type: string
+              description: Phone number
+              example: +1-555-123-4567
+            email:
+              type: string
+              format: email
+              description: Email address
+              example: john@example.com
+        job_details:
+          type: object
+          properties:
+            job_type:
+              type: object
+              properties:
+                id:
+                  type: string
+                  format: uuid
+                  description: Job type ID
+                  example: 3
+                name:
+                  type: string
+                  description: Job type name
+                  example: Plumbing
+            value:
+              type: number
+              description: Job value
+              example: 2500
+            currency:
+              type: string
+              description: Currency code
+              example: USD
+            referral_percentage:
+              type: number
+              description: Referral percentage
+              example: 10
+            notes:
+              type: string
+              description: Additional notes
+              example: Customer requested urgent service.
+        status:
+          type: object
+          properties:
+            id:
+              type: string
+              format: uuid
+              description: Status ID
+              example: d7db3360-6d15-4379-989c-560ae96bfa28
+            name:
+              type: string
+              description: Status name
+              example: Draft
+        created_at:
+          type: string
+          format: date-time
+          description: Creation timestamp
+          example: '2025-01-19T10:00:00.000Z'
+        updated_at:
+          type: string
+          format: date-time
+          description: Last update timestamp
+          example: '2025-01-19T10:00:00.000Z'
+
+    Gallery:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Gallery unique identifier
+          example: 660e8400-e29b-41d4-a716-446655440001
+        referral_id:
+          type: string
+          format: uuid
+          description: Referral ID linked to this gallery
+          example: 550e8400-e29b-41d4-a716-446655440000
+        images:
+          type: array
+          description: Array of images in the gallery
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+                format: uuid
+                description: Image unique identifier
+                example: 770e8400-e29b-41d4-a716-446655440002
+              url:
+                type: string
+                format: uri
+                description: Public URL of the image
+                example: https://example.supabase.co/storage/v1/object/public/images/gallery/660e8400/image1.jpg
+              type:
+                type: string
+                enum: [before, after, none]
+                description: Image type classification
+                example: before
+        created_at:
+          type: string
+          format: date-time
+          description: Gallery creation timestamp
+          example: '2025-01-19T10:00:00.000Z'
+        updated_at:
+          type: string
+          format: date-time
+          description: Gallery last update timestamp
+          example: '2025-01-19T11:30:00.000Z'
+
+  securitySchemes:
+    SupabaseAuth:
+      type: apiKey
+      in: header
+      name: apikey
+      description: |
+        Supabase anon/public key. Required for all requests to Supabase Edge Functions.
+        Get this from your Supabase Dashboard > Project Settings > API > anon/public key.
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        JWT access token obtained from /login endpoint.
+        Include in Authorization header as: Bearer <token>
+        Required for authenticated endpoints like /logout and creating ADMIN users.
