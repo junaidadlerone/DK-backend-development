@@ -32,6 +32,7 @@ interface RequestBody {
   html_front?: string;
   html_back?: string;
   description?: string;
+  postcardSize?: '4x6' | '6x9' | '6x11';
 }
 
 Deno.serve(async (req) => {
@@ -83,7 +84,7 @@ Deno.serve(async (req) => {
       );
     }
 
-    const { postgridApiKey, template_bundle_id, html_front, html_back, description } = requestBody;
+    const { postgridApiKey, template_bundle_id, html_front, html_back, description, postcardSize } = requestBody;
 
     // Validate required fields
     if (!template_bundle_id || typeof template_bundle_id !== 'string') {
@@ -103,10 +104,19 @@ Deno.serve(async (req) => {
     }
 
     // Validate at least one update field provided
-    if (!html_front && !html_back && !description) {
+    if (!html_front && !html_back && !description && !postcardSize) {
       return errorResponse(
         "INVALID_INPUT",
-        "At least one of html_front, html_back, or description must be provided",
+        "At least one of html_front, html_back, description, or postcardSize must be provided",
+        400
+      );
+    }
+
+    // Validate postcardSize if provided
+    if (postcardSize && !['4x6', '6x9', '6x11'].includes(postcardSize)) {
+      return errorResponse(
+        "INVALID_INPUT",
+        "postcardSize must be one of: '4x6', '6x9', '6x11'",
         400
       );
     }
@@ -152,50 +162,58 @@ Deno.serve(async (req) => {
     const backTemplate = bundle.back;
 
     const updatedFields: string[] = [];
+    if (postcardSize) updatedFields.push('postcard_size');
 
-    // Update front template if html_front or description provided
-    if (html_front || description) {
-      const frontFormData = new URLSearchParams();
-      if (html_front) {
-        frontFormData.append('html', html_front);
-      }
-      if (description) {
-        frontFormData.append('description', `${description} Front`);
-      }
-
-      const frontResponse = await fetch(
-        `https://api.postgrid.com/print-mail/v1/templates/${frontTemplate.postgrid_template_id}`,
-        {
-          method: 'POST',
-          headers: {
-            'x-api-key': postgridApiKey,
-            'Content-Type': 'application/x-www-form-urlencoded'
-          },
-          body: frontFormData.toString()
-        }
-      );
-
-      if (!frontResponse.ok) {
-        const errorText = await frontResponse.text();
-        console.error("PostGrid API error (front update):", errorText);
-        return errorResponse(
-          "POSTGRID_API_ERROR",
-          `Failed to update front template in PostGrid: ${frontResponse.status} - ${errorText}`,
-          500
-        );
-      }
-
-      const updatedFrontTemplate = await frontResponse.json();
-
-      // Update front template in database
+    // Update front template
+    if (html_front || description || postcardSize) {
       const dbUpdateData: any = { updated_at: new Date().toISOString() };
-      if (html_front) {
-        dbUpdateData.html = updatedFrontTemplate.html || html_front;
-        updatedFields.push('html_front');
+      
+      if (postcardSize) {
+        dbUpdateData.postcard_size = postcardSize;
       }
-      if (description) {
-        dbUpdateData.description = updatedFrontTemplate.description || `${description} Front`;
-        updatedFields.push('description');
+
+      if (html_front || description) {
+        const frontFormData = new URLSearchParams();
+        if (html_front) {
+          frontFormData.append('html', html_front);
+        }
+        if (description) {
+          frontFormData.append('description', `${description} Front`);
+        }
+
+        const frontResponse = await fetch(
+          `https://api.postgrid.com/print-mail/v1/templates/${frontTemplate.postgrid_template_id}`,
+          {
+            method: 'POST',
+            headers: {
+              'x-api-key': postgridApiKey,
+              'Content-Type': 'application/x-www-form-urlencoded'
+            },
+            body: frontFormData.toString()
+          }
+        );
+
+        if (!frontResponse.ok) {
+          const errorText = await frontResponse.text();
+          console.error("PostGrid API error (front update):", errorText);
+          return errorResponse(
+            "POSTGRID_API_ERROR",
+            `Failed to update front template in PostGrid: ${frontResponse.status} - ${errorText}`,
+            500
+          );
+        }
+
+        const updatedFrontTemplate = await frontResponse.json();
+        
+        if (html_front) {
+          dbUpdateData.html = updatedFrontTemplate.html || html_front;
+          updatedFields.push('html_front');
+        }
+        if (description) {
+          dbUpdateData.description = updatedFrontTemplate.description || `${description} Front`;
+          // Only push description once if not already pushed
+          if (!updatedFields.includes('description')) updatedFields.push('description');
+        }
       }
 
       const { error: frontUpdateError } = await supabase
@@ -217,52 +235,58 @@ Deno.serve(async (req) => {
         frontTemplate.id,
         user.userId,
         user.userName,
-        `updated front template in bundle (${updatedFields.join(", ")})`
+        `updated front template in bundle (${Object.keys(dbUpdateData).filter(k => k !== 'updated_at').join(", ")})`
       );
     }
 
-    // Update back template if html_back or description provided
-    if (html_back || description) {
-      const backFormData = new URLSearchParams();
-      if (html_back) {
-        backFormData.append('html', html_back);
-      }
-      if (description) {
-        backFormData.append('description', `${description} Back`);
-      }
-
-      const backResponse = await fetch(
-        `https://api.postgrid.com/print-mail/v1/templates/${backTemplate.postgrid_template_id}`,
-        {
-          method: 'POST',
-          headers: {
-            'x-api-key': postgridApiKey,
-            'Content-Type': 'application/x-www-form-urlencoded'
-          },
-          body: backFormData.toString()
-        }
-      );
-
-      if (!backResponse.ok) {
-        const errorText = await backResponse.text();
-        console.error("PostGrid API error (back update):", errorText);
-        return errorResponse(
-          "POSTGRID_API_ERROR",
-          `Failed to update back template in PostGrid: ${backResponse.status} - ${errorText}`,
-          500
-        );
-      }
-
-      const updatedBackTemplate = await backResponse.json();
-
-      // Update back template in database
+    // Update back template
+    if (html_back || description || postcardSize) {
       const dbUpdateData: any = { updated_at: new Date().toISOString() };
-      if (html_back) {
-        dbUpdateData.html = updatedBackTemplate.html || html_back;
-        if (!updatedFields.includes('html_back')) updatedFields.push('html_back');
+
+      if (postcardSize) {
+        dbUpdateData.postcard_size = postcardSize;
       }
-      if (description) {
-        dbUpdateData.description = updatedBackTemplate.description || `${description} Back`;
+
+      if (html_back || description) {
+        const backFormData = new URLSearchParams();
+        if (html_back) {
+          backFormData.append('html', html_back);
+        }
+        if (description) {
+          backFormData.append('description', `${description} Back`);
+        }
+
+        const backResponse = await fetch(
+          `https://api.postgrid.com/print-mail/v1/templates/${backTemplate.postgrid_template_id}`,
+          {
+            method: 'POST',
+            headers: {
+              'x-api-key': postgridApiKey,
+              'Content-Type': 'application/x-www-form-urlencoded'
+            },
+            body: backFormData.toString()
+          }
+        );
+
+        if (!backResponse.ok) {
+          const errorText = await backResponse.text();
+          console.error("PostGrid API error (back update):", errorText);
+          return errorResponse(
+            "POSTGRID_API_ERROR",
+            `Failed to update back template in PostGrid: ${backResponse.status} - ${errorText}`,
+            500
+          );
+        }
+
+        const updatedBackTemplate = await backResponse.json();
+
+        if (html_back) {
+          dbUpdateData.html = updatedBackTemplate.html || html_back;
+          if (!updatedFields.includes('html_back')) updatedFields.push('html_back');
+        }
+        if (description) {
+          dbUpdateData.description = updatedBackTemplate.description || `${description} Back`;
+        }
       }
 
       const { error: backUpdateError } = await supabase
@@ -284,7 +308,7 @@ Deno.serve(async (req) => {
         backTemplate.id,
         user.userId,
         user.userName,
-        `updated back template in bundle (${updatedFields.join(", ")})`
+        `updated back template in bundle (${Object.keys(dbUpdateData).filter(k => k !== 'updated_at').join(", ")})`
       );
     }
 
@@ -321,8 +345,9 @@ Deno.serve(async (req) => {
       await createNotification({
         supabase,
         organizationId: bundle.organization_id,
+        notificationType: "TEMPLATE_BUNDLE_UPDATED",
         title: "Template Bundle Updated",
-        message: `${user.userName} updated template bundle`,
+        description: `${user.userName} updated template bundle`,
         targetRoles: [ROLES.ADMIN],
         metadata: {
           bundle_id: template_bundle_id,

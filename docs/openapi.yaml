@@ -10936,6 +10936,13 @@ paths:
                 description:
                   type: string
                   description: New base description (optional, will append " Front"/" Back")
+                postcardSize:
+                  type: string
+                  enum:
+                    - 4x6
+                    - 6x9
+                    - 6x11
+                  description: Size of the postcard. Updates both front and back templates.
             example:
               postgridApiKey: "test_sk_..."
               template_bundle_id: "550e8400-e29b-41d4-a716-446655440000"
