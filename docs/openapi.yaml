@@ -10948,6 +10948,7 @@ paths:
               template_bundle_id: "550e8400-e29b-41d4-a716-446655440000"
               html_front: "<h1>Updated Front</h1>"
               description: "Fall Campaign"
+              postcardSize: "6x9"
       responses:
         "200":
           description: Template bundle updated successfully
