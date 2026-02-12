@@ -11592,6 +11592,219 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
+  /getAllCountries:
+    get:
+      tags:
+        - Version 2 APIs
+      summary: Get all countries
+      description: |
+        Returns a comprehensive list of all countries with their ISO 3166-1 alpha-2 codes.
+
+        **Access Control:**
+        - Publicly accessible (no auth required)
+      operationId: getAllCountries
+      responses:
+        "200":
+          description: Countries retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: success
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        name:
+                          type: string
+                        code:
+                          type: string
+                          description: ISO 3166-1 alpha-2 code
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /getAllStatesV2:
+    get:
+      tags:
+        - Version 2 APIs
+      summary: Get states/provinces for a country
+      description: |
+        Returns all states or provinces for a specific country by name.
+
+        **Access Control:**
+        - Publicly accessible (no auth required)
+      operationId: getAllStatesV2
+      parameters:
+        - name: country_name
+          in: query
+          required: true
+          description: Name of the country to fetch states for
+          schema:
+            type: string
+          example: "United States"
+      responses:
+        "200":
+          description: States retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: success
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        name:
+                          type: string
+                        code:
+                          type: string
+                          description: ISO 3166-2 code
+        "404":
+          description: Country not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /completeOnboarding:
+    post:
+      tags:
+        - Version 2 APIs
+      summary: Complete onboarding steps
+      description: |
+        Multi-step onboarding process for setting up organization details.
+
+        **Steps:**
+        1. **Business Info**: Updates organization business details
+        2. **Address Info**: Updates organization address
+        3. **Branding**: Uploads logo and sets theme settings
+
+        **Access Control:**
+        - Requires authentication
+        - User must be in an organization
+      operationId: completeOnboarding
+      security:
+        - BearerAuth: []
+        - SupabaseAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - step
+              properties:
+                step:
+                  type: integer
+                  enum: [1, 2, 3]
+                  description: Onboarding step number
+                # Step 1 Fields
+                business_name:
+                  type: string
+                  description: Required for step 1
+                industry:
+                  type: string
+                  description: Required for step 1
+                business_phone_number:
+                  type: string
+                  description: Optional for step 1
+                website_url:
+                  type: string
+                  description: Optional for step 1
+                # Step 2 Fields
+                country:
+                  type: string
+                  description: Required for step 2
+                street_address:
+                  type: string
+                  description: Required for step 2
+                city:
+                  type: string
+                  description: Required for step 2
+                state:
+                  type: string
+                  description: Required for step 2
+                zip:
+                  type: string
+                  description: Required for step 2
+                # Step 3 Fields
+                company_logo:
+                  type: string
+                  description: Base64 encoded image string or data URL (Required for step 3 if uploading logo)
+                theme:
+                  type: object
+                  description: Branding theme settings
+                  properties:
+                    colors:
+                      type: object
+                      properties:
+                        primary: { type: string }
+                        secondary: { type: string }
+                        accent: { type: string }
+                    fonts:
+                      type: object
+                      properties:
+                        primary:
+                          type: object
+                          properties:
+                            name: { type: string }
+                        body:
+                          type: object
+                          properties:
+                            name: { type: string }
+      responses:
+        "200":
+          description: Onboarding step completed successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: success
+                  message:
+                    type: string
+                  processingTimeMs:
+                    type: number
+        "400":
+          description: Invalid input or missing fields
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
   /createCampaignV2:
     post:
       tags:
