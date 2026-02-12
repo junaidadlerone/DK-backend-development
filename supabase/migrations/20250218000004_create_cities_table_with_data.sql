@@ -10,17 +10,25 @@ CREATE TABLE IF NOT EXISTS us_cities (
 );
 
 -- Create indexes
-CREATE INDEX idx_us_cities_state_id ON us_cities(state_id);
-CREATE INDEX idx_us_cities_name ON us_cities(name);
+CREATE INDEX IF NOT EXISTS idx_us_cities_state_id ON us_cities(state_id);
+CREATE INDEX IF NOT EXISTS idx_us_cities_name ON us_cities(name);
 
 -- Enable RLS
 ALTER TABLE us_cities ENABLE ROW LEVEL SECURITY;
 
 -- Policy: Allow public read access to US cities
-CREATE POLICY "Anyone can view US cities"
-  ON us_cities
-  FOR SELECT
-  USING (true);
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_policies
+        WHERE tablename = 'us_cities'
+        AND policyname = 'Anyone can view US cities'
+    ) THEN
+        CREATE POLICY "Anyone can view US cities" ON us_cities FOR SELECT USING (true);
+    END IF;
+END
+$$;
 
 -- Add comment
 COMMENT ON TABLE us_cities IS 'List of cities in the United States organized by state';
@@ -44,14 +52,14 @@ SELECT city, id FROM unnest(ARRAY[
   'Florence',
   'Gadsden'
 ]) AS city
-CROSS JOIN us_states WHERE abbreviation = 'AL';
+CROSS JOIN us_states WHERE abbreviation = 'AL' ON CONFLICT (name, state_id) DO NOTHING;
 
 -- Insert cities for Alaska (AK)
 INSERT INTO us_cities (name, state_id)
 SELECT city, id FROM unnest(ARRAY[
   'Anchorage'
 ]) AS city
-CROSS JOIN us_states WHERE abbreviation = 'AK';
+CROSS JOIN us_states WHERE abbreviation = 'AK' ON CONFLICT (name, state_id) DO NOTHING;
 
 -- Insert cities for Arizona (AZ)
 INSERT INTO us_cities (name, state_id)
@@ -82,7 +90,7 @@ SELECT city, id FROM unnest(ARRAY[
   'Marana',
   'Apache Junction'
 ]) AS city
-CROSS JOIN us_states WHERE abbreviation = 'AZ';
+CROSS JOIN us_states WHERE abbreviation = 'AZ' ON CONFLICT (name, state_id) DO NOTHING;
 
 -- Insert cities for Arkansas (AR)
 INSERT INTO us_cities (name, state_id)
@@ -98,7 +106,7 @@ SELECT city, id FROM unnest(ARRAY[
   'Pine Bluff',
   'Bentonville'
 ]) AS city
-CROSS JOIN us_states WHERE abbreviation = 'AR';
+CROSS JOIN us_states WHERE abbreviation = 'AR' ON CONFLICT (name, state_id) DO NOTHING;
 
 -- Insert cities for California (CA)
 INSERT INTO us_cities (name, state_id)
@@ -317,7 +325,7 @@ SELECT city, id FROM unnest(ARRAY[
   'Los Banos',
   'Martinez'
 ]) AS city
-CROSS JOIN us_states WHERE abbreviation = 'CA';
+CROSS JOIN us_states WHERE abbreviation = 'CA' ON CONFLICT (name, state_id) DO NOTHING;
 
 -- Insert cities for Colorado (CO)
 INSERT INTO us_cities (name, state_id)
@@ -344,7 +352,7 @@ SELECT city, id FROM unnest(ARRAY[
   'Littleton',
   'Northglenn'
 ]) AS city
-CROSS JOIN us_states WHERE abbreviation = 'CO';
+CROSS JOIN us_states WHERE abbreviation = 'CO' ON CONFLICT (name, state_id) DO NOTHING;
 
 -- Insert cities for Connecticut (CT)
 INSERT INTO us_cities (name, state_id)
@@ -365,7 +373,7 @@ SELECT city, id FROM unnest(ARRAY[
   'Norwich',
   'Shelton'
 ]) AS city
-CROSS JOIN us_states WHERE abbreviation = 'CT';
+CROSS JOIN us_states WHERE abbreviation = 'CT' ON CONFLICT (name, state_id) DO NOTHING;
 
 -- Insert cities for Delaware (DE)
 INSERT INTO us_cities (name, state_id)
@@ -373,7 +381,7 @@ SELECT city, id FROM unnest(ARRAY[
   'Wilmington',
   'Dover'
 ]) AS city
-CROSS JOIN us_states WHERE abbreviation = 'DE';
+CROSS JOIN us_states WHERE abbreviation = 'DE' ON CONFLICT (name, state_id) DO NOTHING;
 
 -- Insert cities for Florida (FL)
 INSERT INTO us_cities (name, state_id)
@@ -451,7 +459,7 @@ SELECT city, id FROM unnest(ARRAY[
   'Winter Garden',
   'Aventura'
 ]) AS city
-CROSS JOIN us_states WHERE abbreviation = 'FL';
+CROSS JOIN us_states WHERE abbreviation = 'FL' ON CONFLICT (name, state_id) DO NOTHING;
 
 -- Insert cities for Georgia (GA)
 INSERT INTO us_cities (name, state_id)
@@ -473,14 +481,14 @@ SELECT city, id FROM unnest(ARRAY[
   'Smyrna',
   'Dunwoody'
 ]) AS city
-CROSS JOIN us_states WHERE abbreviation = 'GA';
+CROSS JOIN us_states WHERE abbreviation = 'GA' ON CONFLICT (name, state_id) DO NOTHING;
 
 -- Insert cities for Hawaii (HI)
 INSERT INTO us_cities (name, state_id)
 SELECT city, id FROM unnest(ARRAY[
   'Honolulu'
 ]) AS city
-CROSS JOIN us_states WHERE abbreviation = 'HI';
+CROSS JOIN us_states WHERE abbreviation = 'HI' ON CONFLICT (name, state_id) DO NOTHING;
 
 -- Insert cities for Idaho (ID)
 INSERT INTO us_cities (name, state_id)
@@ -494,7 +502,7 @@ SELECT city, id FROM unnest(ARRAY[
   'Coeur d''Alene',
   'Twin Falls'
 ]) AS city
-CROSS JOIN us_states WHERE abbreviation = 'ID';
+CROSS JOIN us_states WHERE abbreviation = 'ID' ON CONFLICT (name, state_id) DO NOTHING;
 
 -- Insert cities for Illinois (IL)
 INSERT INTO us_cities (name, state_id)
@@ -552,7 +560,7 @@ SELECT city, id FROM unnest(ARRAY[
   'Addison',
   'Calumet City'
 ]) AS city
-CROSS JOIN us_states WHERE abbreviation = 'IL';
+CROSS JOIN us_states WHERE abbreviation = 'IL' ON CONFLICT (name, state_id) DO NOTHING;
 
 -- Insert cities for Indiana (IN)
 INSERT INTO us_cities (name, state_id)
@@ -580,7 +588,7 @@ SELECT city, id FROM unnest(ARRAY[
   'Columbus',
   'Portage'
 ]) AS city
-CROSS JOIN us_states WHERE abbreviation = 'IN';
+CROSS JOIN us_states WHERE abbreviation = 'IN' ON CONFLICT (name, state_id) DO NOTHING;
 
 -- Insert cities for Iowa (IA)
 INSERT INTO us_cities (name, state_id)
@@ -599,7 +607,7 @@ SELECT city, id FROM unnest(ARRAY[
   'Urbandale',
   'Cedar Falls'
 ]) AS city
-CROSS JOIN us_states WHERE abbreviation = 'IA';
+CROSS JOIN us_states WHERE abbreviation = 'IA' ON CONFLICT (name, state_id) DO NOTHING;
 
 -- Insert cities for Kansas (KS)
 INSERT INTO us_cities (name, state_id)
@@ -616,7 +624,7 @@ SELECT city, id FROM unnest(ARRAY[
   'Salina',
   'Hutchinson'
 ]) AS city
-CROSS JOIN us_states WHERE abbreviation = 'KS';
+CROSS JOIN us_states WHERE abbreviation = 'KS' ON CONFLICT (name, state_id) DO NOTHING;
 
 -- Insert cities for Kentucky (KY)
 INSERT INTO us_cities (name, state_id)
@@ -627,7 +635,7 @@ SELECT city, id FROM unnest(ARRAY[
   'Owensboro',
   'Covington'
 ]) AS city
-CROSS JOIN us_states WHERE abbreviation = 'KY';
+CROSS JOIN us_states WHERE abbreviation = 'KY' ON CONFLICT (name, state_id) DO NOTHING;
 
 -- Insert cities for Louisiana (LA)
 INSERT INTO us_cities (name, state_id)
@@ -642,14 +650,14 @@ SELECT city, id FROM unnest(ARRAY[
   'Monroe',
   'Alexandria'
 ]) AS city
-CROSS JOIN us_states WHERE abbreviation = 'LA';
+CROSS JOIN us_states WHERE abbreviation = 'LA' ON CONFLICT (name, state_id) DO NOTHING;
 
 -- Insert cities for Maine (ME)
 INSERT INTO us_cities (name, state_id)
 SELECT city, id FROM unnest(ARRAY[
   'Portland'
 ]) AS city
-CROSS JOIN us_states WHERE abbreviation = 'ME';
+CROSS JOIN us_states WHERE abbreviation = 'ME' ON CONFLICT (name, state_id) DO NOTHING;
 
 -- Insert cities for Maryland (MD)
 INSERT INTO us_cities (name, state_id)
@@ -662,7 +670,7 @@ SELECT city, id FROM unnest(ARRAY[
   'Hagerstown',
   'Annapolis'
 ]) AS city
-CROSS JOIN us_states WHERE abbreviation = 'MD';
+CROSS JOIN us_states WHERE abbreviation = 'MD' ON CONFLICT (name, state_id) DO NOTHING;
 
 -- Insert cities for Massachusetts (MA)
 INSERT INTO us_cities (name, state_id)
@@ -704,7 +712,7 @@ SELECT city, id FROM unnest(ARRAY[
   'Woburn',
   'Chelsea'
 ]) AS city
-CROSS JOIN us_states WHERE abbreviation = 'MA';
+CROSS JOIN us_states WHERE abbreviation = 'MA' ON CONFLICT (name, state_id) DO NOTHING;
 
 -- Insert cities for Michigan (MI)
 INSERT INTO us_cities (name, state_id)
@@ -741,7 +749,7 @@ SELECT city, id FROM unnest(ARRAY[
   'Lincoln Park',
   'Muskegon'
 ]) AS city
-CROSS JOIN us_states WHERE abbreviation = 'MI';
+CROSS JOIN us_states WHERE abbreviation = 'MI' ON CONFLICT (name, state_id) DO NOTHING;
 
 -- Insert cities for Minnesota (MN)
 INSERT INTO us_cities (name, state_id)
@@ -771,7 +779,7 @@ SELECT city, id FROM unnest(ARRAY[
   'Moorhead',
   'Shakopee'
 ]) AS city
-CROSS JOIN us_states WHERE abbreviation = 'MN';
+CROSS JOIN us_states WHERE abbreviation = 'MN' ON CONFLICT (name, state_id) DO NOTHING;
 
 -- Insert cities for Mississippi (MS)
 INSERT INTO us_cities (name, state_id)
@@ -783,7 +791,7 @@ SELECT city, id FROM unnest(ARRAY[
   'Biloxi',
   'Meridian'
 ]) AS city
-CROSS JOIN us_states WHERE abbreviation = 'MS';
+CROSS JOIN us_states WHERE abbreviation = 'MS' ON CONFLICT (name, state_id) DO NOTHING;
 
 -- Insert cities for Missouri (MO)
 INSERT INTO us_cities (name, state_id)
@@ -805,7 +813,7 @@ SELECT city, id FROM unnest(ARRAY[
   'Jefferson City',
   'Cape Girardeau'
 ]) AS city
-CROSS JOIN us_states WHERE abbreviation = 'MO';
+CROSS JOIN us_states WHERE abbreviation = 'MO' ON CONFLICT (name, state_id) DO NOTHING;
 
 -- Insert cities for Montana (MT)
 INSERT INTO us_cities (name, state_id)
@@ -815,7 +823,7 @@ SELECT city, id FROM unnest(ARRAY[
   'Great Falls',
   'Bozeman'
 ]) AS city
-CROSS JOIN us_states WHERE abbreviation = 'MT';
+CROSS JOIN us_states WHERE abbreviation = 'MT' ON CONFLICT (name, state_id) DO NOTHING;
 
 -- Insert cities for Nebraska (NE)
 INSERT INTO us_cities (name, state_id)
@@ -825,7 +833,7 @@ SELECT city, id FROM unnest(ARRAY[
   'Bellevue',
   'Grand Island'
 ]) AS city
-CROSS JOIN us_states WHERE abbreviation = 'NE';
+CROSS JOIN us_states WHERE abbreviation = 'NE' ON CONFLICT (name, state_id) DO NOTHING;
 
 -- Insert cities for Nevada (NV)
 INSERT INTO us_cities (name, state_id)
@@ -837,7 +845,7 @@ SELECT city, id FROM unnest(ARRAY[
   'Sparks',
   'Carson City'
 ]) AS city
-CROSS JOIN us_states WHERE abbreviation = 'NV';
+CROSS JOIN us_states WHERE abbreviation = 'NV' ON CONFLICT (name, state_id) DO NOTHING;
 
 -- Insert cities for New Hampshire (NH)
 INSERT INTO us_cities (name, state_id)
@@ -846,7 +854,7 @@ SELECT city, id FROM unnest(ARRAY[
   'Nashua',
   'Concord'
 ]) AS city
-CROSS JOIN us_states WHERE abbreviation = 'NH';
+CROSS JOIN us_states WHERE abbreviation = 'NH' ON CONFLICT (name, state_id) DO NOTHING;
 
 -- Insert cities for New Jersey (NJ)
 INSERT INTO us_cities (name, state_id)
@@ -874,7 +882,7 @@ SELECT city, id FROM unnest(ARRAY[
   'Linden',
   'Atlantic City'
 ]) AS city
-CROSS JOIN us_states WHERE abbreviation = 'NJ';
+CROSS JOIN us_states WHERE abbreviation = 'NJ' ON CONFLICT (name, state_id) DO NOTHING;
 
 -- Insert cities for New Mexico (NM)
 INSERT INTO us_cities (name, state_id)
@@ -887,7 +895,7 @@ SELECT city, id FROM unnest(ARRAY[
   'Farmington',
   'Clovis'
 ]) AS city
-CROSS JOIN us_states WHERE abbreviation = 'NM';
+CROSS JOIN us_states WHERE abbreviation = 'NM' ON CONFLICT (name, state_id) DO NOTHING;
 
 -- Insert cities for New York (NY)
 INSERT INTO us_cities (name, state_id)
@@ -910,7 +918,7 @@ SELECT city, id FROM unnest(ARRAY[
   'Freeport',
   'Valley Stream'
 ]) AS city
-CROSS JOIN us_states WHERE abbreviation = 'NY';
+CROSS JOIN us_states WHERE abbreviation = 'NY' ON CONFLICT (name, state_id) DO NOTHING;
 
 -- Insert cities for North Carolina (NC)
 INSERT INTO us_cities (name, state_id)
@@ -939,7 +947,7 @@ SELECT city, id FROM unnest(ARRAY[
   'Hickory',
   'Goldsboro'
 ]) AS city
-CROSS JOIN us_states WHERE abbreviation = 'NC';
+CROSS JOIN us_states WHERE abbreviation = 'NC' ON CONFLICT (name, state_id) DO NOTHING;
 
 -- Insert cities for North Dakota (ND)
 INSERT INTO us_cities (name, state_id)
@@ -949,7 +957,7 @@ SELECT city, id FROM unnest(ARRAY[
   'Grand Forks',
   'Minot'
 ]) AS city
-CROSS JOIN us_states WHERE abbreviation = 'ND';
+CROSS JOIN us_states WHERE abbreviation = 'ND' ON CONFLICT (name, state_id) DO NOTHING;
 
 -- Insert cities for Ohio (OH)
 INSERT INTO us_cities (name, state_id)
@@ -989,7 +997,7 @@ SELECT city, id FROM unnest(ARRAY[
   'Marion',
   'Grove City'
 ]) AS city
-CROSS JOIN us_states WHERE abbreviation = 'OH';
+CROSS JOIN us_states WHERE abbreviation = 'OH' ON CONFLICT (name, state_id) DO NOTHING;
 
 -- Insert cities for Oklahoma (OK)
 INSERT INTO us_cities (name, state_id)
@@ -1006,7 +1014,7 @@ SELECT city, id FROM unnest(ARRAY[
   'Stillwater',
   'Muskogee'
 ]) AS city
-CROSS JOIN us_states WHERE abbreviation = 'OK';
+CROSS JOIN us_states WHERE abbreviation = 'OK' ON CONFLICT (name, state_id) DO NOTHING;
 
 -- Insert cities for Oregon (OR)
 INSERT INTO us_cities (name, state_id)
@@ -1026,7 +1034,7 @@ SELECT city, id FROM unnest(ARRAY[
   'Lake Oswego',
   'Keizer'
 ]) AS city
-CROSS JOIN us_states WHERE abbreviation = 'OR';
+CROSS JOIN us_states WHERE abbreviation = 'OR' ON CONFLICT (name, state_id) DO NOTHING;
 
 -- Insert cities for Pennsylvania (PA)
 INSERT INTO us_cities (name, state_id)
@@ -1045,7 +1053,7 @@ SELECT city, id FROM unnest(ARRAY[
   'State College',
   'Wilkes-Barre'
 ]) AS city
-CROSS JOIN us_states WHERE abbreviation = 'PA';
+CROSS JOIN us_states WHERE abbreviation = 'PA' ON CONFLICT (name, state_id) DO NOTHING;
 
 -- Insert cities for Rhode Island (RI)
 INSERT INTO us_cities (name, state_id)
@@ -1057,7 +1065,7 @@ SELECT city, id FROM unnest(ARRAY[
   'East Providence',
   'Woonsocket'
 ]) AS city
-CROSS JOIN us_states WHERE abbreviation = 'RI';
+CROSS JOIN us_states WHERE abbreviation = 'RI' ON CONFLICT (name, state_id) DO NOTHING;
 
 -- Insert cities for South Carolina (SC)
 INSERT INTO us_cities (name, state_id)
@@ -1075,7 +1083,7 @@ SELECT city, id FROM unnest(ARRAY[
   'Florence',
   'Spartanburg'
 ]) AS city
-CROSS JOIN us_states WHERE abbreviation = 'SC';
+CROSS JOIN us_states WHERE abbreviation = 'SC' ON CONFLICT (name, state_id) DO NOTHING;
 
 -- Insert cities for South Dakota (SD)
 INSERT INTO us_cities (name, state_id)
@@ -1083,7 +1091,7 @@ SELECT city, id FROM unnest(ARRAY[
   'Sioux Falls',
   'Rapid City'
 ]) AS city
-CROSS JOIN us_states WHERE abbreviation = 'SD';
+CROSS JOIN us_states WHERE abbreviation = 'SD' ON CONFLICT (name, state_id) DO NOTHING;
 
 -- Insert cities for Tennessee (TN)
 INSERT INTO us_cities (name, state_id)
@@ -1106,7 +1114,7 @@ SELECT city, id FROM unnest(ARRAY[
   'Germantown',
   'Brentwood'
 ]) AS city
-CROSS JOIN us_states WHERE abbreviation = 'TN';
+CROSS JOIN us_states WHERE abbreviation = 'TN' ON CONFLICT (name, state_id) DO NOTHING;
 
 -- Insert cities for Texas (TX)
 INSERT INTO us_cities (name, state_id)
@@ -1195,7 +1203,7 @@ SELECT city, id FROM unnest(ARRAY[
   'Friendswood',
   'Weslaco'
 ]) AS city
-CROSS JOIN us_states WHERE abbreviation = 'TX';
+CROSS JOIN us_states WHERE abbreviation = 'TX' ON CONFLICT (name, state_id) DO NOTHING;
 
 -- Insert cities for Utah (UT)
 INSERT INTO us_cities (name, state_id)
@@ -1219,14 +1227,14 @@ SELECT city, id FROM unnest(ARRAY[
   'Riverton',
   'Roy'
 ]) AS city
-CROSS JOIN us_states WHERE abbreviation = 'UT';
+CROSS JOIN us_states WHERE abbreviation = 'UT' ON CONFLICT (name, state_id) DO NOTHING;
 
 -- Insert cities for Vermont (VT)
 INSERT INTO us_cities (name, state_id)
 SELECT city, id FROM unnest(ARRAY[
   'Burlington'
 ]) AS city
-CROSS JOIN us_states WHERE abbreviation = 'VT';
+CROSS JOIN us_states WHERE abbreviation = 'VT' ON CONFLICT (name, state_id) DO NOTHING;
 
 -- Insert cities for Virginia (VA)
 INSERT INTO us_cities (name, state_id)
@@ -1249,7 +1257,7 @@ SELECT city, id FROM unnest(ARRAY[
   'Blacksburg',
   'Manassas'
 ]) AS city
-CROSS JOIN us_states WHERE abbreviation = 'VA';
+CROSS JOIN us_states WHERE abbreviation = 'VA' ON CONFLICT (name, state_id) DO NOTHING;
 
 -- Insert cities for Washington (WA)
 INSERT INTO us_cities (name, state_id)
@@ -1283,7 +1291,7 @@ SELECT city, id FROM unnest(ARRAY[
   'Bremerton',
   'Puyallup'
 ]) AS city
-CROSS JOIN us_states WHERE abbreviation = 'WA';
+CROSS JOIN us_states WHERE abbreviation = 'WA' ON CONFLICT (name, state_id) DO NOTHING;
 
 -- Insert cities for West Virginia (WV)
 INSERT INTO us_cities (name, state_id)
@@ -1291,7 +1299,7 @@ SELECT city, id FROM unnest(ARRAY[
   'Charleston',
   'Huntington'
 ]) AS city
-CROSS JOIN us_states WHERE abbreviation = 'WV';
+CROSS JOIN us_states WHERE abbreviation = 'WV' ON CONFLICT (name, state_id) DO NOTHING;
 
 -- Insert cities for Wisconsin (WI)
 INSERT INTO us_cities (name, state_id)
@@ -1317,7 +1325,7 @@ SELECT city, id FROM unnest(ARRAY[
   'Greenfield',
   'Beloit'
 ]) AS city
-CROSS JOIN us_states WHERE abbreviation = 'WI';
+CROSS JOIN us_states WHERE abbreviation = 'WI' ON CONFLICT (name, state_id) DO NOTHING;
 
 -- Insert cities for Wyoming (WY)
 INSERT INTO us_cities (name, state_id)
@@ -1380,7 +1388,7 @@ SELECT city, id FROM unnest(ARRAY[
   'Story',
   'Centennial'
 ]) AS city
-CROSS JOIN us_states WHERE abbreviation = 'WY';
+CROSS JOIN us_states WHERE abbreviation = 'WY' ON CONFLICT (name, state_id) DO NOTHING;
 
 -- Insert cities for each state
 -- Using state abbreviations to reference us_states table
@@ -1401,14 +1409,14 @@ SELECT city, id FROM unnest(ARRAY[
   'Florence',
   'Gadsden'
 ]) AS city
-CROSS JOIN us_states WHERE abbreviation = 'AL';
+CROSS JOIN us_states WHERE abbreviation = 'AL' ON CONFLICT (name, state_id) DO NOTHING;
 
 -- Insert cities for Alaska (AK)
 INSERT INTO us_cities (name, state_id)
 SELECT city, id FROM unnest(ARRAY[
   'Anchorage'
 ]) AS city
-CROSS JOIN us_states WHERE abbreviation = 'AK';
+CROSS JOIN us_states WHERE abbreviation = 'AK' ON CONFLICT (name, state_id) DO NOTHING;
 
 -- Insert cities for Arizona (AZ)
 INSERT INTO us_cities (name, state_id)
@@ -1439,7 +1447,7 @@ SELECT city, id FROM unnest(ARRAY[
   'Marana',
   'Apache Junction'
 ]) AS city
-CROSS JOIN us_states WHERE abbreviation = 'AZ';
+CROSS JOIN us_states WHERE abbreviation = 'AZ' ON CONFLICT (name, state_id) DO NOTHING;
 
 -- Insert cities for Arkansas (AR)
 INSERT INTO us_cities (name, state_id)
@@ -1455,7 +1463,7 @@ SELECT city, id FROM unnest(ARRAY[
   'Pine Bluff',
   'Bentonville'
 ]) AS city
-CROSS JOIN us_states WHERE abbreviation = 'AR';
+CROSS JOIN us_states WHERE abbreviation = 'AR' ON CONFLICT (name, state_id) DO NOTHING;
 
 -- Insert cities for California (CA)
 INSERT INTO us_cities (name, state_id)
@@ -1674,7 +1682,7 @@ SELECT city, id FROM unnest(ARRAY[
   'Los Banos',
   'Martinez'
 ]) AS city
-CROSS JOIN us_states WHERE abbreviation = 'CA';
+CROSS JOIN us_states WHERE abbreviation = 'CA' ON CONFLICT (name, state_id) DO NOTHING;
 
 -- Insert cities for Colorado (CO)
 INSERT INTO us_cities (name, state_id)
@@ -1701,7 +1709,7 @@ SELECT city, id FROM unnest(ARRAY[
   'Littleton',
   'Northglenn'
 ]) AS city
-CROSS JOIN us_states WHERE abbreviation = 'CO';
+CROSS JOIN us_states WHERE abbreviation = 'CO' ON CONFLICT (name, state_id) DO NOTHING;
 
 -- Insert cities for Connecticut (CT)
 INSERT INTO us_cities (name, state_id)
@@ -1722,7 +1730,7 @@ SELECT city, id FROM unnest(ARRAY[
   'Norwich',
   'Shelton'
 ]) AS city
-CROSS JOIN us_states WHERE abbreviation = 'CT';
+CROSS JOIN us_states WHERE abbreviation = 'CT' ON CONFLICT (name, state_id) DO NOTHING;
 
 -- Insert cities for Delaware (DE)
 INSERT INTO us_cities (name, state_id)
@@ -1730,7 +1738,7 @@ SELECT city, id FROM unnest(ARRAY[
   'Wilmington',
   'Dover'
 ]) AS city
-CROSS JOIN us_states WHERE abbreviation = 'DE';
+CROSS JOIN us_states WHERE abbreviation = 'DE' ON CONFLICT (name, state_id) DO NOTHING;
 
 -- Insert cities for Florida (FL)
 INSERT INTO us_cities (name, state_id)
@@ -1808,7 +1816,7 @@ SELECT city, id FROM unnest(ARRAY[
   'Winter Garden',
   'Aventura'
 ]) AS city
-CROSS JOIN us_states WHERE abbreviation = 'FL';
+CROSS JOIN us_states WHERE abbreviation = 'FL' ON CONFLICT (name, state_id) DO NOTHING;
 
 -- Insert cities for Georgia (GA)
 INSERT INTO us_cities (name, state_id)
@@ -1830,14 +1838,14 @@ SELECT city, id FROM unnest(ARRAY[
   'Smyrna',
   'Dunwoody'
 ]) AS city
-CROSS JOIN us_states WHERE abbreviation = 'GA';
+CROSS JOIN us_states WHERE abbreviation = 'GA' ON CONFLICT (name, state_id) DO NOTHING;
 
 -- Insert cities for Hawaii (HI)
 INSERT INTO us_cities (name, state_id)
 SELECT city, id FROM unnest(ARRAY[
   'Honolulu'
 ]) AS city
-CROSS JOIN us_states WHERE abbreviation = 'HI';
+CROSS JOIN us_states WHERE abbreviation = 'HI' ON CONFLICT (name, state_id) DO NOTHING;
 
 -- Insert cities for Idaho (ID)
 INSERT INTO us_cities (name, state_id)
@@ -1851,7 +1859,7 @@ SELECT city, id FROM unnest(ARRAY[
   'Coeur d''Alene',
   'Twin Falls'
 ]) AS city
-CROSS JOIN us_states WHERE abbreviation = 'ID';
+CROSS JOIN us_states WHERE abbreviation = 'ID' ON CONFLICT (name, state_id) DO NOTHING;
 
 -- Insert cities for Illinois (IL)
 INSERT INTO us_cities (name, state_id)
@@ -1909,7 +1917,7 @@ SELECT city, id FROM unnest(ARRAY[
   'Addison',
   'Calumet City'
 ]) AS city
-CROSS JOIN us_states WHERE abbreviation = 'IL';
+CROSS JOIN us_states WHERE abbreviation = 'IL' ON CONFLICT (name, state_id) DO NOTHING;
 
 -- Insert cities for Indiana (IN)
 INSERT INTO us_cities (name, state_id)
@@ -1937,7 +1945,7 @@ SELECT city, id FROM unnest(ARRAY[
   'Columbus',
   'Portage'
 ]) AS city
-CROSS JOIN us_states WHERE abbreviation = 'IN';
+CROSS JOIN us_states WHERE abbreviation = 'IN' ON CONFLICT (name, state_id) DO NOTHING;
 
 -- Insert cities for Iowa (IA)
 INSERT INTO us_cities (name, state_id)
@@ -1956,7 +1964,7 @@ SELECT city, id FROM unnest(ARRAY[
   'Urbandale',
   'Cedar Falls'
 ]) AS city
-CROSS JOIN us_states WHERE abbreviation = 'IA';
+CROSS JOIN us_states WHERE abbreviation = 'IA' ON CONFLICT (name, state_id) DO NOTHING;
 
 -- Insert cities for Kansas (KS)
 INSERT INTO us_cities (name, state_id)
@@ -1973,7 +1981,7 @@ SELECT city, id FROM unnest(ARRAY[
   'Salina',
   'Hutchinson'
 ]) AS city
-CROSS JOIN us_states WHERE abbreviation = 'KS';
+CROSS JOIN us_states WHERE abbreviation = 'KS' ON CONFLICT (name, state_id) DO NOTHING;
 
 -- Insert cities for Kentucky (KY)
 INSERT INTO us_cities (name, state_id)
@@ -1984,7 +1992,7 @@ SELECT city, id FROM unnest(ARRAY[
   'Owensboro',
   'Covington'
 ]) AS city
-CROSS JOIN us_states WHERE abbreviation = 'KY';
+CROSS JOIN us_states WHERE abbreviation = 'KY' ON CONFLICT (name, state_id) DO NOTHING;
 
 -- Insert cities for Louisiana (LA)
 INSERT INTO us_cities (name, state_id)
@@ -1999,14 +2007,14 @@ SELECT city, id FROM unnest(ARRAY[
   'Monroe',
   'Alexandria'
 ]) AS city
-CROSS JOIN us_states WHERE abbreviation = 'LA';
+CROSS JOIN us_states WHERE abbreviation = 'LA' ON CONFLICT (name, state_id) DO NOTHING;
 
 -- Insert cities for Maine (ME)
 INSERT INTO us_cities (name, state_id)
 SELECT city, id FROM unnest(ARRAY[
   'Portland'
 ]) AS city
-CROSS JOIN us_states WHERE abbreviation = 'ME';
+CROSS JOIN us_states WHERE abbreviation = 'ME' ON CONFLICT (name, state_id) DO NOTHING;
 
 -- Insert cities for Maryland (MD)
 INSERT INTO us_cities (name, state_id)
@@ -2019,7 +2027,7 @@ SELECT city, id FROM unnest(ARRAY[
   'Hagerstown',
   'Annapolis'
 ]) AS city
-CROSS JOIN us_states WHERE abbreviation = 'MD';
+CROSS JOIN us_states WHERE abbreviation = 'MD' ON CONFLICT (name, state_id) DO NOTHING;
 
 -- Insert cities for Massachusetts (MA)
 INSERT INTO us_cities (name, state_id)
@@ -2061,7 +2069,7 @@ SELECT city, id FROM unnest(ARRAY[
   'Woburn',
   'Chelsea'
 ]) AS city
-CROSS JOIN us_states WHERE abbreviation = 'MA';
+CROSS JOIN us_states WHERE abbreviation = 'MA' ON CONFLICT (name, state_id) DO NOTHING;
 
 -- Insert cities for Michigan (MI)
 INSERT INTO us_cities (name, state_id)
@@ -2098,7 +2106,7 @@ SELECT city, id FROM unnest(ARRAY[
   'Lincoln Park',
   'Muskegon'
 ]) AS city
-CROSS JOIN us_states WHERE abbreviation = 'MI';
+CROSS JOIN us_states WHERE abbreviation = 'MI' ON CONFLICT (name, state_id) DO NOTHING;
 
 -- Insert cities for Minnesota (MN)
 INSERT INTO us_cities (name, state_id)
@@ -2128,7 +2136,7 @@ SELECT city, id FROM unnest(ARRAY[
   'Moorhead',
   'Shakopee'
 ]) AS city
-CROSS JOIN us_states WHERE abbreviation = 'MN';
+CROSS JOIN us_states WHERE abbreviation = 'MN' ON CONFLICT (name, state_id) DO NOTHING;
 
 -- Insert cities for Mississippi (MS)
 INSERT INTO us_cities (name, state_id)
@@ -2140,7 +2148,7 @@ SELECT city, id FROM unnest(ARRAY[
   'Biloxi',
   'Meridian'
 ]) AS city
-CROSS JOIN us_states WHERE abbreviation = 'MS';
+CROSS JOIN us_states WHERE abbreviation = 'MS' ON CONFLICT (name, state_id) DO NOTHING;
 
 -- Insert cities for Missouri (MO)
 INSERT INTO us_cities (name, state_id)
@@ -2162,7 +2170,7 @@ SELECT city, id FROM unnest(ARRAY[
   'Jefferson City',
   'Cape Girardeau'
 ]) AS city
-CROSS JOIN us_states WHERE abbreviation = 'MO';
+CROSS JOIN us_states WHERE abbreviation = 'MO' ON CONFLICT (name, state_id) DO NOTHING;
 
 -- Insert cities for Montana (MT)
 INSERT INTO us_cities (name, state_id)
@@ -2172,7 +2180,7 @@ SELECT city, id FROM unnest(ARRAY[
   'Great Falls',
   'Bozeman'
 ]) AS city
-CROSS JOIN us_states WHERE abbreviation = 'MT';
+CROSS JOIN us_states WHERE abbreviation = 'MT' ON CONFLICT (name, state_id) DO NOTHING;
 
 -- Insert cities for Nebraska (NE)
 INSERT INTO us_cities (name, state_id)
@@ -2182,7 +2190,7 @@ SELECT city, id FROM unnest(ARRAY[
   'Bellevue',
   'Grand Island'
 ]) AS city
-CROSS JOIN us_states WHERE abbreviation = 'NE';
+CROSS JOIN us_states WHERE abbreviation = 'NE' ON CONFLICT (name, state_id) DO NOTHING;
 
 -- Insert cities for Nevada (NV)
 INSERT INTO us_cities (name, state_id)
@@ -2194,7 +2202,7 @@ SELECT city, id FROM unnest(ARRAY[
   'Sparks',
   'Carson City'
 ]) AS city
-CROSS JOIN us_states WHERE abbreviation = 'NV';
+CROSS JOIN us_states WHERE abbreviation = 'NV' ON CONFLICT (name, state_id) DO NOTHING;
 
 -- Insert cities for New Hampshire (NH)
 INSERT INTO us_cities (name, state_id)
@@ -2203,7 +2211,7 @@ SELECT city, id FROM unnest(ARRAY[
   'Nashua',
   'Concord'
 ]) AS city
-CROSS JOIN us_states WHERE abbreviation = 'NH';
+CROSS JOIN us_states WHERE abbreviation = 'NH' ON CONFLICT (name, state_id) DO NOTHING;
 
 -- Insert cities for New Jersey (NJ)
 INSERT INTO us_cities (name, state_id)
@@ -2231,7 +2239,7 @@ SELECT city, id FROM unnest(ARRAY[
   'Linden',
   'Atlantic City'
 ]) AS city
-CROSS JOIN us_states WHERE abbreviation = 'NJ';
+CROSS JOIN us_states WHERE abbreviation = 'NJ' ON CONFLICT (name, state_id) DO NOTHING;
 
 -- Insert cities for New Mexico (NM)
 INSERT INTO us_cities (name, state_id)
@@ -2244,7 +2252,7 @@ SELECT city, id FROM unnest(ARRAY[
   'Farmington',
   'Clovis'
 ]) AS city
-CROSS JOIN us_states WHERE abbreviation = 'NM';
+CROSS JOIN us_states WHERE abbreviation = 'NM' ON CONFLICT (name, state_id) DO NOTHING;
 
 -- Insert cities for New York (NY)
 INSERT INTO us_cities (name, state_id)
@@ -2267,7 +2275,7 @@ SELECT city, id FROM unnest(ARRAY[
   'Freeport',
   'Valley Stream'
 ]) AS city
-CROSS JOIN us_states WHERE abbreviation = 'NY';
+CROSS JOIN us_states WHERE abbreviation = 'NY' ON CONFLICT (name, state_id) DO NOTHING;
 
 -- Insert cities for North Carolina (NC)
 INSERT INTO us_cities (name, state_id)
@@ -2296,7 +2304,7 @@ SELECT city, id FROM unnest(ARRAY[
   'Hickory',
   'Goldsboro'
 ]) AS city
-CROSS JOIN us_states WHERE abbreviation = 'NC';
+CROSS JOIN us_states WHERE abbreviation = 'NC' ON CONFLICT (name, state_id) DO NOTHING;
 
 -- Insert cities for North Dakota (ND)
 INSERT INTO us_cities (name, state_id)
@@ -2306,7 +2314,7 @@ SELECT city, id FROM unnest(ARRAY[
   'Grand Forks',
   'Minot'
 ]) AS city
-CROSS JOIN us_states WHERE abbreviation = 'ND';
+CROSS JOIN us_states WHERE abbreviation = 'ND' ON CONFLICT (name, state_id) DO NOTHING;
 
 -- Insert cities for Ohio (OH)
 INSERT INTO us_cities (name, state_id)
@@ -2346,7 +2354,7 @@ SELECT city, id FROM unnest(ARRAY[
   'Marion',
   'Grove City'
 ]) AS city
-CROSS JOIN us_states WHERE abbreviation = 'OH';
+CROSS JOIN us_states WHERE abbreviation = 'OH' ON CONFLICT (name, state_id) DO NOTHING;
 
 -- Insert cities for Oklahoma (OK)
 INSERT INTO us_cities (name, state_id)
@@ -2363,7 +2371,7 @@ SELECT city, id FROM unnest(ARRAY[
   'Stillwater',
   'Muskogee'
 ]) AS city
-CROSS JOIN us_states WHERE abbreviation = 'OK';
+CROSS JOIN us_states WHERE abbreviation = 'OK' ON CONFLICT (name, state_id) DO NOTHING;
 
 -- Insert cities for Oregon (OR)
 INSERT INTO us_cities (name, state_id)
@@ -2383,7 +2391,7 @@ SELECT city, id FROM unnest(ARRAY[
   'Lake Oswego',
   'Keizer'
 ]) AS city
-CROSS JOIN us_states WHERE abbreviation = 'OR';
+CROSS JOIN us_states WHERE abbreviation = 'OR' ON CONFLICT (name, state_id) DO NOTHING;
 
 -- Insert cities for Pennsylvania (PA)
 INSERT INTO us_cities (name, state_id)
@@ -2402,7 +2410,7 @@ SELECT city, id FROM unnest(ARRAY[
   'State College',
   'Wilkes-Barre'
 ]) AS city
-CROSS JOIN us_states WHERE abbreviation = 'PA';
+CROSS JOIN us_states WHERE abbreviation = 'PA' ON CONFLICT (name, state_id) DO NOTHING;
 
 -- Insert cities for Rhode Island (RI)
 INSERT INTO us_cities (name, state_id)
@@ -2414,7 +2422,7 @@ SELECT city, id FROM unnest(ARRAY[
   'East Providence',
   'Woonsocket'
 ]) AS city
-CROSS JOIN us_states WHERE abbreviation = 'RI';
+CROSS JOIN us_states WHERE abbreviation = 'RI' ON CONFLICT (name, state_id) DO NOTHING;
 
 -- Insert cities for South Carolina (SC)
 INSERT INTO us_cities (name, state_id)
@@ -2432,7 +2440,7 @@ SELECT city, id FROM unnest(ARRAY[
   'Florence',
   'Spartanburg'
 ]) AS city
-CROSS JOIN us_states WHERE abbreviation = 'SC';
+CROSS JOIN us_states WHERE abbreviation = 'SC' ON CONFLICT (name, state_id) DO NOTHING;
 
 -- Insert cities for South Dakota (SD)
 INSERT INTO us_cities (name, state_id)
@@ -2440,7 +2448,7 @@ SELECT city, id FROM unnest(ARRAY[
   'Sioux Falls',
   'Rapid City'
 ]) AS city
-CROSS JOIN us_states WHERE abbreviation = 'SD';
+CROSS JOIN us_states WHERE abbreviation = 'SD' ON CONFLICT (name, state_id) DO NOTHING;
 
 -- Insert cities for Tennessee (TN)
 INSERT INTO us_cities (name, state_id)
@@ -2463,7 +2471,7 @@ SELECT city, id FROM unnest(ARRAY[
   'Germantown',
   'Brentwood'
 ]) AS city
-CROSS JOIN us_states WHERE abbreviation = 'TN';
+CROSS JOIN us_states WHERE abbreviation = 'TN' ON CONFLICT (name, state_id) DO NOTHING;
 
 -- Insert cities for Texas (TX)
 INSERT INTO us_cities (name, state_id)
@@ -2552,7 +2560,7 @@ SELECT city, id FROM unnest(ARRAY[
   'Friendswood',
   'Weslaco'
 ]) AS city
-CROSS JOIN us_states WHERE abbreviation = 'TX';
+CROSS JOIN us_states WHERE abbreviation = 'TX' ON CONFLICT (name, state_id) DO NOTHING;
 
 -- Insert cities for Utah (UT)
 INSERT INTO us_cities (name, state_id)
@@ -2576,14 +2584,14 @@ SELECT city, id FROM unnest(ARRAY[
   'Riverton',
   'Roy'
 ]) AS city
-CROSS JOIN us_states WHERE abbreviation = 'UT';
+CROSS JOIN us_states WHERE abbreviation = 'UT' ON CONFLICT (name, state_id) DO NOTHING;
 
 -- Insert cities for Vermont (VT)
 INSERT INTO us_cities (name, state_id)
 SELECT city, id FROM unnest(ARRAY[
   'Burlington'
 ]) AS city
-CROSS JOIN us_states WHERE abbreviation = 'VT';
+CROSS JOIN us_states WHERE abbreviation = 'VT' ON CONFLICT (name, state_id) DO NOTHING;
 
 -- Insert cities for Virginia (VA)
 INSERT INTO us_cities (name, state_id)
@@ -2606,7 +2614,7 @@ SELECT city, id FROM unnest(ARRAY[
   'Blacksburg',
   'Manassas'
 ]) AS city
-CROSS JOIN us_states WHERE abbreviation = 'VA';
+CROSS JOIN us_states WHERE abbreviation = 'VA' ON CONFLICT (name, state_id) DO NOTHING;
 
 -- Insert cities for Washington (WA)
 INSERT INTO us_cities (name, state_id)
@@ -2640,7 +2648,7 @@ SELECT city, id FROM unnest(ARRAY[
   'Bremerton',
   'Puyallup'
 ]) AS city
-CROSS JOIN us_states WHERE abbreviation = 'WA';
+CROSS JOIN us_states WHERE abbreviation = 'WA' ON CONFLICT (name, state_id) DO NOTHING;
 
 -- Insert cities for West Virginia (WV)
 INSERT INTO us_cities (name, state_id)
@@ -2648,7 +2656,7 @@ SELECT city, id FROM unnest(ARRAY[
   'Charleston',
   'Huntington'
 ]) AS city
-CROSS JOIN us_states WHERE abbreviation = 'WV';
+CROSS JOIN us_states WHERE abbreviation = 'WV' ON CONFLICT (name, state_id) DO NOTHING;
 
 -- Insert cities for Wisconsin (WI)
 INSERT INTO us_cities (name, state_id)
@@ -2674,7 +2682,7 @@ SELECT city, id FROM unnest(ARRAY[
   'Greenfield',
   'Beloit'
 ]) AS city
-CROSS JOIN us_states WHERE abbreviation = 'WI';
+CROSS JOIN us_states WHERE abbreviation = 'WI' ON CONFLICT (name, state_id) DO NOTHING;
 
 -- Insert cities for Wyoming (WY)
 INSERT INTO us_cities (name, state_id)
@@ -2737,4 +2745,4 @@ SELECT city, id FROM unnest(ARRAY[
   'Story',
   'Centennial'
 ]) AS city
-CROSS JOIN us_states WHERE abbreviation = 'WY';
+CROSS JOIN us_states WHERE abbreviation = 'WY' ON CONFLICT (name, state_id) DO NOTHING;

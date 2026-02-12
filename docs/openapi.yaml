@@ -72,7 +72,7 @@ info:
 servers:
   - url: https://iywivotqnphrjijztxtu.supabase.co/functions/v1
     description: Production server (PROD)
-  - url: https://kcjjrqlnsvjstednhcpx.supabase.co/functions/v1
+  - url: https://xnflihspegizweqidvow.supabase.co/functions/v1
     description: Development server (DEVELOPMENT)
   - url: http://localhost:54321/functions/v1
     description: Local development server
