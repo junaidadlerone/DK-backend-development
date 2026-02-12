@@ -11150,6 +11150,20 @@ paths:
           schema:
             type: string
             enum: ["4x6", "6x9", "6x11"]
+        - name: sort
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [a-z, z-a, newest, oldest, most-used]
+            default: newest
+          description: |
+            Sorting option:
+            - a-z: Alphabetically by template name
+            - z-a: Reverse alphabetically
+            - newest: Newest bundles first (default)
+            - oldest: Oldest bundles first
+            - most-used: Most used in campaigns first
       responses:
         "200":
           description: Template bundles retrieved successfully
