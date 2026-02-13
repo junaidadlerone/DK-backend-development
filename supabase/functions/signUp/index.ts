@@ -182,10 +182,24 @@ Deno.serve(async (req) => {
       // Don't fail the signup, just log the error as app content will be created on first access
     }
 
+
+    // Send OTP to email
+    const { error } = await supabase.auth.signInWithOtp({
+      email,
+      options: {
+        shouldCreateUser: false,
+      }
+    });
+
+    if (error) {
+      console.error("Generate OTP error:", error);
+      return errorResponse("OTP_GENERATION_FAILED", error.message || "Failed to send OTP", 500);
+    }
+
     // Prepare success response
     const response: SignUpResponse = {
       status: "success",
-      message: "User created successfully",
+      message: "User created successfully | OTP sent to your email",
       user: {
         id: authData.user.id,
         email: authData.user.email!,

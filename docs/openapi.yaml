@@ -168,7 +168,7 @@ paths:
                 $ref: "#/components/schemas/SignUpResponse"
               example:
                 status: success
-                message: User created successfully
+                message: "User created successfully | OTP sent to your email"
                 user:
                   id: 550e8400-e29b-41d4-a716-446655440000
                   email: admin@example.com
@@ -607,6 +607,15 @@ paths:
               example:
                 error: INVALID_CREDENTIALS
                 message: Invalid email or password
+        "403":
+          description: Forbidden - Email not verified
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: EMAIL_NOT_VERIFIED
+                message: Please verify your email address to login
         "404":
           description: User profile not found
           content:
@@ -801,6 +810,7 @@ paths:
                       role: TECHNICIAN
                       full_name: John Technician
                       created_at: "2025-01-13T10:00:00.000Z"
+                      onboarding: false
                 adminViewingOther:
                   summary: Admin viewing another user (with user_id param)
                   value:
@@ -811,6 +821,7 @@ paths:
                       role: MARKETER
                       full_name: Jane Marketer
                       created_at: "2025-01-12T15:30:00.000Z"
+                      onboarding: false
         "401":
           description: Unauthorized - Missing or invalid token
           content:
