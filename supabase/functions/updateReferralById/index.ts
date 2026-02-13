@@ -302,15 +302,12 @@ Deno.serve(async (req) => {
 
       // Determine which status to use based on all conditions
       const statusName = isReadyForSubmission ? "Ready" : "Draft";
-      const statusId = isReadyForSubmission
-        ? "4d1ca79a-1a0a-4c9f-a183-6c5bebd13336"  // Ready
-        : "d7db3360-6d15-4379-989c-560ae96bfa28"; // Draft
 
-      // Fetch the status from job_status_types
+      // Fetch the status from job_status_types by name (not hardcoded UUID)
       const { data: jobStatus, error: statusError } = await supabase
         .from("job_status_types")
         .select("id, name")
-        .eq("id", statusId)
+        .eq("name", statusName)
         .single();
 
       if (statusError || !jobStatus) {

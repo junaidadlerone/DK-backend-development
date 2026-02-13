@@ -11691,23 +11691,182 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+  /getOnboardingStep:
+    get:
+      tags:
+        - Version 2 APIs
+      summary: Get current onboarding progress
+      description: |
+        Returns the completed onboarding step and the next step for the user's organization.
+
+        **Logic:**
+        - Checks organization data for completion of steps
+        - Returns step progress (0-3)
+
+        **Response Structure:**
+        ```json
+        {
+          "completed_step": 1,
+          "next_step": 2
+        }
+        ```
+      operationId: getOnboardingStep
+      security:
+        - BearerAuth: []
+        - SupabaseAuth: []
+      responses:
+        "200":
+          description: Onboarding progress retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  completed_step:
+                    type: integer
+                    description: The highest step number completed (0-3)
+                    example: 1
+                  next_step:
+                    type: integer
+                    nullable: true
+                    description: The next step to complete, or null if finished
+                    example: 2
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 
   /completeOnboarding:
     post:
       tags:
         - Version 2 APIs
-      summary: Complete onboarding steps
+      summary: Complete onboarding steps (3-step process)
       description: |
-        Multi-step onboarding process for setting up organization details.
+        **Multi-step onboarding process for setting up organization details**
 
-        **Steps:**
-        1. **Business Info**: Updates organization business details
-        2. **Address Info**: Updates organization address
-        3. **Branding**: Uploads logo and sets theme settings
+        Complete setup of your organization through three distinct steps:
+        - Step 1: Business information (name, industry, phone, website)
+        - Step 2: Address information (country, street, city, state, zip)
+        - Step 3: Branding (company logo upload and theme settings)
 
         **Access Control:**
         - Requires authentication
         - User must be in an organization
+
+        ---
+
+        ## Step 1: Business Information
+
+        Provide basic business details for your organization.
+
+        **Request:**
+        ```json
+        {
+          "step": 1,
+          "business_name": "Acme Corp",
+          "industry": "Technology",
+          "business_phone_number": "+1-555-0123",
+          "website_url": "https://acmecorp.com"
+        }
+        ```
+
+        **Required Fields:**
+        - `step`: Must be 1
+        - `business_name`: Company/business name (string, not empty)
+        - `industry`: Industry type (string, not empty)
+
+        **Optional Fields:**
+        - `business_phone_number`: Business contact phone number
+        - `website_url`: Company website URL
+
+        **What Happens:**
+        - Updates organization with business information
+        - Sets onboarding step 1 as complete
+        - Returns success response
+
+        ---
+
+        ## Step 2: Address Information
+
+        Provide the physical address for your organization.
+
+        **Request:**
+        ```json
+        {
+          "step": 2,
+          "country": "United States",
+          "street_address": "123 Main Street",
+          "city": "San Francisco",
+          "state": "California",
+          "zip": "94102"
+        }
+        ```
+
+        **Required Fields:**
+        - `step`: Must be 2
+        - `country`: Country name (string, not empty)
+        - `street_address`: Street address (string, not empty)
+        - `city`: City name (string, not empty)
+        - `state`: State/province name (string, not empty)
+        - `zip`: ZIP/postal code (string, not empty)
+
+        **What Happens:**
+        - Updates organization with address information
+        - Sets onboarding step 2 as complete
+        - Returns success response
+
+        ---
+
+        ## Step 3: Logo Upload & Branding
+
+        Upload your company logo and set theme preferences.
+
+        **Request:**
+        ```json
+        {
+          "step": 3,
+          "company_logo": "data:image/png;base64,iVBORw0KGgoAAAANS...",
+          "theme": {
+            "colors": {
+              "primary": "#007bff",
+              "secondary": "#6c757d",
+              "accent": "#28a745"
+            },
+            "fonts": {
+              "primary": {
+                "name": "Inter"
+              },
+              "body": {
+                "name": "Roboto"
+              }
+            }
+          }
+        }
+        ```
+
+        **Required Fields:**
+        - `step`: Must be 3
+        - `company_logo`: Base64 encoded image string or data URL (required if uploading logo)
+
+        **Optional Fields:**
+        - `theme`: Branding theme settings object
+          - `colors`: Color scheme (primary, secondary, accent hex codes)
+          - `fonts`: Font preferences (primary and body font names)
+
+        **What Happens:**
+        - Uploads logo to CompanyLogos storage bucket
+        - Stores logo URL in organization
+        - Saves theme preferences
+        - Sets onboarding step 3 as complete
+        - **Onboarding complete!**
       operationId: completeOnboarding
       security:
         - BearerAuth: []
@@ -11717,68 +11876,104 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              required:
-                - step
-              properties:
-                step:
-                  type: integer
-                  enum: [1, 2, 3]
-                  description: Onboarding step number
-                # Step 1 Fields
-                business_name:
-                  type: string
-                  description: Required for step 1
-                industry:
-                  type: string
-                  description: Required for step 1
-                business_phone_number:
-                  type: string
-                  description: Optional for step 1
-                website_url:
-                  type: string
-                  description: Optional for step 1
-                # Step 2 Fields
-                country:
-                  type: string
-                  description: Required for step 2
-                street_address:
-                  type: string
-                  description: Required for step 2
-                city:
-                  type: string
-                  description: Required for step 2
-                state:
-                  type: string
-                  description: Required for step 2
-                zip:
-                  type: string
-                  description: Required for step 2
-                # Step 3 Fields
-                company_logo:
-                  type: string
-                  description: Base64 encoded image string or data URL (Required for step 3 if uploading logo)
-                theme:
-                  type: object
-                  description: Branding theme settings
+              oneOf:
+                - type: object
+                  required: [step, business_name, industry]
                   properties:
+                    step:
+                      type: integer
+                      enum: [1]
+                    business_name:
+                      type: string
+                    industry:
+                      type: string
+                    business_phone_number:
+                      type: string
+                    website_url:
+                      type: string
+                - type: object
+                  required: [step, country, street_address, city, state, zip]
+                  properties:
+                    step:
+                      type: integer
+                      enum: [2]
+                    country:
+                      type: string
+                    street_address:
+                      type: string
+                    city:
+                      type: string
+                    state:
+                      type: string
+                    zip:
+                      type: string
+                - type: object
+                  required: [step]
+                  properties:
+                    step:
+                      type: integer
+                      enum: [3]
+                    company_logo:
+                      type: string
+                      description: Base64 encoded image or data URL
+                    theme:
+                      type: object
+                      properties:
+                        colors:
+                          type: object
+                          properties:
+                            primary:
+                              type: string
+                            secondary:
+                              type: string
+                            accent:
+                              type: string
+                        fonts:
+                          type: object
+                          properties:
+                            primary:
+                              type: object
+                              properties:
+                                name:
+                                  type: string
+                            body:
+                              type: object
+                              properties:
+                                name:
+                                  type: string
+            examples:
+              step1_business:
+                summary: Step 1 - Business Information
+                value:
+                  step: 1
+                  business_name: "Acme Corp"
+                  industry: "Technology"
+                  business_phone_number: "+1-555-0123"
+                  website_url: "https://acmecorp.com"
+              step2_address:
+                summary: Step 2 - Address Information
+                value:
+                  step: 2
+                  country: "United States"
+                  street_address: "123 Main Street"
+                  city: "San Francisco"
+                  state: "California"
+                  zip: "94102"
+              step3_branding:
+                summary: Step 3 - Logo & Branding
+                value:
+                  step: 3
+                  company_logo: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+                  theme:
                     colors:
-                      type: object
-                      properties:
-                        primary: { type: string }
-                        secondary: { type: string }
-                        accent: { type: string }
+                      primary: "#007bff"
+                      secondary: "#6c757d"
+                      accent: "#28a745"
                     fonts:
-                      type: object
-                      properties:
-                        primary:
-                          type: object
-                          properties:
-                            name: { type: string }
-                        body:
-                          type: object
-                          properties:
-                            name: { type: string }
+                      primary:
+                        name: "Inter"
+                      body:
+                        name: "Roboto"
       responses:
         "200":
           description: Onboarding step completed successfully
