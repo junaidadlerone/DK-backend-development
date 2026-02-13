@@ -11744,6 +11744,72 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
+  /getOnboardingDetails:
+    get:
+      tags:
+        - Version 2 APIs
+      summary: Get All Onboarding Details
+      description: Retrieve all information filled out by the user during the onboarding process (Steps 1, 2, and 3).
+      operationId: getOnboardingDetails
+      security:
+        - BearerAuth: []
+        - SupabaseAuth: []
+      responses:
+        "200":
+          description: Successful retrieval of onboarding details
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: success
+                  data:
+                    type: object
+                    properties:
+                      business_name:
+                        type: string
+                        nullable: true
+                      industry:
+                        type: string
+                        nullable: true
+                      business_phone_number:
+                        type: string
+                        nullable: true
+                      website_url:
+                        type: string
+                        nullable: true
+                      country:
+                        type: string
+                        nullable: true
+                      street_address:
+                        type: string
+                        nullable: true
+                      city:
+                        type: string
+                        nullable: true
+                      state:
+                        type: string
+                        nullable: true
+                      zip:
+                        type: string
+                        nullable: true
+                      company_logo:
+                        type: string
+                        nullable: true
+                        description: URL of the uploaded logo
+                      theme:
+                        type: object
+                        nullable: true
+                        description: Branding theme settings
+        "401":
+          $ref: "#/components/schemas/Error"
+        "403":
+          $ref: "#/components/schemas/Error"
+        "500":
+          $ref: "#/components/schemas/Error"
+
   /getCompanyLogo:
     get:
       tags:
