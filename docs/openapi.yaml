@@ -168,7 +168,7 @@ paths:
                 $ref: "#/components/schemas/SignUpResponse"
               example:
                 status: success
-                message: User created successfully
+                message: "User created successfully | OTP sent to your email"
                 user:
                   id: 550e8400-e29b-41d4-a716-446655440000
                   email: admin@example.com
@@ -607,6 +607,15 @@ paths:
               example:
                 error: INVALID_CREDENTIALS
                 message: Invalid email or password
+        "403":
+          description: Forbidden - Email not verified
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: EMAIL_NOT_VERIFIED
+                message: Please verify your email address to login
         "404":
           description: User profile not found
           content:
@@ -801,6 +810,7 @@ paths:
                       role: TECHNICIAN
                       full_name: John Technician
                       created_at: "2025-01-13T10:00:00.000Z"
+                      onboarding: false
                 adminViewingOther:
                   summary: Admin viewing another user (with user_id param)
                   value:
@@ -811,6 +821,7 @@ paths:
                       role: MARKETER
                       full_name: Jane Marketer
                       created_at: "2025-01-12T15:30:00.000Z"
+                      onboarding: false
         "401":
           description: Unauthorized - Missing or invalid token
           content:
@@ -12606,6 +12617,223 @@ paths:
                   value:
                     error: UPDATE_FAILED
                     message: "Failed to update campaign with QR code"
+
+  /signUpWithGoogle:
+    post:
+      tags:
+        - Version 2 APIs
+      summary: Initiate Google OAuth Sign Up
+      description: |
+        Initiates the Google OAuth flow for user registration or login.
+        Returns a Google OAuth authorization URL that the client application should redirect the user to.
+
+        **Business Logic:**
+        - This endpoint acts as a proxy to Supabase's `signInWithOAuth` method.
+        - Generates a redirect URL for Google authentication.
+        - Upon successful authentication and callback, the Postgres trigger `handle_new_user` automatically creates a Profile and Organization for new users.
+        - Existing users simply log in.
+
+        **Access Control:**
+        - Publicly accessible (no authentication required).
+      operationId: signUpWithGoogle
+      responses:
+        "200":
+          description: OAuth URL generated successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: success
+                  message:
+                    type: string
+                    example: Google OAuth URL generated
+                  url:
+                    type: string
+                    description: The Google OAuth authorization URL to redirect the user to.
+        "500":
+          description: Internal server error (e.g., Supabase Auth failure)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /loginWithGoogle:
+    post:
+      tags:
+        - Version 2 APIs
+      summary: Initiate Google OAuth Login
+      description: |
+        Initiates the Google OAuth flow for user login.
+        Returns a Google OAuth authorization URL that the client application should redirect the user to.
+
+        **Business Logic:**
+        - This endpoint acts as a proxy to Supabase's `signInWithOAuth` method.
+        - Generates a redirect URL for Google authentication.
+        - Functionally identical to `signUpWithGoogle` from a technical perspective, but semantically for login.
+        - If the user does not exist, they will be signed up (and the `handle_new_user` trigger will run).
+
+        **Access Control:**
+        - Publicly accessible (no authentication required).
+      operationId: loginWithGoogle
+      responses:
+        "200":
+          description: OAuth URL generated successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: success
+                  message:
+                    type: string
+                    example: Google OAuth URL generated
+                  url:
+                    type: string
+                    description: The Google OAuth authorization URL to redirect the user to.
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /generateOtp:
+    post:
+      tags:
+        - Version 2 APIs
+      summary: Send OTP for Email Login
+      description: |
+        Sends a One-Time Password (OTP) to the provided email address.
+        Used for passwordless login/signup.
+
+        **Business Logic:**
+        - Calls Supabase `signInWithOtp`.
+
+        **Access Control:**
+        - Publicly accessible.
+      operationId: generateOtp
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - email
+              properties:
+                email:
+                  type: string
+                  format: email
+                  example: "user@example.com"
+      responses:
+        "200":
+          description: OTP sent successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: success
+                  message:
+                    type: string
+                    example: OTP sent successfully. Please check your email.
+        "400":
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /verifyOtp:
+    post:
+      tags:
+        - Version 2 APIs
+      summary: Verify Email OTP and Login
+      description: |
+        Verifies the OTP sent to the user and creates a session.
+
+        **Business Logic:**
+        - Calls Supabase `verifyOtp`.
+        - Returns the user session (access_token, refresh_token, user data).
+        - If this is a new user, the `handle_new_user` trigger will have executed.
+
+        **Access Control:**
+        - Publicly accessible.
+      operationId: verifyOtp
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - email
+                - token
+              properties:
+                email:
+                  type: string
+                  format: email
+                  example: "user@example.com"
+                token:
+                  type: string
+                  description: The 6-digit OTP code
+                  example: "123456"
+                type:
+                  type: string
+                  description: OTP type (default 'email')
+                  default: email
+                  enum: [email, recovery, invite, magiclink]
+      responses:
+        "200":
+          description: OTP verified and session created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: success
+                  message:
+                    type: string
+                    example: OTP verified successfully
+                  session:
+                    type: object
+                    description: Supabase session object
+                  user:
+                    type: object
+                    description: Supabase user object
+        "400":
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: OTP verification failed (invalid code or expired)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 
   /searchTemplateBundles:
     get:

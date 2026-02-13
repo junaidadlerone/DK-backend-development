@@ -243,3 +243,5 @@ debug.log
 # *.avi
 # *.mp3
 # *.wav
+
+.vscode

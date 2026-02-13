@@ -66,6 +66,15 @@ Deno.serve(async (req) => {
       );
     }
 
+    // Check if email is verified
+    // if (!authData.user.email_confirmed_at) {
+    //   return errorResponse(
+    //     "EMAIL_NOT_VERIFIED",
+    //     "Please verify your email address to login",
+    //     403
+    //   );
+    // }
+
     // Get user's profile to retrieve role
     const profile = await getUserProfile(authData.user.id);
 

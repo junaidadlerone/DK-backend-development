@@ -491,3 +491,15 @@ verify_jwt = true
 
 [functions.getTemplateBundleHistory]
 verify_jwt = true
+
+[functions.signUpWithGoogle]
+verify_jwt = false
+
+[functions.loginWithGoogle]
+verify_jwt = false
+
+[functions.generateOtp]
+verify_jwt = false
+
+[functions.verifyOtp]
+verify_jwt = false
