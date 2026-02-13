@@ -11907,21 +11907,6 @@ paths:
       requestBody:
         required: true
         content:
-          multipart/form-data:
-            schema:
-              type: object
-              required: [step, company_logo]
-              properties:
-                step:
-                  type: integer
-                  enum: [3]
-                company_logo:
-                  type: string
-                  format: binary
-                  description: Image file to upload
-                theme:
-                  type: object
-                  description: JSON object or stringified JSON defining theme
           application/json:
             schema:
               oneOf:
@@ -12011,7 +11996,7 @@ paths:
                 summary: Step 3 - Logo & Branding
                 value:
                   step: 3
-                  company_logo: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+                  company_logo: "data:image/png;base64,iVBORw0KGgoAAAANSREEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
                   theme:
                     colors:
                       primary: "#007bff"
@@ -12022,6 +12007,21 @@ paths:
                         name: "Inter"
                       body:
                         name: "Roboto"
+          multipart/form-data:
+            schema:
+              type: object
+              required: [step, company_logo]
+              properties:
+                step:
+                  type: integer
+                  enum: [3]
+                company_logo:
+                  type: string
+                  format: binary
+                  description: Image file to upload
+                theme:
+                  type: object
+                  description: JSON object or stringified JSON defining theme
       responses:
         "200":
           description: Onboarding step completed successfully
