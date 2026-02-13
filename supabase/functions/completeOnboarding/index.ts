@@ -61,14 +61,67 @@ Deno.serve(async (req) => {
       return errorResponse("NO_ORGANIZATION", "User is not associated with any organization", 403);
     }
 
-    let body: OnboardingRequest;
-    try {
-      body = await req.json();
-    } catch {
-      return errorResponse("INVALID_INPUT", "Invalid JSON body", 400);
-    }
+    const contentType = req.headers.get("content-type") || "";
+    let step: number;
+    let body: OnboardingRequest = {} as OnboardingRequest;
 
-    const { step } = body;
+    if (contentType.includes("multipart/form-data")) {
+      // Handle Multipart Form Data (Step 3 with File Upload)
+      const formData = await req.formData();
+      const stepStr = formData.get("step");
+      
+      if (!stepStr) {
+         return errorResponse("INVALID_INPUT", "Step is required", 400);
+      }
+      step = parseInt(stepStr.toString());
+
+      if (step === 3) {
+        // Extract Step 3 specific fields from FormData
+        const logoFile = formData.get("company_logo");
+        const themeStr = formData.get("theme");
+
+        if (logoFile && logoFile instanceof File) {
+          // Upload File directly
+          const fileName = `${organizationId}/logo_${Date.now()}_${logoFile.name}`;
+          const { data: uploadData, error: uploadError } = await supabase.storage
+            .from("CompanyLogos")
+            .upload(fileName, logoFile, {
+              contentType: logoFile.type,
+              upsert: true
+            });
+
+          if (uploadError) {
+             console.error("Upload error:", uploadError);
+             return errorResponse("UPLOAD_FAILED", "Failed to upload logo", 500);
+          }
+
+          const { data: publicUrlData } = supabase.storage
+            .from("CompanyLogos")
+            .getPublicUrl(fileName);
+          
+          body.company_logo = publicUrlData.publicUrl; // Use this to update DB later
+        }
+
+        if (themeStr) {
+          try {
+            body.theme = JSON.parse(themeStr.toString());
+          } catch {
+             return errorResponse("INVALID_INPUT", "Invalid theme JSON", 400);
+          }
+        }
+      } else {
+        return errorResponse("INVALID_INPUT", "Multipart only supported for Step 3", 400);
+      }
+
+    } else {
+      // Handle JSON (Step 1, 2, and backward compat Step 3)
+      try {
+        body = await req.json();
+        step = body.step;
+      } catch {
+        return errorResponse("INVALID_INPUT", "Invalid JSON body", 400);
+      }
+    }
 
     // Check if onboarding entry exists, if not create it
     const { data: existingOnboarding } = await supabase
@@ -88,10 +141,6 @@ Deno.serve(async (req) => {
       if (!business_name || !industry) {
         return errorResponse("INVALID_INPUT", "business_name and industry are required", 400);
       }
-
-      // Check if industry exists in job_types (optional validation)
-      // const { data: jobType } = await supabase.from("job_types").select("id").eq("name", industry).single();
-      // if (!jobType) return errorResponse("INVALID_INPUT", "Invalid industry", 400);
 
       // Update onboarding
       const { error: onboardingError } = await supabase
@@ -129,12 +178,6 @@ Deno.serve(async (req) => {
         return errorResponse("INVALID_INPUT", "All address fields are required", 400);
       }
 
-      // Validate state belongs to country (simple check if country and state exist)
-      // Ideally we query world_states join countries, but for now we trust the input or do a quick check
-      // Let's simple check if country exists
-      // const { data: countryData } = await supabase.from("countries").select("id").ilike("name", country).single();
-      // if (!countryData) return errorResponse("INVALID_INPUT", "Invalid country", 400);
-
       const business_address = `${street_address}, ${city}, ${state} ${zip}, ${country}`;
 
       // Update onboarding
@@ -167,12 +210,11 @@ Deno.serve(async (req) => {
       // Step 3: Branding & Logo
       const { company_logo, theme } = body;
 
-      let logoUrl = null;
+      let logoUrl = company_logo; // If coming from Multipart, this is already the URL
 
-      if (company_logo) {
-        // Assume base64 string
-        try {
-          // Check if it's a data URL "data:image/png;base64,..."
+      // Handle Base64 (Backward Compatibility or JSON request)
+      if (company_logo && company_logo.startsWith("data:")) {
+         try {
           const matches = company_logo.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
           let fileData: Uint8Array;
           let contentType = "image/png";
@@ -181,17 +223,15 @@ Deno.serve(async (req) => {
           if (matches && matches.length === 3) {
             contentType = matches[1];
             fileData = decode(matches[2]);
-            // Extract extension from mime type
             const mime = contentType.split("/")[1];
             if (mime) extension = mime;
           } else {
-            // Raw base64
             fileData = decode(company_logo);
           }
 
           const fileName = `${organizationId}/logo_${Date.now()}.${extension}`;
 
-          const { data: uploadData, error: uploadError } = await supabase.storage
+          const { error: uploadError } = await supabase.storage
             .from("CompanyLogos")
             .upload(fileName, fileData, {
               contentType,
@@ -203,7 +243,6 @@ Deno.serve(async (req) => {
             return errorResponse("UPLOAD_FAILED", "Failed to upload logo", 500);
           }
 
-          // Get public URL
           const { data: publicUrlData } = supabase.storage
             .from("CompanyLogos")
             .getPublicUrl(fileName);
@@ -238,7 +277,6 @@ Deno.serve(async (req) => {
           })
           .eq("id", user.userId);
       } else {
-        // Even if no theme, complete onboarding
         await supabase
           .from("profiles")
           .update({

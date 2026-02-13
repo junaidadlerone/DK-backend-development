@@ -70,10 +70,10 @@ info:
     email: support@doorknocker.example.com
 
 servers:
-  - url: https://iywivotqnphrjijztxtu.supabase.co/functions/v1
-    description: Production server (PROD)
   - url: https://xnflihspegizweqidvow.supabase.co/functions/v1
-    description: Development server (DEVELOPMENT)
+    description: Development server (current)
+  - url: https://iywivotqnphrjijztxtu.supabase.co/functions/v1
+    description: Production server (legacy/prod)
   - url: http://localhost:54321/functions/v1
     description: Local development server
 
@@ -11744,6 +11744,41 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
+  /getCompanyLogo:
+    get:
+      tags:
+        - Version 2 APIs
+      summary: Get company logo
+      description: Returns the URL of the organization's company logo.
+      operationId: getCompanyLogo
+      security:
+        - BearerAuth: []
+        - SupabaseAuth: []
+      responses:
+        "200":
+          description: Logo retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  company_logo:
+                    type: string
+                    nullable: true
+                    description: URL of the company logo
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
   /completeOnboarding:
     post:
       tags:
@@ -11756,6 +11791,9 @@ paths:
         - Step 1: Business information (name, industry, phone, website)
         - Step 2: Address information (country, street, city, state, zip)
         - Step 3: Branding (company logo upload and theme settings)
+
+        **File Upload (Step 3)**
+        Step 3 supports `multipart/form-data` for direct file uploads.
 
         **Access Control:**
         - Requires authentication
@@ -11828,36 +11866,31 @@ paths:
         ## Step 3: Logo Upload & Branding
 
         Upload your company logo and set theme preferences.
+        **Supports `multipart/form-data` for file uploads.**
 
-        **Request:**
+        **Request (Multipart):**
+        - `step`: 3
+        - `company_logo`: [File Object]
+        - `theme`: JSON string definition of theme
+
+        **Request (JSON - Base64):**
         ```json
         {
           "step": 3,
           "company_logo": "data:image/png;base64,iVBORw0KGgoAAAANS...",
           "theme": {
-            "colors": {
-              "primary": "#007bff",
-              "secondary": "#6c757d",
-              "accent": "#28a745"
-            },
-            "fonts": {
-              "primary": {
-                "name": "Inter"
-              },
-              "body": {
-                "name": "Roboto"
-              }
-            }
+            "colors": { ... },
+            "fonts": { ... }
           }
         }
         ```
 
         **Required Fields:**
         - `step`: Must be 3
-        - `company_logo`: Base64 encoded image string or data URL (required if uploading logo)
+        - `company_logo`: File object OR Base64 encoded image string
 
         **Optional Fields:**
-        - `theme`: Branding theme settings object
+        - `theme`: Branding theme settings object (or JSON string if multipart)
           - `colors`: Color scheme (primary, secondary, accent hex codes)
           - `fonts`: Font preferences (primary and body font names)
 
@@ -11874,6 +11907,21 @@ paths:
       requestBody:
         required: true
         content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [step, company_logo]
+              properties:
+                step:
+                  type: integer
+                  enum: [3]
+                company_logo:
+                  type: string
+                  format: binary
+                  description: Image file to upload
+                theme:
+                  type: object
+                  description: JSON object or stringified JSON defining theme
           application/json:
             schema:
               oneOf:
