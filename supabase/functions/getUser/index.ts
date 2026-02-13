@@ -133,7 +133,8 @@ Deno.serve(async (req) => {
         role: profile.role,
         full_name: profile.full_name,
         created_at: targetAuthUser.created_at,
-        created_at_tz: enrichTimestamp(targetAuthUser.created_at, preferences.timezone)
+        created_at_tz: enrichTimestamp(targetAuthUser.created_at, preferences.timezone),
+        onboarding: profile.onboarding,
       },
     };
 
