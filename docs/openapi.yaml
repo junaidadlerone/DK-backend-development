@@ -13207,12 +13207,64 @@ paths:
                     example: success
                   message:
                     type: string
+
+  /getMergeVariables:
+    get:
+      tags:
+        - Version 2 APIs
+      summary: Get campaign merge variables
+      description: |
+        Returns business details and campaign disclaimer text for merge variables.
+      operationId: getMergeVariables
+      security:
+        - BearerAuth: []
+        - SupabaseAuth: []
+      parameters:
+        - name: campaign_id
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: ID of the campaign
+      responses:
+        "200":
+          description: Merge variables retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: success
+                  message:
+                    type: string
+                  data:
+                    type: object
+                    properties:
+                      business_name:
+                        type: string
+                        description: Organization business name
+                      business_phone_number:
+                        type: string
+                        description: Organization phone number
+                      website_url:
+                        type: string
+                        description: Organization website URL
+                      disclaimer_text:
+                        type: string
+                        description: Campaign disclaimer text
         "400":
-          $ref: "#/components/schemas/Error"
+          description: Missing campaign_id
         "401":
-          $ref: "#/components/schemas/Error"
+          description: Unauthorized
+        "403":
+          description: Forbidden (No organization or ownership)
+        "404":
+          description: Campaign not found
         "500":
-          $ref: "#/components/schemas/Error"
+          description: Internal server error
 
   /editCampaignV2:
     post:
