@@ -111,6 +111,7 @@ Deno.serve(async (req) => {
         data: {
           ...campaign,
           image_url,
+          start_date: campaign.offer_data?.start_date || null,
           created_at_tz: enrichTimestamp(campaign.created_at, preferences.timezone),
           updated_at_tz: enrichTimestamp(campaign.updated_at, preferences.timezone)
         },

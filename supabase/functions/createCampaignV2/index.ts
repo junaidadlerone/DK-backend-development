@@ -174,10 +174,13 @@ async function handleStep1(supabase: any, body: any, organizationId: string, use
     );
   }
 
-  // Build offer_data with optional disclaimer_text
+  // Build offer_data with optional disclaimer_text and start_date
   const offerData: any = {};
   if (disclaimer_text) {
     offerData.disclaimer_text = disclaimer_text;
+  }
+  if (body.start_date) {
+    offerData.start_date = body.start_date;
   }
 
   // Create campaign

@@ -130,24 +130,31 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Handle Start Date Update
+    // Handle Start Date Update (inside offer_data)
     if (start_date !== undefined) {
-      // Validate date format? Or just pass through. Postgres handles ISO strings.
-      // Assuming valid ISO string or null.
-      updateData.start_date = start_date;
-      historyLogs.push(`changed start date to ${start_date}`);
+      const currentOfferData = updateData.offer_data || existingCampaign.offer_data || {};
+      const newOfferData = {
+        ...currentOfferData,
+        start_date: start_date
+      };
+      
+      // Check if actually changed
+      if (currentOfferData.start_date !== start_date) {
+        updateData.offer_data = newOfferData;
+        historyLogs.push(`changed start date to ${start_date}`);
+      }
     }
 
     // Handle Disclaimer Text Update (inside offer_data)
     if (disclaimer_text !== undefined) {
-      const currentOfferData = existingCampaign.offer_data || {};
+      const currentOfferData = updateData.offer_data || existingCampaign.offer_data || {};
       const newOfferData = {
         ...currentOfferData,
         disclaimer_text: disclaimer_text
       };
       
       // Check if actually changed
-      if (JSON.stringify(currentOfferData) !== JSON.stringify(newOfferData)) {
+      if (currentOfferData.disclaimer_text !== disclaimer_text) {
         updateData.offer_data = newOfferData;
         historyLogs.push("updated disclaimer text");
       }

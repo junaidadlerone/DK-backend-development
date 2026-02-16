@@ -13252,6 +13252,12 @@ paths:
                   type: string
                   format: date-time
                   description: New start date
+            example:
+              step: 1
+              campaign_name: "Summer Sale"
+              referral_id: "550e8400-e29b-41d4-a716-446655440000"
+              disclaimer_text: "Terms apply"
+              start_date: "2026-06-01T00:00:00Z"
       responses:
         "200":
           description: Campaign updated successfully
@@ -15005,6 +15011,10 @@ components:
         disclaimer_text:
           type: string
           description: Optional disclaimer text
+        start_date:
+          type: string
+          format: date-time
+          description: Optional start date for the campaign
 
     CampaignV2Step2:
       type: object
