@@ -577,10 +577,12 @@ paths:
                 refreshToken: xYz123RefreshToken456...
                 expiresIn: 3600
                 role: TECHNICIAN
+                onboarding: true
                 user:
                   id: 550e8400-e29b-41d4-a716-446655440000
                   email: user@example.com
                   fullName: John Doe
+                  is_verified: true
         "400":
           description: Invalid input
           content:
@@ -811,6 +813,7 @@ paths:
                       full_name: John Technician
                       created_at: "2025-01-13T10:00:00.000Z"
                       onboarding: false
+                      verified: true
                 adminViewingOther:
                   summary: Admin viewing another user (with user_id param)
                   value:
@@ -13485,6 +13488,10 @@ components:
               type: string
               nullable: true
               example: John Doe
+            is_verified:
+              type: boolean
+              description: Whether the user's email is verified
+              example: true
 
     ForgotPasswordRequest:
       type: object
@@ -13589,6 +13596,14 @@ components:
               format: date-time
               description: Account creation timestamp
               example: "2025-01-13T10:00:00.000Z"
+            is_verified:
+              type: boolean
+              description: Whether the user's email is verified
+              example: true
+            onboarding:
+              type: boolean
+              description: Whether the user has completed onboarding
+              example: false
             created_at_tz:
               $ref: "#/components/schemas/TimezoneEnrichment"
 

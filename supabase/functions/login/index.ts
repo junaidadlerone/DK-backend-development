@@ -57,8 +57,14 @@ Deno.serve(async (req) => {
       password,
     });
 
-    if (signInError || !authData.user || !authData.session) {
-      // Generic error message to prevent user enumeration
+    if (signInError) {
+      if (signInError.message.includes("Email not confirmed")) {
+        return errorResponse(
+          "EMAIL_NOT_VERIFIED",
+          "Please verify your email address to login",
+          403
+        );
+      }
       return errorResponse(
         "INVALID_CREDENTIALS",
         "Invalid email or password",
@@ -66,14 +72,13 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Check if email is verified
-    // if (!authData.user.email_confirmed_at) {
-    //   return errorResponse(
-    //     "EMAIL_NOT_VERIFIED",
-    //     "Please verify your email address to login",
-    //     403
-    //   );
-    // }
+    if (!authData.user || !authData.session) {
+      return errorResponse(
+        "INVALID_CREDENTIALS",
+        "Invalid email or password",
+        401
+      );
+    }
 
     // Get user's profile to retrieve role
     const profile = await getUserProfile(authData.user.id);
@@ -99,6 +104,7 @@ Deno.serve(async (req) => {
         id: authData.user.id,
         email: authData.user.email!,
         fullName: profile.full_name,
+        is_verified: !!authData.user.email_confirmed_at,
       },
     };
 
