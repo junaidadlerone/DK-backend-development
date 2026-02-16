@@ -99,6 +99,7 @@ Deno.serve(async (req) => {
         id: authData.user.id,
         email: authData.user.email!,
         fullName: profile.full_name,
+        is_verified: !!authData.user.email_confirmed_at,
       },
     };
 

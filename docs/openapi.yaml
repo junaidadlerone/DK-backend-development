@@ -13485,6 +13485,10 @@ components:
               type: string
               nullable: true
               example: John Doe
+            is_verified:
+              type: boolean
+              description: Whether the user's email is verified
+              example: true
 
     ForgotPasswordRequest:
       type: object
@@ -13589,6 +13593,14 @@ components:
               format: date-time
               description: Account creation timestamp
               example: "2025-01-13T10:00:00.000Z"
+            is_verified:
+              type: boolean
+              description: Whether the user's email is verified
+              example: true
+            onboarding:
+              type: boolean
+              description: Whether the user has completed onboarding
+              example: false
             created_at_tz:
               $ref: "#/components/schemas/TimezoneEnrichment"
 
