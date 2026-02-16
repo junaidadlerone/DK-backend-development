@@ -134,6 +134,7 @@ Deno.serve(async (req) => {
         full_name: profile.full_name,
         created_at: targetAuthUser.created_at,
         created_at_tz: enrichTimestamp(targetAuthUser.created_at, preferences.timezone),
+        is_verified: !!targetAuthUser.email_confirmed_at,
         onboarding: profile.onboarding,
       },
     };
