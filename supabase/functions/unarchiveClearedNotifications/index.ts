@@ -50,7 +50,7 @@ Deno.serve(async (req) => {
       .update({ is_archived: false })
       .eq("organization_id", organizationId)
       .eq("is_archived", true)
-      .select('count'); // To get count of updated rows? select() returns data, count option needed
+      .select('*', { count: 'exact' });
       
     // Wait, update doesn't return count by default unless select is used? 
     // Supabase JS client update() returns { data, error, count } if count option is used?
