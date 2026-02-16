@@ -12957,6 +12957,15 @@ paths:
             type: string
             enum: [read, unread]
           description: Filter notifications by read status
+        - name: showArchived
+          in: query
+          required: false
+          schema:
+            type: boolean
+            default: false
+          description: |
+            If true, returns only archived notifications.
+            If false (default), returns only unarchived notifications.
       responses:
         "200":
           description: Notifications retrieved successfully
@@ -13078,8 +13087,8 @@ paths:
         - Version 2 APIs
       summary: Clear notifications
       description: |
-        Deletes notifications for the user.
-        Can delete all notifications or only read ones.
+        Archives notifications for the user.
+        Can archive all notifications or only read ones.
       operationId: clearNotifications
       security:
         - BearerAuth: []
@@ -13101,7 +13110,7 @@ paths:
               type: "read"
       responses:
         "200":
-          description: Notifications cleared successfully
+          description: Notifications archived successfully
           content:
             application/json:
               schema:
@@ -13112,6 +13121,127 @@ paths:
                     example: success
                   message:
                     type: string
+
+  /clearNotificationById:
+    post:
+      tags:
+        - Version 2 APIs
+      summary: Archive a notification
+      description: |
+        Archives a specific notification by ID (sets is_archived=true).
+      operationId: clearNotificationById
+      security:
+        - BearerAuth: []
+        - SupabaseAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - notification_id
+              properties:
+                notification_id:
+                  type: string
+                  format: uuid
+                  description: ID of notification to archive
+              example:
+                notification_id: "123e4567-e89b-12d3-a456-426614174000"
+      responses:
+        "200":
+          description: Notification archived successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: success
+                  message:
+                    type: string
+        "400":
+          $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/schemas/Error"
+        "500":
+          $ref: "#/components/schemas/Error"
+
+  /unarchiveNotificationById:
+    post:
+      tags:
+        - Version 2 APIs
+      summary: Unarchive a notification
+      description: |
+        Restores a specific notification by ID (sets is_archived=false).
+      operationId: unarchiveNotificationById
+      security:
+        - BearerAuth: []
+        - SupabaseAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - notification_id
+              properties:
+                notification_id:
+                  type: string
+                  format: uuid
+                  description: ID of notification to restore
+              example:
+                notification_id: "123e4567-e89b-12d3-a456-426614174000"
+      responses:
+        "200":
+          description: Notification restored successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: success
+                  message:
+                    type: string
+        "400":
+          $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/schemas/Error"
+        "500":
+          $ref: "#/components/schemas/Error"
+
+  /unarchiveClearedNotifications:
+    post:
+      tags:
+        - Version 2 APIs
+      summary: Unarchive all cleared notifications
+      description: |
+        Restores ALL archived notifications for the organization.
+      operationId: unarchiveClearedNotifications
+      security:
+        - BearerAuth: []
+        - SupabaseAuth: []
+      responses:
+        "200":
+          description: All notifications restored successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: success
+                  message:
+                    type: string
+        "401":
+          $ref: "#/components/schemas/Error"
+        "500":
+          $ref: "#/components/schemas/Error"
 
 components:
   schemas:

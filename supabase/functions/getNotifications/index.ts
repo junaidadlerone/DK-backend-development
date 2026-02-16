@@ -93,6 +93,8 @@ Deno.serve(async (req) => {
     // Parse query parameters
     const url = new URL(req.url);
     const filter = url.searchParams.get("filter"); // 'unread', 'read', or null (all)
+    const showArchivedParam = url.searchParams.get("showArchived");
+    const showArchived = showArchivedParam === "true"; // Defaults to false if not present or "false"
     const pageParam = url.searchParams.get("page");
     const limitParam = url.searchParams.get("limit");
 
@@ -109,8 +111,9 @@ Deno.serve(async (req) => {
     // Build query
     let query = supabase
       .from("notifications")
-      .select("id, title, description, is_read, organization_id, notification_type, metadata, created_at", { count: "exact" })
+      .select("id, title, description, is_read, is_archived, organization_id, notification_type, metadata, created_at", { count: "exact" })
       .eq("organization_id", organizationId)
+      .eq("is_archived", showArchived) // Filter by archived status
       .contains("target_roles", [userRole])
       .order("created_at", { ascending: false });
 

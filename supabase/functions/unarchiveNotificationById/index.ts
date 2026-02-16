@@ -4,12 +4,12 @@ import { getUserFromRequest } from "../_shared/history.ts";
 import { getUserOrganizationId } from "../_shared/organization.ts";
 
 /**
- * Clear Notifications Edge Function
- * Archives notifications for the authenticated user based on criteria
+ * Unarchive Notification By ID Edge Function
+ * Restores a single notification by setting is_archived = false
  * 
  * Input:
  * {
- *   "type": "all" | "read" 
+ *   "notification_id": "uuid"
  * }
  */
 Deno.serve(async (req) => {
@@ -49,46 +49,40 @@ Deno.serve(async (req) => {
 
     // Parse request body
     const body = await req.json().catch(() => ({}));
-    const { type } = body;
+    const { notification_id } = body;
 
-    if (!type || !["all", "read"].includes(type)) {
+    if (!notification_id) {
       return errorResponse(
         "INVALID_INPUT",
-        "type must be 'all' or 'read'",
+        "notification_id is required",
         400
       );
     }
 
-    // Build update query (soft delete)
-    let query = supabase
+    // Update notification to unarchived
+    // Ensure it belongs to the user's organization
+    const { error: updateError } = await supabase
       .from("notifications")
-      .update({ is_archived: true })
+      .update({ is_archived: false })
+      .eq("id", notification_id)
       .eq("organization_id", organizationId);
 
-    // If type is 'read', only archive those with is_read = true
-    if (type === "read") {
-      query = query.eq("is_read", true);
-    }
-
-    // Execute update
-    const { error: updateError } = await query;
-
     if (updateError) {
-      console.error("Error clearing notifications:", updateError);
+      console.error("Error restoring notification:", updateError);
       return errorResponse(
-        "ARCHIVE_FAILED",
-        "Failed to clear notifications",
+        "UPDATE_FAILED",
+        "Failed to restore notification",
         500
       );
     }
 
     return successResponse({
       status: "success",
-      message: `Successfully cleared ${type === 'all' ? 'all' : 'read'} notifications`
+      message: "Notification restored successfully"
     });
 
   } catch (error) {
-    console.error("Unexpected error in clearNotifications:", error);
+    console.error("Unexpected error in unarchiveNotificationById:", error);
     return errorResponse(
       "INTERNAL_ERROR",
       `An unexpected error occurred: ${error.message}`,
