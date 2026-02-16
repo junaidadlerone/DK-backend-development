@@ -813,6 +813,7 @@ paths:
                       full_name: John Technician
                       created_at: "2025-01-13T10:00:00.000Z"
                       onboarding: false
+                      verified: true
                 adminViewingOther:
                   summary: Admin viewing another user (with user_id param)
                   value:
