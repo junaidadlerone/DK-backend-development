@@ -57,8 +57,14 @@ Deno.serve(async (req) => {
       password,
     });
 
-    if (signInError || !authData.user || !authData.session) {
-      // Generic error message to prevent user enumeration
+    if (signInError) {
+      if (signInError.message.includes("Email not confirmed")) {
+        return errorResponse(
+          "EMAIL_NOT_VERIFIED",
+          "Please verify your email address to login",
+          403
+        );
+      }
       return errorResponse(
         "INVALID_CREDENTIALS",
         "Invalid email or password",
@@ -66,12 +72,11 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Check if email is verified
-    if (!authData.user.email_confirmed_at) {
+    if (!authData.user || !authData.session) {
       return errorResponse(
-        "EMAIL_NOT_VERIFIED",
-        "Please verify your email address to login",
-        403
+        "INVALID_CREDENTIALS",
+        "Invalid email or password",
+        401
       );
     }
 
