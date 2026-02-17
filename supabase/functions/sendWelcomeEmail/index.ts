@@ -55,7 +55,8 @@ Deno.serve(async (req) => {
     const smtpPass = Deno.env.get("SMTP_PASS");
     const smtpHost = Deno.env.get("SMTP_HOST");
     const smtpPort = parseInt(Deno.env.get("SMTP_PORT"));
-    
+    const smtpSender = Deno.env.get("SMTP_FROM");
+
     if (!smtpUser || !smtpPass) {
         console.error("SMTP credentials are missing");
         return errorResponse(
@@ -131,7 +132,7 @@ Deno.serve(async (req) => {
 
         // Send email via Nodemailer
         const info = await transporter.sendMail({
-            from: '"DoorKnocker" <supabase@texasgrowthfactory.com>', // Sender address
+            from: `"DoorKnocker" <${smtpSender}>`, // Sender address
             to: userEmail,
             subject: "Welcome to DoorKnocker - Your Account is Ready",
             html: emailHtml,
