@@ -55,12 +55,7 @@ Deno.serve(async (req) => {
     const smtpPass = Deno.env.get("SMTP_PASS");
     const smtpHost = Deno.env.get("SMTP_HOST");
     const smtpPort = parseInt(Deno.env.get("SMTP_PORT"));
-
-    console.log("SMTP User:", smtpUser);
-    console.log("SMTP Pass:", smtpPass);
-    console.log("SMTP Host:", smtpHost);
-    console.log("SMTP Port:", smtpPort);
-
+    
     if (!smtpUser || !smtpPass) {
         console.error("SMTP credentials are missing");
         return errorResponse(
