@@ -256,7 +256,7 @@ async function computeOverviewAnalytics(
 
   if (campaignsError) {
     console.error("Error fetching campaigns:", campaignsError);
-    throw new Error("Failed to fetch campaigns");
+    throw new Error(`Failed to fetch campaigns: ${campaignsError.message}`);
   }
 
   const allCampaigns = campaigns || [];
