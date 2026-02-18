@@ -189,11 +189,6 @@ Deno.serve(async (req) => {
           if (existingCampaign.referral_id) {
             await supabase
               .from("referrals")
-              .update({ campaign_id: null, status: { id: "draft_status_id", name: "Draft" } }) // Resetting status to Draft? Or keeping it?
-              // Logic: If referral is unlinked from campaign, it goes back to Draft? Or stays as is?
-              // The create logic sets status to "Ready".
-              // Let's assume decoupling might need status update? Or just campaign_id=null.
-              // Safest: set campaign_id = null. Status might vary. Let's just unlink.
               .update({ campaign_id: null })
               .eq("id", existingCampaign.referral_id);
           }
