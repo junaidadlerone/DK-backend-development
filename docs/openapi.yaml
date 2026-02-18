@@ -13616,10 +13616,6 @@ components:
               example: false
             created_at_tz:
               $ref: "#/components/schemas/TimezoneEnrichment"
-            onboarding:
-              type: boolean
-              description: Whether the user has completed onboarding
-              example: false
             auth_type:
               type: string
               description: The authentication provider used (e.g., email, google)
