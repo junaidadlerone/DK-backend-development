@@ -74,72 +74,52 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Verify referral exists and belongs to organization
-    const { data: referral, error: referralError } = await supabase
-      .from("referrals")
-      .select("campaign_id")
-      .eq("id", id)
+    // Fetch all campaigns linked to this referral_id
+    const { data: campaigns, error: campaignError } = await supabase
+      .from("campaigns")
+      .select("*")
+      .eq("referral_id", id)
       .eq("organization_id", organizationId)
-      .single();
+      .order("created_at", { ascending: false });
 
-    if (referralError) {
-      if (referralError.code === "PGRST116") {
-        return errorResponse(
-          "REFERRAL_NOT_FOUND",
-          "Referral not found in your organization",
-          404
-        );
-      }
-      console.error("Error fetching referral:", referralError);
+    if (campaignError) {
+      console.error("Error fetching campaigns:", campaignError);
       return errorResponse(
         "FETCH_FAILED",
-        "Failed to fetch referral",
+        "Failed to fetch campaigns",
         500
       );
     }
 
-    // Check if referral has a campaign
-    if (!referral.campaign_id) {
+    if (!campaigns || campaigns.length === 0) {
       return errorResponse(
         "NO_CAMPAIGN",
-        "This referral is not associated with any campaign",
+        "No campaigns found for this referral",
         404
       );
     }
 
-    // Fetch campaign
-    const { data: campaign, error: campaignError } = await supabase
-      .from("campaigns")
-      .select("*")
-      .eq("id", referral.campaign_id)
-      .eq("organization_id", organizationId)
-      .single();
-
-    if (campaignError) {
-      console.error("Error fetching campaign:", campaignError);
-      return errorResponse(
-        "FETCH_FAILED",
-        "Failed to fetch campaign",
-        500
-      );
-    }
-
-    // Fetch image_url from referral's gallery
-    const image_url = await getImageUrlForReferral(supabase, campaign.referral_id);
-
-    // Fetch user preferences
+    // Fetch user preferences for timezone enrichment
     const preferences = await getPreferences(supabase, user.userId);
+
+    // Enrich each campaign with image_url and timezone data
+    const enrichedCampaigns = await Promise.all(
+      campaigns.map(async (campaign: any) => {
+        const image_url = await getImageUrlForReferral(supabase, campaign.referral_id);
+        return {
+          ...campaign,
+          image_url,
+          created_at_tz: enrichTimestamp(campaign.created_at, preferences.timezone),
+          updated_at_tz: enrichTimestamp(campaign.updated_at, preferences.timezone),
+        };
+      })
+    );
 
     return successResponse(
       {
         status: "success",
-        message: "Campaign fetched successfully",
-        data: {
-          ...campaign,
-          image_url,
-          created_at_tz: enrichTimestamp(campaign.created_at, preferences.timezone),
-          updated_at_tz: enrichTimestamp(campaign.updated_at, preferences.timezone)
-        },
+        message: "Campaigns fetched successfully",
+        data: enrichedCampaigns,
       },
       200
     );
