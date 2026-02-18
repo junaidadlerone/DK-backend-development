@@ -106,8 +106,20 @@ Deno.serve(async (req) => {
       }, 200);
     }
 
-    // Load welcome email HTML template
-    const emailHtml = WELCOME_EMAIL_HTML;
+    // Load welcome email template from database
+    const { data: templateData, error: templateError } = await supabase
+      .from("email_templates")
+      .select("subject, content")
+      .eq("name", "welcome-email")
+      .eq("is_active", true)
+      .single();
+
+    if (templateError || !templateData) {
+      console.warn("Welcome email template not found in database or error fetching it, using fallback:", templateError);
+    }
+
+    const emailSubject = templateData?.subject || "Welcome to DoorKnocker - Your Account is Ready";
+    const emailHtml = templateData?.content || WELCOME_EMAIL_HTML;
 
     // Send emails to each new user
     const emailResults = [];
@@ -134,7 +146,7 @@ Deno.serve(async (req) => {
         const info = await transporter.sendMail({
             from: `"DoorKnocker" <${smtpSender}>`, // Sender address
             to: userEmail,
-            subject: "Welcome to DoorKnocker - Your Account is Ready",
+            subject: emailSubject,
             html: emailHtml,
         });
 

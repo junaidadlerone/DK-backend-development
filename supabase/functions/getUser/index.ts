@@ -123,7 +123,7 @@ Deno.serve(async (req) => {
     // "User" here usually implies the *requesting* user (the client).
     // So we fetch preferences for `authUser.id` (the viewer).
     const preferences = await getUserPreferences(supabase, authUser.id);
-
+  
     // Prepare success response with user data
     const response = {
       status: "success",
@@ -135,6 +135,7 @@ Deno.serve(async (req) => {
         created_at: targetAuthUser.created_at,
         created_at_tz: enrichTimestamp(targetAuthUser.created_at, preferences.timezone),
         onboarding: profile.onboarding,
+        auth_type: targetAuthUser.app_metadata.provider,
       },
     };
 
