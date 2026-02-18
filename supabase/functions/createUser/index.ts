@@ -173,6 +173,7 @@ Deno.serve(async (req) => {
         role: role,
         full_name: fullName || null,
         created_by: adminProfile,
+        onboarding: true,
       });
 
     if (profileError) {

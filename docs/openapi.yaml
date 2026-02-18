@@ -10720,6 +10720,7 @@ paths:
               html_back: "<p>Limited time only</p>"
               postcardSize: "4x6"
               isManualEdit: false
+              campaign_id: "123e4567-e89b-12d3-a456-426614174000"
       responses:
         "201":
           description: Template bundle created successfully
