@@ -81,7 +81,7 @@ Deno.serve(async (req) => {
     const { data: authData, error: signUpError } = await supabase.auth.admin.createUser({
       email,
       password,
-      email_confirm: true, // Auto-confirm email for simplicity; set to false if you want email verification
+      email_confirm: false,
       user_metadata: {
         full_name: fullName || null,
       },
@@ -184,17 +184,17 @@ Deno.serve(async (req) => {
 
 
     // Send OTP to email
-    // const { error } = await supabase.auth.signInWithOtp({
-    //   email,
-    //   options: {
-    //     shouldCreateUser: false,
-    //   }
-    // });
+    const { error } = await supabase.auth.signInWithOtp({
+      email,
+      options: {
+        shouldCreateUser: false,
+      }
+    });
 
-    // if (error) {
-    //   console.error("Generate OTP error:", error);
-    //   return errorResponse("OTP_GENERATION_FAILED", error.message || "Failed to send OTP", 500);
-    // }
+    if (error) {
+      console.error("Generate OTP error:", error);
+      return errorResponse("OTP_GENERATION_FAILED", error.message || "Failed to send OTP", 500);
+    }
 
     // Prepare success response
     const response: SignUpResponse = {

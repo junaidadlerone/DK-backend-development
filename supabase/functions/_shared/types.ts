@@ -38,6 +38,7 @@ export interface LoginResponse {
     id: string;
     email: string;
     fullName: string | null;
+    is_verified: boolean;
   };
 }
 
@@ -74,6 +75,8 @@ export interface GetUserResponse {
     full_name: string | null;
     created_at: string;
     auth_type: string;
+    is_verified?: boolean;
+    onboarding?: boolean;
   };
 }
 

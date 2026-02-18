@@ -10,7 +10,7 @@ export interface Profile {
   full_name: string | null;
   created_at: string;
   updated_at: string;
-  onboarding: boolean;
+  onboarding?: boolean;
 }
 
 /**

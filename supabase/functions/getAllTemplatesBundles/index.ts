@@ -65,6 +65,7 @@ Deno.serve(async (req) => {
     const sortOption = url.searchParams.get('sort') || 'newest';
     const pageParam = url.searchParams.get("page");
     const limitParam = url.searchParams.get("limit");
+    const campaignId = url.searchParams.get("campaign_id");
 
     // Validate sort option
     const validSortOptions = ['a-z', 'z-a', 'newest', 'oldest', 'most-used'];
@@ -153,6 +154,27 @@ Deno.serve(async (req) => {
         if (postcardSize && ['4x6', '6x9', '6x11'].includes(postcardSize)) {
           if (bundle.front?.postcard_size !== postcardSize) {
             return false;
+          }
+        }
+
+
+        // Filter based on manual edit status and campaign_id
+        // A bundle is considered manual edit if either template is manual edit
+        const isManual = bundle.front?.is_manual_edit || bundle.back?.is_manual_edit;
+
+        if (isManual) {
+          if (!campaignId) {
+             // If no campaign_id provided, hide manual edit bundles
+             return false;
+          } else {
+             // If campaign_id provided, check if bundle is used by this campaign
+             const frontUsed = bundle.front?.campaigns_used?.includes(campaignId);
+             const backUsed = bundle.back?.campaigns_used?.includes(campaignId);
+             
+             // Include if either front or back uses this campaign
+             if (!frontUsed && !backUsed) {
+               return false;
+             }
           }
         }
 
