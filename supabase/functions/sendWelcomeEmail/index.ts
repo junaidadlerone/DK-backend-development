@@ -1,5 +1,7 @@
 import { corsResponse, errorResponse, successResponse } from "../_shared/response.ts";
 import { createSupabaseClient } from "../_shared/client.ts";
+import nodemailer from "npm:nodemailer@6.9.13";
+import { WELCOME_EMAIL_HTML } from "./email-template.ts";
 
 /**
  * Send Welcome Email Edge Function
@@ -10,16 +12,17 @@ import { createSupabaseClient } from "../_shared/client.ts";
  * - Queries profiles table for users created in last 10 minutes
  * - Only sends email if welcome_email_sent flag is false/null
  * - Marks users as emailed after successful send
- * - Uses Resend email service
+ * - Uses Custom SMTP (Outlook/Office365)
  * - Loads HTML template from WebSocket/welcome_email.html
  *
  * Environment Variables Required:
- * - RESEND_API_KEY: Resend API key for sending emails
+ * - SMTP_USER: SMTP Username (e.g. supabase@texasgrowthfactory.com)
+ * - SMTP_PASS: SMTP Password
  *
  * No request body needed (cron job)
  */
 
-interface ResendEmailPayload {
+interface EmailPayload {
   from: string;
   to: string;
   subject: string;
@@ -47,23 +50,41 @@ Deno.serve(async (req) => {
     // Create Supabase client with service role (bypasses RLS)
     const supabase = createSupabaseClient();
 
-    // Get Resend API key from environment
-    const resendApiKey = Deno.env.get("RESEND_API_KEY");
-    if (!resendApiKey) {
-      console.error("RESEND_API_KEY environment variable is not set");
-      return errorResponse(
-        "CONFIG_ERROR",
-        "Email service is not configured",
-        500
-      );
+    // SMTP Configuration
+    const smtpUser = Deno.env.get("SMTP_USER");
+    const smtpPass = Deno.env.get("SMTP_PASS");
+    const smtpHost = Deno.env.get("SMTP_HOST");
+    const smtpPort = parseInt(Deno.env.get("SMTP_PORT"));
+    const smtpSender = Deno.env.get("SMTP_FROM");
+
+    if (!smtpUser || !smtpPass) {
+        console.error("SMTP credentials are missing");
+        return errorResponse(
+            "CONFIG_ERROR",
+            "Email service is not configured",
+            500
+        );
     }
+
+    const transporter = nodemailer.createTransport({
+        host: smtpHost,
+        port: smtpPort,
+        secure: false, // true for 465, false for other ports. Outlook uses STARTTLS on 587
+        auth: {
+            user: smtpUser,
+            pass: smtpPass,
+        },
+        tls: {
+            ciphers: 'SSLv3'
+        }
+    });
 
     // Find users who registered in the last 10 minutes and haven't received welcome email
     const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000).toISOString();
 
     const { data: newUsers, error: fetchError } = await supabase
       .from("profiles")
-      .select("id, email, full_name, created_at")
+      .select("id, full_name, created_at")
       .gte("created_at", tenMinutesAgo)
       .or("welcome_email_sent.is.null,welcome_email_sent.eq.false");
 
@@ -85,71 +106,65 @@ Deno.serve(async (req) => {
       }, 200);
     }
 
-    // Load welcome email HTML template
-    let emailHtml: string;
-    try {
-      const templatePath = new URL("../WebSocket/welcome_email.html", import.meta.url);
-      emailHtml = await Deno.readTextFile(templatePath);
-    } catch (readError) {
-      console.error("Error reading email template:", readError);
-      return errorResponse(
-        "TEMPLATE_ERROR",
-        "Failed to load email template",
-        500
-      );
+    // Load welcome email template from database
+    const { data: templateData, error: templateError } = await supabase
+      .from("email_templates")
+      .select("subject, content")
+      .eq("name", "welcome-email")
+      .eq("is_active", true)
+      .single();
+
+    if (templateError || !templateData) {
+      console.warn("Welcome email template not found in database or error fetching it, using fallback:", templateError);
     }
+
+    const emailSubject = templateData?.subject || "Welcome to DoorKnocker - Your Account is Ready";
+    const emailHtml = templateData?.content || WELCOME_EMAIL_HTML;
 
     // Send emails to each new user
     const emailResults = [];
     const userIdsToUpdate = [];
 
-    for (const user of newUsers) {
+    for (const userProfile of newUsers) {
       try {
-        // Prepare email payload
-        const emailPayload: ResendEmailPayload = {
-          from: "DoorKnocker <hello@texasgrowthfactory.com>",
-          to: user.email,
-          subject: "Welcome to DoorKnocker - Your Account is Ready",
-          html: emailHtml
-        };
+        // Fetch user email from auth.users
+        const { data: authUser, error: authError } = await supabase.auth.admin.getUserById(userProfile.id);
 
-        // Send email via Resend API
-        const response = await fetch("https://api.resend.com/emails", {
-          method: "POST",
-          headers: {
-            "Authorization": `Bearer ${resendApiKey}`,
-            "Content-Type": "application/json"
-          },
-          body: JSON.stringify(emailPayload)
+        if (authError || !authUser.user || !authUser.user.email) {
+            console.error(`Could not find auth user for profile ${userProfile.id}:`, authError);
+            emailResults.push({
+                user_id: userProfile.id,
+                success: false,
+                error: "Auth user not found or no email"
+            });
+            continue;
+        }
+
+        const userEmail = authUser.user.email;
+
+        // Send email via Nodemailer
+        const info = await transporter.sendMail({
+            from: `"DoorKnocker" <${smtpSender}>`, // Sender address
+            to: userEmail,
+            subject: emailSubject,
+            html: emailHtml,
         });
 
-        if (!response.ok) {
-          const errorText = await response.text();
-          console.error(`Failed to send email to ${user.email}:`, errorText);
-          emailResults.push({
-            user_id: user.id,
-            email: user.email,
-            success: false,
-            error: errorText
-          });
-        } else {
-          const result = await response.json();
-          console.log(`Successfully sent welcome email to ${user.email}`);
-          emailResults.push({
-            user_id: user.id,
-            email: user.email,
-            success: true,
-            resend_id: result.id
-          });
-          userIdsToUpdate.push(user.id);
-        }
-      } catch (emailError) {
-        console.error(`Error sending email to ${user.email}:`, emailError);
+        console.log(`Successfully sent welcome email to ${userEmail}. MessageId: ${info.messageId}`);
         emailResults.push({
-          user_id: user.id,
-          email: user.email,
+            user_id: userProfile.id,
+            email: userEmail,
+            success: true,
+            resend_id: info.messageId // Keeping key name for compatibility or rename to messageId
+        });
+        userIdsToUpdate.push(userProfile.id);
+
+      } catch (emailError) {
+        console.error(`Error sending email to user ${userProfile.id}:`, emailError);
+        emailResults.push({
+          user_id: userProfile.id,
           success: false,
-          error: emailError.message
+          error: emailError
         });
       }
     }

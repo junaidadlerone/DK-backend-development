@@ -74,6 +74,7 @@ export interface GetUserResponse {
     role: UserRole;
     full_name: string | null;
     created_at: string;
+    auth_type: string;
     is_verified?: boolean;
     onboarding?: boolean;
   };
