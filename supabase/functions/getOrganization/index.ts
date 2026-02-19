@@ -64,75 +64,47 @@ Deno.serve(async (req) => {
       );
     }
 
-    let organization;
+    // Fetch all organizations - check owner_id first, then organization_members
+    const { data: allOrgs, error: fetchError } = await supabase
+      .from("organizations")
+      .select("*");
 
-    if (userRole === "ADMIN") {
-      // For ADMIN: Get organization where they are the owner
-      const { data, error } = await supabase
-        .from("organizations")
-        .select("*")
-        .eq("owner_id", user.id)
-        .single();
+    if (fetchError) {
+      console.error("Organization fetch error:", fetchError);
+      return errorResponse(
+        "FETCH_FAILED",
+        "Failed to fetch organization",
+        500
+      );
+    }
 
-      if (error || !data) {
-        return errorResponse(
-          "ORGANIZATION_NOT_FOUND",
-          "Organization not found",
-          404
-        );
-      }
+    if (!allOrgs || allOrgs.length === 0) {
+      return errorResponse(
+        "ORGANIZATION_NOT_FOUND",
+        "Organization not found",
+        404
+      );
+    }
 
-      organization = data;
-    } else {
-      // For MARKETER/TECHNICIAN: Get organization where they are a member
-      // We need to get all organizations and filter in-memory since JSONB contains
-      // doesn't work well with partial object matching
-      const { data, error } = await supabase
-        .from("organizations")
-        .select("*")
-        .not("organization_members", "is", null);
+    // First try: user is the org owner
+    let organization = allOrgs.find((org) => org.owner_id === user.id) || null;
 
-      if (error) {
-        console.error("Organization fetch error:", error);
-        return errorResponse(
-          "FETCH_FAILED",
-          "Failed to fetch organization",
-          500
-        );
-      }
-
-      if (!data || data.length === 0) {
-        return errorResponse(
-          "ORGANIZATION_NOT_FOUND",
-          "No organizations found",
-          404
-        );
-      }
-
-      // Find organization where user is a member
-      let foundOrganization = null;
-      for (const org of data) {
+    // Second try: user is a member (covers ADMIN, MARKETER, TECHNICIAN members)
+    if (!organization) {
+      organization = allOrgs.find((org) => {
         const members = org.organization_members || [];
-        if (Array.isArray(members)) {
-          const isMember = members.some((member: any) => 
-            member && typeof member === 'object' && member.member_uid === user.id
-          );
-          if (isMember) {
-            foundOrganization = org;
-            break;
-          }
-        }
-      }
-
-      if (!foundOrganization) {
-        return errorResponse(
-          "ORGANIZATION_NOT_FOUND",
-          "You are not associated with any organization",
-          404
+        return Array.isArray(members) && members.some((member: any) =>
+          member && typeof member === "object" && member.member_uid === user.id
         );
-      }
+      }) || null;
+    }
 
-      organization = foundOrganization;
+    if (!organization) {
+      return errorResponse(
+        "ORGANIZATION_NOT_FOUND",
+        "You are not associated with any organization",
+        404
+      );
     }
 
     // Fetch user preferences
