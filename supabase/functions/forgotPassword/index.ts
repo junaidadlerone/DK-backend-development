@@ -48,8 +48,8 @@ Deno.serve(async (req) => {
     // Create Supabase client with anon key
     const supabase = createSupabaseAnonClient();
 
-    // Password reset redirect URL - points to frontend app
-    const redirectUrl = "https://doorknocker.texasgrowthfactory.com/reset-password";
+    // Password reset redirect URL - reads from SITE_URL env var
+    const redirectUrl = `${Deno.env.get("SITE_URL") ?? "https://doorknocker.texasgrowthfactory.com"}/reset-password`;
 
     // Send password reset email
     // Note: This will only send email if the user exists, but we don't expose that information

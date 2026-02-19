@@ -135,7 +135,7 @@ Deno.serve(async (req) => {
         data: {
           full_name: fullName || null,
         },
-        redirectTo: "https://doorknocker.texasgrowthfactory.com/set-password",
+        redirectTo: `${Deno.env.get("SITE_URL") ?? "https://doorknocker.texasgrowthfactory.com"}/set-password`,
       }
     );
 
