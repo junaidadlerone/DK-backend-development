@@ -4061,9 +4061,9 @@ paths:
         **Business Rules:**
         - Status is automatically set to "Ready" if ALL conditions are met:
           - home_owner_info.name (non-empty)
-          - home_owner_info.address.street (non-empty)
+          - home_owner_info.address.street_address (non-empty)
           - home_owner_info.address.city (non-empty)
-          - home_owner_info.address.state.name (non-empty)
+          - home_owner_info.address.state (non-empty string)
           - home_owner_info.address.zip (non-empty)
           - job_details.job_type.id (not null)
           - hasOwnerConsent is true
@@ -4085,9 +4085,75 @@ paths:
                 home_owner_info:
                   type: object
                   description: Home owner information
+                  properties:
+                    name:
+                      type: string
+                      description: Home owner full name
+                      example: John Doe
+                    phone:
+                      type: string
+                      description: Home owner phone number
+                      example: "+1-555-123-4567"
+                    email:
+                      type: string
+                      format: email
+                      description: Home owner email address
+                      example: john@example.com
+                    address:
+                      type: object
+                      description: Home owner address
+                      properties:
+                        country:
+                          type: string
+                          description: Country name
+                          example: United States
+                        street_address:
+                          type: string
+                          description: Street address
+                          example: 123 Main Street
+                        city:
+                          type: string
+                          description: City name
+                          example: San Francisco
+                        state:
+                          type: string
+                          description: State name (plain string)
+                          example: California
+                        zip:
+                          type: string
+                          description: ZIP code
+                          example: "94102"
                 job_details:
                   type: object
                   description: Job details
+                  properties:
+                    job_type:
+                      type: object
+                      description: Job type with id and name
+                      properties:
+                        id:
+                          type: string
+                          format: uuid
+                          nullable: true
+                        name:
+                          type: string
+                          example: Plumbing
+                    value:
+                      type: number
+                      description: Job value
+                      example: 2500
+                    currency:
+                      type: string
+                      description: Currency code
+                      example: USD
+                    referral_percentage:
+                      type: number
+                      description: Referral percentage
+                      example: 10
+                    notes:
+                      type: string
+                      description: Additional notes
+                      example: Customer requested urgent service.
                 hasOwnerConsent:
                   type: boolean
                   description: Whether owner has given consent
@@ -5861,7 +5927,7 @@ paths:
         **Smart Status Determination:**
         - If status is NOT explicitly provided, it will be auto-determined based on ALL conditions:
           - home_owner_info.name (non-empty)
-          - home_owner_info.address fields (street, city, state.name, zip all non-empty)
+          - home_owner_info.address fields (street_address, city, state, zip all non-empty)
           - job_details.job_type.id (not null)
           - hasOwnerConsent is true
           - signature_id is provided (not null)
@@ -5872,12 +5938,13 @@ paths:
         - address must be a JSON object
         - job_details must be a JSON object
         - job_type must be a JSON object with id and name
+        - state must be a plain string
         - status can be passed as string ("Draft", "In Use", "Ready") or JSON object
         - signature_id must exist in signatures table if provided (not null)
 
         **Supported Fields:**
-        - name, phone, email (home_owner_info)
-        - address, street, city, state, zip (address fields)
+        - name, phone, email (home_owner_info top-level)
+        - address (full object), or individual: street_address, city, state, zip, country
         - job_type, value, currency, referral_percentage, notes (job_details)
         - hasOwnerConsent (boolean)
         - signature_id (uuid or null)
@@ -5915,18 +5982,43 @@ paths:
                   description: Home owner email
                 address:
                   type: object
-                  description: Complete address object
-                street:
+                  description: Complete address object (replaces all address fields)
+                  properties:
+                    country:
+                      type: string
+                      description: Country name
+                      example: United States
+                    street_address:
+                      type: string
+                      description: Street address
+                      example: 123 Main Street
+                    city:
+                      type: string
+                      description: City name
+                      example: San Francisco
+                    state:
+                      type: string
+                      description: State name (plain string)
+                      example: California
+                    zip:
+                      type: string
+                      description: ZIP code
+                      example: "94102"
+                street_address:
                   type: string
-                  description: Street address
+                  description: Street address (individual field)
+                  example: 123 Main Street
                 city:
                   type: string
                   description: City name
+                country:
+                  type: string
+                  description: Country name
+                  example: United States
                 state:
-                  description: "State (string abbreviation or object)"
-                  oneOf:
-                    - type: string
-                    - type: object
+                  type: string
+                  description: State name (plain string)
+                  example: California
                 zip:
                   type: string
                   description: ZIP code
@@ -13874,29 +13966,26 @@ components:
             address:
               type: object
               properties:
-                street:
+                country:
+                  type: string
+                  description: Country name
+                  example: United States
+                street_address:
                   type: string
                   description: Street address
-                  example: 123 Main St
+                  example: 123 Main Street
                 city:
                   type: string
                   description: City name
-                  example: Anytown
+                  example: San Francisco
                 state:
-                  type: object
-                  properties:
-                    name:
-                      type: string
-                      description: Full state name
-                      example: California
-                    abbreviation:
-                      type: string
-                      description: State abbreviation
-                      example: CA
+                  type: string
+                  description: State name (plain string)
+                  example: California
                 zip:
                   type: string
                   description: ZIP code
-                  example: "90210"
+                  example: "94102"
             phone:
               type: string
               description: Phone number

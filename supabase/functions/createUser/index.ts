@@ -188,19 +188,33 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Get the admin's organization
-    const { data: adminOrg, error: orgFetchError } = await supabase
-      .from("organizations")
-      .select("organization_members")
-      .eq("owner_id", user.id)
-      .single();
+    // Get the admin's organization (works for both org owners and ADMIN members)
+    const adminOrgId = await getUserOrganizationId(supabase, user.id);
 
-    if (orgFetchError || !adminOrg) {
-      // If admin's organization not found, rollback user creation
+    if (!adminOrgId) {
+      // If organization not found, rollback user creation
       await supabase.from("profiles").delete().eq("id", authData.user.id);
       await supabase.auth.admin.deleteUser(authData.user.id);
 
-      console.error("Admin organization not found:", orgFetchError);
+      return errorResponse(
+        "ORGANIZATION_NOT_FOUND",
+        "Admin's organization not found. Please contact support.",
+        500
+      );
+    }
+
+    // Fetch the org's current members
+    const { data: adminOrg, error: orgFetchError } = await supabase
+      .from("organizations")
+      .select("organization_members")
+      .eq("id", adminOrgId)
+      .single();
+
+    if (orgFetchError || !adminOrg) {
+      await supabase.from("profiles").delete().eq("id", authData.user.id);
+      await supabase.auth.admin.deleteUser(authData.user.id);
+
+      console.error("Admin organization fetch error:", orgFetchError);
       return errorResponse(
         "ORGANIZATION_NOT_FOUND",
         "Admin's organization not found. Please contact support.",
@@ -220,7 +234,7 @@ Deno.serve(async (req) => {
     const { error: orgUpdateError } = await supabase
       .from("organizations")
       .update({ organization_members: updatedMembers })
-      .eq("owner_id", user.id);
+      .eq("id", adminOrgId);
 
     if (orgUpdateError) {
       // If organization update fails, rollback user creation

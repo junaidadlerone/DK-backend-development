@@ -11,9 +11,9 @@ import { getUserOrganizationId } from "../_shared/organization.ts";
  * - Creates a referral with empty/default values if no data is passed
  * - Status is automatically set to "Ready" if ALL conditions are met:
  *   - home_owner_info.name (non-empty)
- *   - home_owner_info.address.street (non-empty)
+ *   - home_owner_info.address.street_address (non-empty)
  *   - home_owner_info.address.city (non-empty)
- *   - home_owner_info.address.state.name (non-empty)
+ *   - home_owner_info.address.state (non-empty string)
  *   - home_owner_info.address.zip (non-empty)
  *   - job_details.job_type.id (not null)
  *   - hasOwnerConsent is true
@@ -140,9 +140,10 @@ Deno.serve(async (req) => {
     const defaultHomeOwnerInfo = {
       name: "",
       address: {
-        street: "",
+        country: "",
+        street_address: "",
         city: "",
-        state: { name: "", abbreviation: "" },
+        state: "",
         zip: ""
       },
       phone: "",
@@ -163,11 +164,7 @@ Deno.serve(async (req) => {
       ...body.home_owner_info,
       address: body.home_owner_info.address ? {
         ...defaultHomeOwnerInfo.address,
-        ...body.home_owner_info.address,
-        state: body.home_owner_info.address.state ? {
-          ...defaultHomeOwnerInfo.address.state,
-          ...body.home_owner_info.address.state
-        } : defaultHomeOwnerInfo.address.state
+        ...body.home_owner_info.address
       } : defaultHomeOwnerInfo.address
     } : defaultHomeOwnerInfo;
 
@@ -208,9 +205,9 @@ Deno.serve(async (req) => {
     // Check if all conditions are met for "Ready" status
     const isReadyForSubmission =
       homeOwnerInfo.name && homeOwnerInfo.name.trim() !== "" &&
-      homeOwnerInfo.address.street && homeOwnerInfo.address.street.trim() !== "" &&
+      homeOwnerInfo.address.street_address && homeOwnerInfo.address.street_address.trim() !== "" &&
       homeOwnerInfo.address.city && homeOwnerInfo.address.city.trim() !== "" &&
-      homeOwnerInfo.address.state.name && homeOwnerInfo.address.state.name.trim() !== "" &&
+      homeOwnerInfo.address.state && homeOwnerInfo.address.state.trim() !== "" &&
       homeOwnerInfo.address.zip && homeOwnerInfo.address.zip.trim() !== "" &&
       jobDetails.job_type.id !== null &&
       hasOwnerConsent === true &&

@@ -119,12 +119,13 @@ Deno.serve(async (req) => {
     // Handle home_owner_info updates
     if (updateData.name !== undefined || updateData.phone !== undefined ||
         updateData.email !== undefined || updateData.address !== undefined ||
-        updateData.street !== undefined || updateData.city !== undefined ||
-        updateData.state !== undefined || updateData.zip !== undefined) {
+        updateData.street_address !== undefined || updateData.city !== undefined ||
+        updateData.state !== undefined || updateData.zip !== undefined ||
+        updateData.country !== undefined) {
 
       const currentHomeOwnerInfo = existingReferral.home_owner_info || {
         name: "",
-        address: { street: "", city: "", state: { name: "", abbreviation: "" }, zip: "" },
+        address: { country: "", street_address: "", city: "", state: "", zip: "" },
         phone: "",
         email: ""
       };
@@ -158,29 +159,24 @@ Deno.serve(async (req) => {
         };
       } else {
         // Handle individual address fields
-        if (updateData.street !== undefined) {
-          updatedFields.home_owner_info.address.street = updateData.street;
+        if (updateData.street_address !== undefined) {
+          updatedFields.home_owner_info.address.street_address = updateData.street_address;
+        }
+        if (updateData.country !== undefined) {
+          updatedFields.home_owner_info.address.country = updateData.country;
         }
         if (updateData.city !== undefined) {
           updatedFields.home_owner_info.address.city = updateData.city;
         }
         if (updateData.state !== undefined) {
-          // State can be string or object
-          if (typeof updateData.state === 'string') {
-            // If string, treat as abbreviation
-            updatedFields.home_owner_info.address.state = {
-              name: "",
-              abbreviation: updateData.state
-            };
-          } else if (typeof updateData.state === 'object') {
-            updatedFields.home_owner_info.address.state = updateData.state;
-          } else {
+          if (typeof updateData.state !== 'string') {
             return errorResponse(
               "INVALID_INPUT",
-              "State must be a string or JSON object",
+              "State must be a string",
               400
             );
           }
+          updatedFields.home_owner_info.address.state = updateData.state;
         }
         if (updateData.zip !== undefined) {
           updatedFields.home_owner_info.address.zip = updateData.zip;
@@ -292,9 +288,9 @@ Deno.serve(async (req) => {
       // Check if all conditions are met for "Ready" status
       const isReadyForSubmission =
         finalHomeOwnerInfo.name && finalHomeOwnerInfo.name.trim() !== "" &&
-        finalHomeOwnerInfo.address?.street && finalHomeOwnerInfo.address.street.trim() !== "" &&
+        finalHomeOwnerInfo.address?.street_address && finalHomeOwnerInfo.address.street_address.trim() !== "" &&
         finalHomeOwnerInfo.address?.city && finalHomeOwnerInfo.address.city.trim() !== "" &&
-        finalHomeOwnerInfo.address?.state?.name && finalHomeOwnerInfo.address.state.name.trim() !== "" &&
+        finalHomeOwnerInfo.address?.state && finalHomeOwnerInfo.address.state.trim() !== "" &&
         finalHomeOwnerInfo.address?.zip && finalHomeOwnerInfo.address.zip.trim() !== "" &&
         finalJobDetails.job_type?.id !== null &&
         finalHasOwnerConsent === true &&
@@ -374,9 +370,9 @@ Deno.serve(async (req) => {
     if (updateData.email !== undefined) {
       changes.push("changed homeowner email");
     }
-    if (updateData.address !== undefined || updateData.street !== undefined ||
+    if (updateData.address !== undefined || updateData.street_address !== undefined ||
         updateData.city !== undefined || updateData.state !== undefined ||
-        updateData.zip !== undefined) {
+        updateData.zip !== undefined || updateData.country !== undefined) {
       changes.push("changed homeowner address");
     }
     if (updateData.job_type !== undefined) {
