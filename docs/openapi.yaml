@@ -8074,6 +8074,48 @@ paths:
         "500":
           description: Internal server error
 
+  /getCampaignStatuses:
+    get:
+      tags:
+        - Campaign Management
+      summary: Get all campaign statuses
+      description: Returns all available campaign status types (Draft, Active, In Active)
+      operationId: getCampaignStatuses
+      security:
+        - SupabaseAuth: []
+        - BearerAuth: []
+      responses:
+        "200":
+          description: Campaign statuses retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                          format: uuid
+                        name:
+                          type: string
+                          example: Draft
+              example:
+                data:
+                  - id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+                    name: "Draft"
+                  - id: "b2c3d4e5-f6a7-8901-bcde-f12345678901"
+                    name: "Active"
+                  - id: "c3d4e5f6-a7b8-9012-cdef-123456789012"
+                    name: "In Active"
+        "401":
+          description: Unauthorized
+        "500":
+          description: Internal server error
+
   /getCampaignInformationByReferralId:
     post:
       tags:

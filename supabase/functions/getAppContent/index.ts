@@ -64,6 +64,25 @@ Deno.serve(async (req) => {
       );
     }
 
+    // Fetch the org owner's branding so all members share the same theme
+    const { data: org } = await supabase
+      .from("organizations")
+      .select("owner_id")
+      .eq("id", organizationId)
+      .single();
+
+    let ownerBrandingSettings = userProfile.branding_settings;
+    if (org?.owner_id && org.owner_id !== user.userId) {
+      const { data: ownerProfile } = await supabase
+        .from("profiles")
+        .select("branding_settings")
+        .eq("id", org.owner_id)
+        .single();
+      if (ownerProfile?.branding_settings) {
+        ownerBrandingSettings = ownerProfile.branding_settings;
+      }
+    }
+
     // Get user's system preferences (currency and timezone)
     const { data: preferences } = await supabase
       .from("system_preferences")
@@ -154,7 +173,7 @@ Deno.serve(async (req) => {
           return successResponse({
             data: {
               menu_items: menuItems,
-              theme: userProfile.branding_settings?.theme || {
+              theme: ownerBrandingSettings?.theme || {
                 colors: {
                   primary: "#E36A00",
                   secondary: "#1D1D20",
@@ -223,7 +242,7 @@ Deno.serve(async (req) => {
     return successResponse({
       data: {
         menu_items: menuItems,
-        theme: userProfile.branding_settings?.theme || {
+        theme: ownerBrandingSettings?.theme || {
           colors: {
             primary: "#E36A00",
             secondary: "#1D1D20",
