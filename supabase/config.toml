@@ -503,3 +503,9 @@ verify_jwt = false
 
 [functions.verifyOtp]
 verify_jwt = false
+
+[functions.sendMaintenanceCompletedEmail]
+verify_jwt = false
+
+[functions.setMaintenanceEmailStatus]
+verify_jwt = false
