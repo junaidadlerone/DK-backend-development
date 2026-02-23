@@ -17,6 +17,7 @@ import { getPreferences } from "../_shared/preferences.ts";
  * - All provided criteria are combined with AND logic
  * - Supports pagination with page and limit parameters
  * - Default: page=1, limit=10
+ * - sort_order: "asc" (oldest first) or "desc" (newest first, default)
  * - Includes image_url field with first image from gallery (empty string if no images)
  */
 Deno.serve(async (req) => {
@@ -44,7 +45,18 @@ Deno.serve(async (req) => {
       );
     }
 
-    const { query, filters, page: pageParam, limit: limitParam } = body;
+    const { query, filters, page: pageParam, limit: limitParam, sort_order: sortOrderParam } = body;
+
+    // Parse and validate sort_order ("asc" or "desc", default "desc")
+    const sortOrderRaw = typeof sortOrderParam === 'string' ? sortOrderParam.toLowerCase().trim() : "desc";
+    if (sortOrderRaw !== "asc" && sortOrderRaw !== "desc") {
+      return errorResponse(
+        "INVALID_INPUT",
+        "sort_order must be \"asc\" or \"desc\"",
+        400
+      );
+    }
+    const ascending = sortOrderRaw === "asc";
 
     // Parse and validate pagination parameters
     let page = pageParam ? parseInt(pageParam, 10) : 1;
@@ -155,7 +167,7 @@ Deno.serve(async (req) => {
       .from("referrals")
       .select("*")
       .eq("organization_id", organizationId)
-      .order("created_at", { ascending: false });
+      .order("created_at", { ascending });
 
     if (fetchError) {
       console.error("Error fetching referrals:", fetchError);
@@ -229,6 +241,14 @@ Deno.serve(async (req) => {
         });
       }
     }
+
+    // Re-sort filtered results to ensure sort_order is respected after in-memory filtering
+    filteredReferrals.sort((a, b) => {
+      const dateA = new Date(a.created_at).getTime();
+      const dateB = new Date(b.created_at).getTime();
+      return ascending ? dateA - dateB : dateB - dateA;
+    });
+
 
     // Calculate pagination metadata
     const totalCount = filteredReferrals.length;

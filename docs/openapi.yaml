@@ -6145,7 +6145,10 @@ paths:
         - page: Page number (default: 1, min: 1)
         - limit: Results per page (default: 10, min: 1, max: 100)
 
-        **Returns:** Paginated array of matching referrals ordered by created_at (newest first), each with image_url (first image from gallery, empty string if no images)
+        **Sorting:**
+        - sort_order: "asc" (oldest first) or "desc" (newest first). Default: "desc"
+
+        **Returns:** Paginated array of matching referrals ordered by created_at, each with image_url (first image from gallery, empty string if no images)
       operationId: searchReferral
       security:
         - BearerAuth: []
@@ -6194,6 +6197,11 @@ paths:
                   maximum: 100
                   default: 10
                   description: "Results per page (default: 10, max: 100)"
+                sort_order:
+                  type: string
+                  enum: ["asc", "desc"]
+                  default: "desc"
+                  description: "Sort order by created_at. \"asc\" = oldest first, \"desc\" = newest first (default)"
             examples:
               searchByName:
                 summary: Search by home owner name
