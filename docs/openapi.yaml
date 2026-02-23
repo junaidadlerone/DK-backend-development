@@ -12011,6 +12011,95 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
+  /updateCompanyLogo:
+    post:
+      tags:
+        - Version 2 APIs
+      summary: Update or remove company logo
+      description: |
+        Replaces the organization's current company logo with a new one, or removes it entirely.
+
+        **Two modes:**
+
+        **1. Replace logo** — send `multipart/form-data` with a `company_logo` file field.
+        The old logo file is deleted from storage and the new one is uploaded.
+
+        **2. Remove logo** — send `application/json` with `{ "company_logo": null }`.
+        The existing logo is deleted from storage and the record is cleared.
+
+        **What Happens:**
+        - Fetches and deletes the old logo file from the `CompanyLogos` storage bucket
+        - Uploads new file and saves public URL (replace mode)
+        - Updates `onboarding.company_logo` to the new URL (or null)
+
+        **Access Control:**
+        - Requires authentication
+        - User must belong to an organization
+      operationId: updateCompanyLogo
+      security:
+        - BearerAuth: []
+        - SupabaseAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - company_logo
+              properties:
+                company_logo:
+                  type: string
+                  format: binary
+                  description: New logo image file (JPEG, PNG, etc.)
+          application/json:
+            schema:
+              type: object
+              required:
+                - company_logo
+              properties:
+                company_logo:
+                  type: string
+                  nullable: true
+                  example: null
+                  description: Pass null to remove the existing company logo
+      responses:
+        "200":
+          description: Logo updated or removed successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: success
+                  message:
+                    type: string
+                    example: Company logo updated successfully
+                  company_logo:
+                    type: string
+                    nullable: true
+                    description: New public URL of the logo, or null if removed
+        "400":
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
   /completeOnboarding:
     post:
       tags:
