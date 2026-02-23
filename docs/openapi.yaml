@@ -12100,6 +12100,52 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
+  /getMaintainenceStatus:
+    get:
+      tags:
+        - Version 2 APIs
+      summary: Get maintenance mode status
+      description: |
+        Returns the current maintenance mode status, estimated restoration time, and when it was last updated.
+
+        **Public endpoint** — no authentication required.
+
+        To toggle maintenance mode or update the estimated time, update the `maintainence` table directly in the database.
+      operationId: getMaintainenceStatus
+      responses:
+        "200":
+          description: Maintenance status retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: success
+                  data:
+                    type: object
+                    properties:
+                      isUnderMaintainence:
+                        type: boolean
+                        description: Whether the app is currently under maintenance
+                        example: false
+                      estimated_time:
+                        type: string
+                        description: Estimated time maintenance will end
+                        example: "9:00AM EST"
+                      updated_at:
+                        type: string
+                        format: date-time
+                        nullable: true
+                        description: When the maintenance record was last updated
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
   /completeOnboarding:
     post:
       tags:
