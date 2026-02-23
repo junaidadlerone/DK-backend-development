@@ -74,11 +74,13 @@ Deno.serve(async (req) => {
     const userRole = profile.role;
 
     // Check if there are any unread notifications for this user's role in their organization
+    // Exclude archived (cleared) notifications
     const { count: unreadCount, error: countError } = await supabase
       .from("notifications")
       .select("*", { count: "exact", head: true })
       .eq("organization_id", organizationId)
       .eq("is_read", false)
+      .eq("is_archived", false)
       .contains("target_roles", [userRole]);
 
     if (countError) {
