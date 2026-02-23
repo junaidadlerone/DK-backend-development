@@ -46,7 +46,7 @@ jobs:
           done
 
           echo "🚀 Pushing migrations..."
-          supabase db push --password "$SUPABASE_DB_PASSWORD"
+          supabase db push --password "$SUPABASE_DB_PASSWORD" --include-all
           echo "✅ Migrations pushed successfully."
 
       - name: Deploy all edge functions
