@@ -99,6 +99,15 @@ Deno.serve(async (req) => {
     const timezone = preferences?.timezone || null;
     const currency = preferences?.currency || null;
 
+    // Fetch maintenance mode status (latest row)
+    const { data: maintenanceData } = await supabase
+      .from("maintainence")
+      .select("isUnderMaintainence")
+      .order("updated_at", { ascending: false })
+      .limit(1)
+      .single();
+    const isUnderMaintainence = maintenanceData?.isUnderMaintainence ?? false;
+
     // Fetch app content for user's role and organization
     const { data: appContent, error: contentError } = await supabase
       .from("app_content")
@@ -185,7 +194,8 @@ Deno.serve(async (req) => {
                 }
               },
               currency: currency,
-              timezone: timezone
+              timezone: timezone,
+              isUnderMaintainence: isUnderMaintainence
             }
           });
 
@@ -254,7 +264,8 @@ Deno.serve(async (req) => {
           }
         },
         currency: currency,
-        timezone: timezone
+        timezone: timezone,
+        isUnderMaintainence: isUnderMaintainence
       }
     });
 
