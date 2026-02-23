@@ -15,6 +15,7 @@ interface OnboardingRequest {
   business_name?: string;
   industry?: string;
   business_phone_number?: string;
+  business_email?: string;
   website_url?: string;
   // Step 2 fields
   country?: string;
@@ -136,7 +137,7 @@ Deno.serve(async (req) => {
 
     if (step === 1) {
       // Step 1: Business Information
-      const { business_name, industry, business_phone_number, website_url } = body;
+      const { business_name, industry, business_phone_number, business_email, website_url } = body;
 
       if (!business_name || !industry) {
         return errorResponse("INVALID_INPUT", "business_name and industry are required", 400);
@@ -163,6 +164,7 @@ Deno.serve(async (req) => {
           business_name,
           industry,
           phone_number: business_phone_number || null,
+          business_email: business_email || null,
           website_url: website_url || null,
           updated_at: new Date().toISOString()
         })

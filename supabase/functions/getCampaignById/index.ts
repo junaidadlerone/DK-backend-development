@@ -104,6 +104,32 @@ Deno.serve(async (req) => {
     // Fetch user preferences
     const preferences = await getPreferences(supabase, user.userId);
 
+    // Derive template_bundle_id from front + back template PostGrid IDs
+    let template_bundle_id: string | null = null;
+    if (campaign.front_template_id && campaign.back_template_id) {
+      // Resolve PostGrid template IDs → internal template UUIDs
+      const { data: templateRows } = await supabase
+        .from("templates")
+        .select("id, postgrid_template_id")
+        .in("postgrid_template_id", [campaign.front_template_id, campaign.back_template_id]);
+
+      if (templateRows && templateRows.length === 2) {
+        const frontRow = templateRows.find((t: any) => t.postgrid_template_id === campaign.front_template_id);
+        const backRow  = templateRows.find((t: any) => t.postgrid_template_id === campaign.back_template_id);
+
+        if (frontRow && backRow) {
+          const { data: bundle } = await supabase
+            .from("template_bundles")
+            .select("id")
+            .eq("template_front_id", frontRow.id)
+            .eq("template_back_id", backRow.id)
+            .maybeSingle();
+
+          template_bundle_id = bundle?.id ?? null;
+        }
+      }
+    }
+
     return successResponse(
       {
         status: "success",
@@ -111,6 +137,7 @@ Deno.serve(async (req) => {
         data: {
           ...campaign,
           image_url,
+          template_bundle_id,
           start_date: campaign.offer_data?.start_date || null,
           created_at_tz: enrichTimestamp(campaign.created_at, preferences.timezone),
           updated_at_tz: enrichTimestamp(campaign.updated_at, preferences.timezone)

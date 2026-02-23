@@ -14,18 +14,24 @@ ON CONFLICT DO NOTHING;
 ALTER TABLE maintainence ENABLE ROW LEVEL SECURITY;
 
 -- Service role can manage the table
-CREATE POLICY "Service role can manage maintainence"
-  ON maintainence
-  FOR ALL
-  TO service_role
-  USING (true)
-  WITH CHECK (true);
+DO $$ BEGIN
+  CREATE POLICY "Service role can manage maintainence"
+    ON maintainence
+    FOR ALL
+    TO service_role
+    USING (true)
+    WITH CHECK (true);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- Any authenticated user can read
-CREATE POLICY "Authenticated users can read maintainence"
-  ON maintainence
-  FOR SELECT
-  TO authenticated
-  USING (true);
+DO $$ BEGIN
+  CREATE POLICY "Authenticated users can read maintainence"
+    ON maintainence
+    FOR SELECT
+    TO authenticated
+    USING (true);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 COMMENT ON TABLE maintainence IS 'Global maintenance mode flag. Always contains a single row.';
