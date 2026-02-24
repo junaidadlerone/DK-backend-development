@@ -1,0 +1,72 @@
+name: Deploy to Production
+
+on:
+  push:
+    branches:
+      - production
+
+jobs:
+  deploy:
+    name: Deploy Migrations & Edge Functions
+    runs-on: ubuntu-latest
+
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_DB_PASSWORD: ${{ secrets.PROD_SUPABASE_DB_PASSWORD }}
+      PROJECT_REF: iywivotqnphrjijztxtu
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Link to production project
+        run: supabase link --project-ref $PROJECT_REF
+
+      - name: Push database migrations
+        run: |
+          # Run db push; if prod DB has remote-only migrations (not in local files),
+          # the CLI will suggest repair commands — extract them, run them, then retry.
+          MAX_RETRIES=3
+          for i in $(seq 1 $MAX_RETRIES); do
+            OUTPUT=$(supabase db push --password "$SUPABASE_DB_PASSWORD" 2>&1)
+            EXIT_CODE=$?
+            echo "$OUTPUT"
+            if [ $EXIT_CODE -eq 0 ]; then
+              echo "✅ Migrations pushed successfully."
+              break
+            fi
+
+            # Look for suggested repair commands in the output
+            REPAIR_CMDS=$(echo "$OUTPUT" | grep "supabase migration repair" || true)
+            if [ -z "$REPAIR_CMDS" ]; then
+              echo "❌ Push failed with unexpected error — no repair commands found."
+              exit 1
+            fi
+
+            echo "🔧 Repairing orphaned remote migrations (attempt $i)..."
+            echo "$REPAIR_CMDS" | while IFS= read -r cmd; do
+              echo "Running: $cmd"
+              eval "$cmd"
+            done
+
+            if [ $i -eq $MAX_RETRIES ]; then
+              echo "❌ Push still failing after $MAX_RETRIES repair attempts."
+              exit 1
+            fi
+          done
+
+      - name: Deploy all edge functions
+        run: |
+          for dir in supabase/functions/*/; do
+            func=$(basename "$dir")
+            if [ "$func" = "_shared" ]; then
+              continue
+            fi
+            echo "🚀 Deploying function: $func"
+            supabase functions deploy "$func" --no-verify-jwt --project-ref $PROJECT_REF
+          done
