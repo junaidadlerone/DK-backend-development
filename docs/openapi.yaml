@@ -13746,8 +13746,8 @@ paths:
                   enum: ["true", "false"]
                   description: |
                     Opt-in for email when maintenance is over or online.
-                    - "true": Opt-in (sets internal skip flag to false)
-                    - "false": Opt-out (sets internal skip flag to true)
+                    - "true"
+                    - "false"
             encoding:
               opt_in_maintenance_complete_email:
                 contentType: text/plain
