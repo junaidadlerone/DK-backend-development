@@ -548,42 +548,11 @@ async function handleStep3(supabase: any, body: any, campaign_id: string, organi
     );
   }
 
-  // If zone belongs to a different campaign, duplicate it for this campaign
-  let finalZoneId = zone_id;
-  if (zone.campaign_id !== campaign_id) {
-    // Create a duplicate zone for this campaign
-    const { data: newZone, error: duplicateError } = await supabase
-      .from("location_zones")
-      .insert({
-        campaign_id: campaign_id,
-        organization_id: organizationId,
-        center: zone.center,
-        mode: zone.mode,
-        search_type: zone.search_type,
-        metadata: zone.metadata,
-        addresses: zone.addresses
-      })
-      .select("id")
-      .single();
-
-    if (duplicateError || !newZone) {
-      console.error("Error duplicating zone:", duplicateError);
-      return errorResponse(
-        "DUPLICATE_ZONE_FAILED",
-        "Failed to duplicate zone for this campaign",
-        500
-      );
-    }
-
-    finalZoneId = newZone.id;
-    console.log(`Duplicated zone ${zone_id} to new zone ${finalZoneId} for campaign ${campaign_id}`);
-  }
-
   // Update campaign to save zone_id and mark step 3 complete
   const { data: campaign, error: updateError } = await supabase
     .from("campaigns")
     .update({
-      zone_id: finalZoneId,
+      zone_id: zone_id,
       current_step: 3,
       updated_at: new Date().toISOString()
     })
@@ -624,7 +593,7 @@ async function handleStep3(supabase: any, body: any, campaign_id: string, organi
           ...campaign,
           image_url
         },
-        zone_id: finalZoneId
+        zone_id: zone_id
       },
     },
     200
