@@ -910,40 +910,35 @@ async function computeAddressCollectionAnalytics(
   let validatedAddresses = 0;
   let optOuts = 0;
 
-  // Map to track all addresses for duplicate detection
-  const addressesMap = new Map<string, number>();
+  // Map to precisely deduplicate by lat/long (just like getAllAddresses)
+  const addressMap = new Map<string, any>();
+  let duplicates = 0;
 
   for (const zone of allZones) {
     // Only process addresses if the zone is active (campaign_id not null)
-    if (
-      zone.campaign_id !== null &&
-      Array.isArray(zone.addresses)
-    ) {
+    if (zone.campaign_id !== null && Array.isArray(zone.addresses)) {
+      
+      // Order zones by created_at desc would be ideal here if available, 
+      // but Since getAnalytics doesn't query created_at for zones, we'll dedupe as they come
       for (const address of zone.addresses) {
-        // Check if address has status field
         if (address && typeof address === "object") {
-          const status = address.status;
+          const status = address.status || "Unverified";
 
-          // Only count addresses with status "verified", "Valid", or "Opt-out"
-          if (
-            status === "verified" || status === "Valid" || status === "Opt-out"
-          ) {
-            // Count total addresses
-            totalAddresses++;
-
-            // Create a unique key for each address (using stringified address)
-            const addressKey = JSON.stringify(address);
-            const currentCount = addressesMap.get(addressKey) || 0;
-            addressesMap.set(addressKey, currentCount + 1);
-
-            // Count validated addresses (status === "verified" or "Valid")
-            if (status === "verified" || status === "Valid") {
-              validatedAddresses++;
-            }
-
-            // Count opt-outs (status === "Opt-out")
-            if (status === "Opt-out") {
-              optOuts++;
+          // Exclude "Unverified" exactly like getAllAddresses does when showOnlyExclusions=false
+          if (status !== "Unverified") {
+            
+            // Ensure we have lat and long to deduplicate by
+            if (address.lat !== undefined && address.long !== undefined) {
+              const key = `${Number(address.lat).toFixed(6)},${Number(address.long).toFixed(6)}`;
+              
+              if (!addressMap.has(key)) {
+                addressMap.set(key, address);
+              } else {
+                duplicates++; // It's a duplicate of an existing coordinate
+              }
+            } else {
+              // Fallback if somehow lat/long are missing, still count them but don't deduplicate
+              addressMap.set(Math.random().toString(), address);
             }
           }
         }
@@ -951,12 +946,16 @@ async function computeAddressCollectionAnalytics(
     }
   }
 
-  // Calculate duplicates (addresses that appear more than once)
-  let duplicates = 0;
-  for (const [_, count] of addressesMap.entries()) {
-    if (count > 1) {
-      // Count extra occurrences (count - 1) as duplicates
-      duplicates += count - 1;
+  // Now calculate metrics off the deduplicated list
+  const deduplicatedAddresses = Array.from(addressMap.values());
+  totalAddresses = deduplicatedAddresses.length;
+
+  for (const addr of deduplicatedAddresses) {
+    const status = addr.status;
+    if (status === "Valid" || status === "verified") {
+      validatedAddresses++;
+    } else if (status === "Opt-out") {
+      optOuts++;
     }
   }
 
