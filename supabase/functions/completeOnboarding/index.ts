@@ -158,20 +158,24 @@ Deno.serve(async (req) => {
       if (onboardingError) throw onboardingError;
 
       // Update organization
+      const orgUpdateData: any = {
+        business_name,
+        industry,
+        phone_number: business_phone_number || null,
+        website_url: website_url || null,
+        updated_at: new Date().toISOString()
+      };
+
+      if (business_email !== undefined) {
+        orgUpdateData.business_email = business_email || null;
+      }
+
       const { error: orgError } = await supabase
         .from("organizations")
-        .update({
-          business_name,
-          industry,
-          phone_number: business_phone_number || null,
-          business_email: business_email || null,
-          website_url: website_url || null,
-          updated_at: new Date().toISOString()
-        })
+        .update(orgUpdateData)
         .eq("id", organizationId);
 
       if (orgError) throw orgError;
-
     } else if (step === 2) {
       // Step 2: Address Information
       const { country, street_address, city, state, zip } = body;
