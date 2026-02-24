@@ -145,6 +145,7 @@ Deno.serve(async (req) => {
       .from("organizations")
       .insert({
         owner_id: authData.user.id,
+        business_email: email,
         organization_members: [],
       })
       .select()
