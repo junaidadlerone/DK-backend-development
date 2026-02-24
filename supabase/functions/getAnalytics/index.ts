@@ -995,30 +995,48 @@ async function computeGlobalExclusionsAnalytics(
   let optOuts = 0;
   let manualEntries = 0;
 
+  // Map to precisely deduplicate exclusions by lat/long
+  const addressMap = new Map<string, any>();
+
   for (const zone of allZones) {
     if (Array.isArray(zone.addresses)) {
       for (const address of zone.addresses) {
-        // Check if address has status field
         if (address && typeof address === "object") {
-          const status = address.status;
-
-          // Count total_excluded (status == "Opt-out")
-          if (status === "Opt-out") {
-            totalExcluded++;
-          }
-
-          // Count opt-outs (status == "Opt-out")
-          if (status === "Opt-out") {
-            optOuts++;
-          }
-
-          // Count manual entries (addresses with manual_entry flag set to true)
-          // Manual entries are those added via /addAddressToZoneById which sets manual_entry to true
+          
+          // Count manual entries exactly as before (leave as is)
           if (address.manual_entry === true) {
             manualEntries++;
           }
+
+          const status = address.status || "Unverified";
+
+          // For exclusions, we DONT want Valid and we DONT want Unverified. (Matches showOnlyExclusions=true)
+          if (status !== "Valid" && status !== "Unverified") {
+
+            // Ensure we have lat and long to deduplicate by
+            if (address.lat !== undefined && address.long !== undefined) {
+              const key = `${Number(address.lat).toFixed(6)},${Number(address.long).toFixed(6)}`;
+              
+              if (!addressMap.has(key)) {
+                addressMap.set(key, address);
+              }
+            } else {
+              // Fallback if somehow lat/long are missing, still count them but don't deduplicate
+              addressMap.set(Math.random().toString(), address);
+            }
+          }
         }
       }
+    }
+  }
+
+  // Calculate metrics off the deduplicated exclusions list
+  const deduplicatedExclusions = Array.from(addressMap.values());
+  totalExcluded = deduplicatedExclusions.length;
+
+  for (const addr of deduplicatedExclusions) {
+    if (addr.status === "Opt-out") {
+      optOuts++;
     }
   }
 
