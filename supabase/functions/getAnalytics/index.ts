@@ -914,9 +914,9 @@ async function computeAddressCollectionAnalytics(
   const addressesMap = new Map<string, number>();
 
   for (const zone of allZones) {
-    // Only process addresses if the zone is active (campaign_id not null OR manual_search is true)
+    // Only process addresses if the zone is active (campaign_id not null)
     if (
-      (zone.campaign_id !== null || zone.manual_search === true) &&
+      zone.campaign_id !== null &&
       Array.isArray(zone.addresses)
     ) {
       for (const address of zone.addresses) {
