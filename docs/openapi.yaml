@@ -111,6 +111,8 @@ tags:
     description: Stripe payment methods and billing history management (ADMIN only)
   - name: Version 2 APIs
     description: Template Bundle APIs - Manage front and back PostGrid templates as a single unit
+  - name: Email Notifications
+    description: System-triggered email notifications for users (welcome, maintenance, etc.)
 
 paths:
   /signUp:
@@ -13649,6 +13651,139 @@ paths:
         "500":
           $ref: "#/components/schemas/Error"
 
+  /sendWelcomeEmail:
+    get:
+      tags:
+        - Email Notifications
+      summary: Send welcome emails to new users
+      description: |
+        Queries for users created in the last 10 minutes who haven't received a welcome email.
+        Sends emails using the `welcome-email` template.
+        Designed to be called via cron job.
+      operationId: sendWelcomeEmail
+      responses:
+        "200":
+          description: Operation successful
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EmailBatchResponse"
+        "500":
+          $ref: "#/components/schemas/Error"
+    post:
+      tags:
+        - Email Notifications
+      summary: Send welcome emails to new users (POST)
+      description: Same as GET method, allows triggering via POST request.
+      operationId: sendWelcomeEmailPost
+      responses:
+        "200":
+          description: Operation successful
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EmailBatchResponse"
+        "500":
+          $ref: "#/components/schemas/Error"
+
+  /sendMaintenanceCompletedEmail:
+    get:
+      tags:
+        - Email Notifications
+      summary: Send maintenance completed emails
+      description: |
+        Checks if the system is back online and then sends "back online" notifications to users.
+        Uses the `maintenance-over-email` template and tracks delivery via the `maintenance_email_sent` (opt-in for email when maintenance is over or online) flag.
+        Designed to be called via cron job.
+      operationId: sendMaintenanceCompletedEmail
+      responses:
+        "200":
+          description: Operation successful
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EmailBatchResponse"
+        "500":
+          $ref: "#/components/schemas/Error"
+    post:
+      tags:
+        - Email Notifications
+      summary: Send maintenance completed emails (POST)
+      description: Same as GET method, allows triggering via POST request.
+      operationId: sendMaintenanceCompletedEmailPost
+      responses:
+        "200":
+          description: Operation successful
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EmailBatchResponse"
+        "500":
+          $ref: "#/components/schemas/Error"
+
+  /setMaintenanceEmailStatus:
+    post:
+      tags:
+        - Email Notifications
+      summary: Set maintenance email opt-in status for the authenticated user
+      description: |
+        Allows the authenticated user to update their own `maintenance_email_sent` (opt-in) flag.
+        This is used to determine if the user should be notified when the system is back online after maintenance.
+      operationId: setMaintenanceEmailStatus
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - opt_in_maintenance_complete_email
+              properties:
+                opt_in_maintenance_complete_email:
+                  type: string
+                  enum: ["true", "false"]
+                  description: |
+                    Opt-in for email when maintenance is over or online.
+                    - "true"
+                    - "false"
+            encoding:
+              opt_in_maintenance_complete_email:
+                contentType: text/plain
+            example:
+              opt_in_maintenance_complete_email: "true"
+      responses:
+        "200":
+          description: Status updated successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: success
+                  message:
+                    type: string
+                  data:
+                    type: object
+                    properties:
+                      id:
+                        type: string
+                      maintenance_email_sent:
+                        type: boolean
+        "400":
+          $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/schemas/Error"
+        "403":
+          $ref: "#/components/schemas/Error"
+        "404":
+          $ref: "#/components/schemas/Error"
+        "500":
+          $ref: "#/components/schemas/Error"
+
 components:
   schemas:
     SignUpRequest:
@@ -13951,6 +14086,47 @@ components:
           type: string
           description: Success message
           example: Operation completed successfully
+
+    EmailBatchResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          example: success
+        message:
+          type: string
+          example: Sent 3 maintenance completed email(s)
+        emails_sent:
+          type: integer
+          example: 3
+        total_users_checked:
+          type: integer
+          example: 10
+        processingTimeMs:
+          type: integer
+          example: 450
+        results:
+          type: array
+          items:
+            $ref: "#/components/schemas/EmailResult"
+
+    EmailResult:
+      type: object
+      properties:
+        user_id:
+          type: string
+          format: uuid
+        email:
+          type: string
+          format: email
+        success:
+          type: boolean
+        messageId:
+          type: string
+          description: Nodemailer message ID
+        error:
+          type: string
+          description: Error message if success is false
 
     Error:
       type: object
