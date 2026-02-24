@@ -81,7 +81,8 @@ Deno.serve(async (req) => {
      * - opt_in_maintenance_complete_email = "true" -> maintenance_email_sent = false (system should send email)
      * - opt_in_maintenance_complete_email = "false" -> maintenance_email_sent = true (system should skip email)
      */
-    const isOptedIn = optInRaw.toLowerCase().trim() === "true";
+    const cleanOptIn = optInRaw.toLowerCase().replace(/['"]/g, '').trim();
+    const isOptedIn = cleanOptIn === "true";
     const maintenanceEmailSentValue = !isOptedIn;
 
     console.log(`[setMaintenanceEmailStatus] User ${userId} opt-in (calculated): ${isOptedIn}. Raw value: "${optInRaw.trim()}"`);
