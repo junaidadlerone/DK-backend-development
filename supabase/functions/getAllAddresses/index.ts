@@ -7,7 +7,7 @@ import { createSupabaseClient } from "../_shared/client.ts";
 import { getUserFromRequest } from "../_shared/history.ts";
 import { getUserOrganizationId } from "../_shared/organization.ts";
 import { CreatedByInfo } from "../_shared/types.ts";
-import { enrichTimestamp } from "../_shared/timezone.ts";
+import { enrichTimestamp, TimezoneEnrichment } from "../_shared/timezone.ts";
 import { getPreferences } from "../_shared/preferences.ts";
 
 /**
@@ -47,7 +47,7 @@ interface EnhancedAddress {
   postcards_sent: number;
   first_post_card_sent_date: string | null;
   status: "Valid" | "Duplicate" | "Opt-out" | "Unverified";
-  createdBy: CreatedByInfo & { created_at_tz?: string; updated_at_tz?: string };
+  createdBy: CreatedByInfo & { created_at_tz?: TimezoneEnrichment; updated_at_tz?: TimezoneEnrichment };
   // Additional metadata
   zone_id: string;
   zone_name: string;
@@ -114,8 +114,8 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Build query based on showAll parameter
-    let query = supabase
+    // Fetch all zones for the organization
+    const { data: zones, error: zonesError } = await supabase
       .from("location_zones")
       .select(`
         id,
@@ -125,15 +125,7 @@ Deno.serve(async (req) => {
         addresses,
         created_at
       `)
-      .eq("organization_id", organizationId);
-
-    // If showAll is NOT true, filter to only zones with campaign_id
-    if (!showAll) {
-      query = query.not("campaign_id", "is", null);
-    }
-
-    // Execute query with ordering
-    const { data: zones, error: zonesError } = await query
+      .eq("organization_id", organizationId)
       .order("created_at", { ascending: false });
 
     if (zonesError) {
@@ -145,114 +137,152 @@ Deno.serve(async (req) => {
       );
     }
 
-    if (!zones || zones.length === 0) {
-      return successResponse(
-        {
-          status: "success",
-          message: "No zones found for organization",
-          metadata: {
-            total_zones: 0,
-            total_addresses: 0,
-            addresses_returned: 0,
-            showOnlyExclusions: showOnlyExclusions,
-            processingTimeMs: Date.now() - startTime,
-          },
-          addresses: [],
-        },
-        200,
-      );
+    const zonesMap = new Map();
+    for (const zone of zones || []) {
+      zonesMap.set(zone.id, zone);
     }
 
-    // Aggregate all addresses from all zones
     let allAddresses: EnhancedAddress[] = [];
     let totalAddressesBeforeFilter = 0;
 
-    for (const zone of zones) {
-      const zoneAddresses = zone.addresses || [];
-      totalAddressesBeforeFilter += zoneAddresses.length;
+    if (showAll) {
+      // Logic for showAll=true: just return everything in the organization (raw zones)
+      for (const zone of zones || []) {
+        const zoneAddresses = zone.addresses || [];
+        totalAddressesBeforeFilter += zoneAddresses.length;
 
-      for (const addr of zoneAddresses) {
-        // Default createdBy for backward compatibility with existing addresses
-        const defaultCreatedBy: CreatedByInfo = addr.createdBy || {
-          id: "legacy",
-          user_role: "TECHNICIAN",
-          full_name: "Legacy User",
-          created_at: addr.created_at || new Date().toISOString(),
-          updated_at: addr.updated_at || new Date().toISOString(),
-        };
+        for (const addr of zoneAddresses) {
+          const defaultCreatedBy: CreatedByInfo = addr.createdBy || {
+            id: "legacy",
+            user_role: "TECHNICIAN",
+            full_name: "Legacy User",
+            created_at: addr.created_at || new Date().toISOString(),
+            updated_at: addr.updated_at || new Date().toISOString(),
+          };
 
-        // Enrich createdBy with timezone info
-        const enrichedCreatedBy = {
-          ...defaultCreatedBy,
-          created_at_tz: enrichTimestamp(
-            defaultCreatedBy.created_at,
-            preferences.timezone,
-          ),
-          updated_at_tz: enrichTimestamp(
-            defaultCreatedBy.updated_at,
-            preferences.timezone,
-          ),
-        };
+          const enrichedCreatedBy = {
+            ...defaultCreatedBy,
+            created_at_tz: enrichTimestamp(defaultCreatedBy.created_at, preferences.timezone),
+            updated_at_tz: enrichTimestamp(defaultCreatedBy.updated_at, preferences.timezone),
+          };
 
-        // Ensure the address has all required enhanced fields
-        const enhancedAddress: EnhancedAddress = {
-          lat: addr.lat,
-          long: addr.long,
-          address: addr.address,
-          residential: addr.residential || false,
-          building_type: addr.building_type,
-          osm_id: addr.osm_id,
-          propertyType: addr.propertyType || "Unknown",
-          distanceFromCenter: addr.distanceFromCenter || 0,
-          targeting_zone_name: addr.targeting_zone_name || zone.zone_name ||
-            "Unnamed Zone",
-          campaigns_used_in: Array.isArray(addr.campaigns_used_in)
-            ? addr.campaigns_used_in
-            : [],
-          zoneType: addr.zoneType || zone.zone_type || "unknown",
-          postcards_sent: addr.postcards_sent || 0,
-          first_post_card_sent_date: addr.first_post_card_sent_date || null,
-          status: addr.status || "Unverified",
-          createdBy: enrichedCreatedBy,
-          // Zone metadata
-          zone_id: zone.id,
-          zone_name: zone.zone_name || "Unnamed Zone",
-          campaign_id: zone.campaign_id,
-        };
+          const enhancedAddress: EnhancedAddress = {
+            lat: addr.lat,
+            long: addr.long,
+            address: addr.address,
+            residential: addr.residential || false,
+            building_type: addr.building_type,
+            osm_id: addr.osm_id,
+            propertyType: addr.propertyType || "Unknown",
+            distanceFromCenter: addr.distanceFromCenter || 0,
+            targeting_zone_name: addr.targeting_zone_name || zone.zone_name || "Unnamed Zone",
+            campaigns_used_in: Array.isArray(addr.campaigns_used_in) ? addr.campaigns_used_in : [],
+            zoneType: addr.zoneType || zone.zone_type || "unknown",
+            postcards_sent: addr.postcards_sent || 0,
+            first_post_card_sent_date: addr.first_post_card_sent_date || null,
+            status: addr.status || "Unverified",
+            createdBy: enrichedCreatedBy,
+            zone_id: zone.id,
+            zone_name: zone.zone_name || "Unnamed Zone",
+            campaign_id: zone.campaign_id, // Might be null
+          };
 
-        allAddresses.push(enhancedAddress);
+          allAddresses.push(enhancedAddress);
+        }
+      }
+    } else {
+      // Logic for showAll=false: fetch campaigns and get exactly the addresses mapped to those campaigns
+      const { data: campaigns, error: campaignsError } = await supabase
+        .from("campaigns")
+        .select("id, zone_id")
+        .eq("organization_id", organizationId)
+        .not("zone_id", "is", null);
+
+      if (campaignsError) {
+        console.error("Error fetching campaigns:", campaignsError);
+        return errorResponse("CAMPAIGNS_FETCH_FAILED", "Failed to fetch campaigns", 500);
+      }
+
+      for (const campaign of campaigns || []) {
+        const zone = zonesMap.get(campaign.zone_id);
+
+        if (zone) {
+          const zoneAddresses = zone.addresses || [];
+          totalAddressesBeforeFilter += zoneAddresses.length;
+
+          for (const addr of zoneAddresses) {
+            const defaultCreatedBy: CreatedByInfo = addr.createdBy || {
+              id: "legacy",
+              user_role: "TECHNICIAN",
+              full_name: "Legacy User",
+              created_at: addr.created_at || new Date().toISOString(),
+              updated_at: addr.updated_at || new Date().toISOString(),
+            };
+
+            const enrichedCreatedBy = {
+              ...defaultCreatedBy,
+              created_at_tz: enrichTimestamp(defaultCreatedBy.created_at, preferences.timezone),
+              updated_at_tz: enrichTimestamp(defaultCreatedBy.updated_at, preferences.timezone),
+            };
+
+            const enhancedAddress: EnhancedAddress = {
+              lat: addr.lat,
+              long: addr.long,
+              address: addr.address,
+              residential: addr.residential || false,
+              building_type: addr.building_type,
+              osm_id: addr.osm_id,
+              propertyType: addr.propertyType || "Unknown",
+              distanceFromCenter: addr.distanceFromCenter || 0,
+              targeting_zone_name: addr.targeting_zone_name || zone.zone_name || "Unnamed Zone",
+              campaigns_used_in: Array.isArray(addr.campaigns_used_in) ? addr.campaigns_used_in : [],
+              zoneType: addr.zoneType || zone.zone_type || "unknown",
+              postcards_sent: addr.postcards_sent || 0,
+              first_post_card_sent_date: addr.first_post_card_sent_date || null,
+              status: addr.status || "Unverified",
+              createdBy: enrichedCreatedBy,
+              zone_id: zone.id,
+              zone_name: zone.zone_name || "Unnamed Zone",
+              campaign_id: campaign.id, // explicitly set the campaign id mapping it
+            };
+
+            allAddresses.push(enhancedAddress);
+          }
+        }
       }
     }
 
     // Apply filtering based on showOnlyExclusions
     let filteredAddresses: EnhancedAddress[];
     if (showOnlyExclusions) {
-      // Return only non-Valid addresses (Duplicate, Opt-out) - excludes Valid and Unverified
       filteredAddresses = allAddresses.filter((addr) =>
         addr.status !== "Valid" && addr.status !== "Unverified"
       );
     } else {
-      // Return all addresses EXCEPT Unverified (Valid, Duplicate, Opt-out only)
       filteredAddresses = allAddresses.filter((addr) =>
         addr.status !== "Unverified"
       );
     }
 
-    // Optional: Remove duplicates based on lat/lng
-    // Using a Map to deduplicate by coordinates
+    // Deduplicate based on Lat/Lng ACROSS ALL CAMPAIGNS
+    // Keep the first occurrence as Valid, mark subsequent occurrences as Duplicate
     const addressMap = new Map<string, EnhancedAddress>();
+    const duplicateAddresses: EnhancedAddress[] = [];
 
     for (const addr of filteredAddresses) {
+      // Use only coordinates for global uniqueness check
       const key = `${addr.lat.toFixed(6)},${addr.long.toFixed(6)}`;
 
-      // If duplicate, keep the one with more recent zone (zones are ordered by created_at desc)
       if (!addressMap.has(key)) {
         addressMap.set(key, addr);
+      } else {
+        // It's a duplicate coordinate anywhere in the fetched data
+        addr.status = "Duplicate";
+        duplicateAddresses.push(addr);
       }
-      // If we want to track duplicates, we could modify the status here
     }
 
-    const deduplicatedAddresses = Array.from(addressMap.values());
+    const deduplicatedAddresses = [...Array.from(addressMap.values()), ...duplicateAddresses];
 
     // Generate status summary
     const statusCounts = {

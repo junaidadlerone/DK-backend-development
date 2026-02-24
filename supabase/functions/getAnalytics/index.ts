@@ -892,10 +892,22 @@ async function computeAddressCollectionAnalytics(
   supabase: any,
   organizationId: string,
 ): Promise<AddressCollectionAnalyticsData> {
-  // Get all location_zones for the organization
+  // 1. Get all campaigns for the organization
+  const { data: campaigns, error: campaignsError } = await supabase
+    .from("campaigns")
+    .select("id, zone_id")
+    .eq("organization_id", organizationId)
+    .not("zone_id", "is", null);
+
+  if (campaignsError) {
+    console.error("Error fetching campaigns:", campaignsError);
+    throw new Error("Failed to fetch campaigns");
+  }
+
+  // 2. Get all location_zones for the organization
   const { data: locationZones, error: zonesError } = await supabase
     .from("location_zones")
-    .select("id, addresses, campaign_id, manual_search")
+    .select("id, addresses")
     .eq("organization_id", organizationId);
 
   if (zonesError) {
@@ -903,42 +915,50 @@ async function computeAddressCollectionAnalytics(
     throw new Error("Failed to fetch location zones");
   }
 
-  const allZones = locationZones || [];
+  const zonesMap = new Map();
+  if (locationZones) {
+    for (const zone of locationZones) {
+      zonesMap.set(zone.id, zone);
+    }
+  }
 
   // Variables to track metrics
   let totalAddresses = 0;
   let validatedAddresses = 0;
   let optOuts = 0;
-
-  // Map to precisely deduplicate by lat/long (just like getAllAddresses)
-  const addressMap = new Map<string, any>();
   let duplicates = 0;
 
-  for (const zone of allZones) {
-    // Only process addresses if the zone is active (campaign_id not null)
-    if (zone.campaign_id !== null && Array.isArray(zone.addresses)) {
-      
-      // Order zones by created_at desc would be ideal here if available, 
-      // but Since getAnalytics doesn't query created_at for zones, we'll dedupe as they come
+  // We map by [lat_long] so deduplication happens ACROSS ALL CAMPAIGNS
+  // If two campaigns use the same zone, the first address seen is Valid, 
+  // and subsequent addresses are explicitly marked as "Duplicate".
+  const addressMap = new Map<string, any>();
+  const duplicateAddresses: any[] = [];
+
+  for (const campaign of campaigns || []) {
+    const zone = zonesMap.get(campaign.zone_id);
+    
+    if (zone && Array.isArray(zone.addresses)) {
       for (const address of zone.addresses) {
         if (address && typeof address === "object") {
           const status = address.status || "Unverified";
 
-          // Exclude "Unverified" exactly like getAllAddresses does when showOnlyExclusions=false
+          // Exclude "Unverified" exactly like getAllAddresses does
           if (status !== "Unverified") {
             
             // Ensure we have lat and long to deduplicate by
             if (address.lat !== undefined && address.long !== undefined) {
+              // Use only coordinates for global uniqueness check
               const key = `${Number(address.lat).toFixed(6)},${Number(address.long).toFixed(6)}`;
               
               if (!addressMap.has(key)) {
                 addressMap.set(key, address);
               } else {
-                duplicates++; // It's a duplicate of an existing coordinate
+                // It's a duplicate of an existing coordinate anywhere in the data
+                duplicateAddresses.push({ ...address, status: "Duplicate" });
               }
             } else {
-              // Fallback if somehow lat/long are missing, still count them but don't deduplicate
-              addressMap.set(Math.random().toString(), address);
+              // Fallback if somehow lat/long are missing, count them but don't deduplicate
+              addressMap.set(`${campaign.id}_${Math.random().toString()}`, address);
             }
           }
         }
@@ -946,16 +966,21 @@ async function computeAddressCollectionAnalytics(
     }
   }
 
-  // Now calculate metrics off the deduplicated list
-  const deduplicatedAddresses = Array.from(addressMap.values());
-  totalAddresses = deduplicatedAddresses.length;
+  // Now calculate metrics off the combined list
+  const allProcessedAddresses = [...Array.from(addressMap.values()), ...duplicateAddresses];
+  
+  // Total addresses should probably only count validated as per previous logic, 
+  // but if the user wants Total to be Valid + Dupes + Opt-out, we count the length of the list
+  totalAddresses = allProcessedAddresses.length;
 
-  for (const addr of deduplicatedAddresses) {
+  for (const addr of allProcessedAddresses) {
     const status = addr.status;
     if (status === "Valid" || status === "verified") {
       validatedAddresses++;
     } else if (status === "Opt-out") {
       optOuts++;
+    } else if (status === "Duplicate") {
+      duplicates++; // Count based on the explicit status
     }
   }
 
