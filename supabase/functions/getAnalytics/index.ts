@@ -912,7 +912,6 @@ async function computeAddressCollectionAnalytics(
 
   // Map to precisely deduplicate by lat/long (just like getAllAddresses)
   const addressMap = new Map<string, any>();
-  let duplicates = 0;
 
   for (const zone of allZones) {
     // Only process addresses if the zone is active (campaign_id not null)
@@ -933,8 +932,6 @@ async function computeAddressCollectionAnalytics(
               
               if (!addressMap.has(key)) {
                 addressMap.set(key, address);
-              } else {
-                duplicates++; // It's a duplicate of an existing coordinate
               }
             } else {
               // Fallback if somehow lat/long are missing, still count them but don't deduplicate
@@ -950,12 +947,16 @@ async function computeAddressCollectionAnalytics(
   const deduplicatedAddresses = Array.from(addressMap.values());
   totalAddresses = deduplicatedAddresses.length;
 
+  let duplicates = 0; // Reset duplicates to count actual status
+
   for (const addr of deduplicatedAddresses) {
     const status = addr.status;
     if (status === "Valid" || status === "verified") {
       validatedAddresses++;
     } else if (status === "Opt-out") {
       optOuts++;
+    } else if (status === "Duplicate") {
+      duplicates++;
     }
   }
 
