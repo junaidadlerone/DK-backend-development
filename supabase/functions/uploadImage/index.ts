@@ -15,7 +15,7 @@ import { getUserOrganizationId } from "../_shared/organization.ts";
  * - Uploads images to Supabase Storage in folder: gallery/{gallery_id}
  * - Default image type is "none"
  * - Supports multipart/form-data with 'images' or 'image' field(s) and optional 'referral_id' field
- * - Maximum file size per image: 4MB
+ * - Maximum file size per image: 25MB
  * - Supported formats: JPEG, PNG, WebP, HEIC, HEIF
  * - Can upload multiple images in a single request
  */
@@ -96,7 +96,7 @@ Deno.serve(async (req) => {
       "image/heic",
       "image/heif"
     ];
-    const maxSize = 4 * 1024 * 1024; // 4MB
+    const maxSize = 25 * 1024 * 1024; // 25MB
 
     for (const imageFile of imageFiles) {
       // Validate file type
@@ -112,7 +112,7 @@ Deno.serve(async (req) => {
       if (imageFile.size > maxSize) {
         return errorResponse(
           "INVALID_INPUT",
-          `File "${imageFile.name}" exceeds 4MB size limit`,
+          `File "${imageFile.name}" exceeds 25MB size limit`,
           400
         );
       }
