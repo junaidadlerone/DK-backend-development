@@ -98,24 +98,8 @@ Deno.serve(async (req) => {
     // Calculate offset
     const offset = (page - 1) * limit;
 
-    // Get total count of template bundles (organization + universal)
-    const { count: totalCount, error: countError } = await supabase
-      .from("template_bundles")
-      .select("*", { count: "exact", head: true })
-      .or(`organization_id.eq.${organizationId},is_universal.eq.true`);
-
-    if (countError) {
-      console.error("Error counting bundles:", countError);
-      return errorResponse(
-        "COUNT_FAILED",
-        "Failed to count template bundles",
-        500
-      );
-    }
-
-    // Build query to get bundles for organization OR universal bundles with pagination
-    // Build query to get bundles for organization OR universal bundles with pagination
-    let query = supabase
+    // Build the data query (postcardSize pushed to DB; other filters remain in JS)
+    let dataQuery = supabase
       .from("template_bundles")
       .select(`
         *,
@@ -126,7 +110,40 @@ Deno.serve(async (req) => {
       .order("created_at", { ascending: false })
       .range(offset, offset + limit - 1);
 
-    const { data: bundles, error: fetchError } = await query;
+    // Push postcardSize filter into DB to avoid fetching rows we'll discard
+    if (postcardSize && ['4x6', '6x9', '6x11'].includes(postcardSize)) {
+      dataQuery = dataQuery.eq('front.postcard_size', postcardSize);
+    }
+
+    // Build the count query (same filters as data query)
+    let countQuery = supabase
+      .from("template_bundles")
+      .select("*", { count: "exact", head: true })
+      .or(`organization_id.eq.${organizationId},is_universal.eq.true`);
+
+    if (postcardSize && ['4x6', '6x9', '6x11'].includes(postcardSize)) {
+      countQuery = countQuery.eq('front.postcard_size', postcardSize);
+    }
+
+    // Fire COUNT, data fetch, and preferences in parallel — eliminates 2 sequential round-trips
+    const [
+      { count: totalCount, error: countError },
+      { data: bundles, error: fetchError },
+      preferences
+    ] = await Promise.all([
+      countQuery,
+      dataQuery,
+      getPreferences(supabase, user.userId)
+    ]);
+
+    if (countError) {
+      console.error("Error counting bundles:", countError);
+      return errorResponse(
+        "COUNT_FAILED",
+        "Failed to count template bundles",
+        500
+      );
+    }
 
     if (fetchError) {
       console.error("Error fetching bundles:", fetchError);
@@ -137,10 +154,7 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Fetch user preferences for timezone enrichment
-    const preferences = await getPreferences(supabase, user.userId);
-
-    // Filter and transform bundles
+    // Filter and transform bundles (deleted + campaignId logic stays in JS)
     let filteredBundles = bundles
       .filter(bundle => {
         // Filter out bundles with deleted templates unless includeDeleted=true
@@ -149,14 +163,6 @@ Deno.serve(async (req) => {
             return false;
           }
         }
-
-        // Filter by postcard size if provided
-        if (postcardSize && ['4x6', '6x9', '6x11'].includes(postcardSize)) {
-          if (bundle.front?.postcard_size !== postcardSize) {
-            return false;
-          }
-        }
-
 
         // Filter based on manual edit status and campaign_id
         // A bundle is considered manual edit if either template is manual edit
@@ -170,7 +176,7 @@ Deno.serve(async (req) => {
              // If campaign_id provided, check if bundle is used by this campaign
              const frontUsed = bundle.front?.campaigns_used?.includes(campaignId);
              const backUsed = bundle.back?.campaigns_used?.includes(campaignId);
-             
+
              // Include if either front or back uses this campaign
              if (!frontUsed && !backUsed) {
                return false;

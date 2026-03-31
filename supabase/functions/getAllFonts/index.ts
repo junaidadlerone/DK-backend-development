@@ -58,15 +58,28 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Fetch fonts from database
-    const { data: fontsData, error: fontsError } = await supabase
-      .from("fonts")
-      .select("name, category, variants, subsets")
-      .order("name");
+    // Fetch all fonts via pagination (PostgREST caps at 1000 rows per request)
+    const allFonts: any[] = [];
+    const PAGE_SIZE = 1000;
+    let from = 0;
+    let fontsError = null;
+
+    while (true) {
+      const { data, error } = await supabase
+        .from("fonts")
+        .select("name, category, variants, subsets")
+        .order("name")
+        .range(from, from + PAGE_SIZE - 1);
+
+      if (error) { fontsError = error; break; }
+      if (!data || data.length === 0) break;
+      allFonts.push(...data);
+      if (data.length < PAGE_SIZE) break;
+      from += PAGE_SIZE;
+    }
 
     if (fontsError) {
       console.error("Error fetching fonts from database:", fontsError);
-      // Fallback to popular fonts if DB fetch fails
       return successResponse({
         status: "success",
         message: "Retrieved popular fonts (fallback list)",
@@ -76,9 +89,7 @@ Deno.serve(async (req) => {
     }
 
     // Use DB data if available, otherwise fallback
-    const fonts = (fontsData && fontsData.length > 0)
-      ? fontsData
-      : getPopularFonts();
+    const fonts = allFonts.length > 0 ? allFonts : getPopularFonts();
 
     const processingTimeMs = Date.now() - startTime;
 

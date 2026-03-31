@@ -13,23 +13,29 @@ export async function getUserOrganizationId(
   userId: string
 ): Promise<string | null> {
   try {
-    // Check if user is an owner
-    const { data: ownerOrg, error: ownerError } = await supabase
-      .from("organizations")
-      .select("id")
-      .eq("owner_id", userId)
-      .maybeSingle();
+    // Fire owner-check and member-scan in parallel to avoid two sequential round-trips
+    const [
+      { data: ownerOrg, error: ownerError },
+      { data: memberOrgs, error: memberError }
+    ] = await Promise.all([
+      supabase
+        .from("organizations")
+        .select("id")
+        .eq("owner_id", userId)
+        .maybeSingle(),
 
+      supabase
+        .from("organizations")
+        .select("id, organization_members")
+        .not("organization_members", "is", null)
+    ]);
+
+    // Prefer owner result (fastest path)
     if (!ownerError && ownerOrg) {
       return ownerOrg.id;
     }
 
-    // Check if user is a member
-    const { data: memberOrgs, error: memberError } = await supabase
-      .from("organizations")
-      .select("id, organization_members")
-      .not("organization_members", "is", null);
-
+    // Fall back to member scan
     if (memberError || !memberOrgs || memberOrgs.length === 0) {
       return null;
     }
