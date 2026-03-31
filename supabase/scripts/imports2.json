@@ -1,0 +1,200 @@
+[
+  {
+    "id": "34f8974d-d464-4977-a5aa-39c3c1128ca8",
+    "template_front_id": "b0dbeb8e-7755-4334-b40e-af3b45b0873b",
+    "template_back_id": "3d805840-1e0f-4048-bb79-943796e17871",
+    "organization_id": null,
+    "is_universal": true,
+    "created_at": "2026-02-25 19:33:13.299312+00",
+    "updated_at": "2026-02-25 19:33:13.299312+00"
+  },
+  {
+    "id": "9a84d7a2-2abf-4194-b008-f14c1f80a248",
+    "template_front_id": "b3060678-3f78-4ffa-8892-47299872bb94",
+    "template_back_id": "49065f22-65d2-45ac-8189-46a015eef54b",
+    "organization_id": null,
+    "is_universal": true,
+    "created_at": "2026-02-25 19:35:24.317382+00",
+    "updated_at": "2026-02-25 19:35:24.317382+00"
+  },
+  {
+    "id": "aea6bb71-1cdc-43ac-b836-560d51dfd5f2",
+    "template_front_id": "e40e178a-7fca-4bcf-9ef4-07bbde82a136",
+    "template_back_id": "9205c06d-23f8-444d-9dd9-c7f3c1381a66",
+    "organization_id": null,
+    "is_universal": true,
+    "created_at": "2026-02-25 19:35:28.882502+00",
+    "updated_at": "2026-02-25 19:35:28.882502+00"
+  },
+  {
+    "id": "5b482841-a161-4e6a-9774-18ae9ac38f43",
+    "template_front_id": "f18e44d6-c82c-4eaa-a4b1-338f29faba3b",
+    "template_back_id": "599a0612-8f89-4833-abf1-df7df296b3ef",
+    "organization_id": null,
+    "is_universal": true,
+    "created_at": "2026-02-25 19:35:38.014223+00",
+    "updated_at": "2026-02-25 19:35:38.014223+00"
+  },
+  {
+    "id": "52d7400d-72bb-4a16-b751-5623156ff4c1",
+    "template_front_id": "afa91ac2-d306-445e-aadc-a9114f64e1d6",
+    "template_back_id": "fbfe089a-4808-4279-8ee4-8c345c7ee3c3",
+    "organization_id": null,
+    "is_universal": true,
+    "created_at": "2026-02-25 19:35:47.191565+00",
+    "updated_at": "2026-02-25 19:35:47.191565+00"
+  },
+  {
+    "id": "2845f244-7836-458f-9404-11d2323adcd3",
+    "template_front_id": "d2cc3e1a-0130-440a-aaa9-8c76460fc0d0",
+    "template_back_id": "f2dfde7c-12d6-4481-93de-10729d733382",
+    "organization_id": null,
+    "is_universal": true,
+    "created_at": "2026-02-25 19:35:56.000394+00",
+    "updated_at": "2026-02-25 19:35:56.000394+00"
+  },
+  {
+    "id": "f57f456b-d365-4d9f-bdb9-3641f9ebe757",
+    "template_front_id": "8b3a6806-946c-4e2b-b4aa-3a2992d56acc",
+    "template_back_id": "c3b45129-2ef5-47d4-91d8-e3369dcad4bb",
+    "organization_id": null,
+    "is_universal": true,
+    "created_at": "2026-02-25 19:36:00.842812+00",
+    "updated_at": "2026-02-25 19:36:00.842812+00"
+  },
+  {
+    "id": "0e858c83-2e05-43f6-8919-5f4e3c803a68",
+    "template_front_id": "fa973f14-6e38-433f-8596-83d407c7a57b",
+    "template_back_id": "ff7f1574-7db7-470c-9f44-0e2f65b4f19c",
+    "organization_id": null,
+    "is_universal": true,
+    "created_at": "2026-02-25 19:36:09.597523+00",
+    "updated_at": "2026-02-25 19:36:09.597523+00"
+  },
+  {
+    "id": "b309e832-5911-4995-a796-297f91e225a4",
+    "template_front_id": "7b23cc91-d996-46e7-bc61-ddda780f9e77",
+    "template_back_id": "a599673c-5356-491e-a3a3-77c6822dc1b1",
+    "organization_id": null,
+    "is_universal": true,
+    "created_at": "2026-02-25 19:36:14.660873+00",
+    "updated_at": "2026-02-25 19:36:14.660873+00"
+  },
+  {
+    "id": "124210ec-f8ee-4502-8ab8-6545b0816dc1",
+    "template_front_id": "8c28b9b1-782e-47b8-9f59-bd59690723db",
+    "template_back_id": "0d3e7819-d7da-478c-a226-d1860fe2068d",
+    "organization_id": null,
+    "is_universal": true,
+    "created_at": "2026-02-25 19:36:18.695954+00",
+    "updated_at": "2026-02-25 19:36:18.695954+00"
+  },
+  {
+    "id": "031d3044-b732-4a7c-bccb-bf9eaf6f4d50",
+    "template_front_id": "dd3dc08b-9394-43ab-869f-02bdcab55238",
+    "template_back_id": "f640c93a-8c2b-4f9a-80d8-c7c194745813",
+    "organization_id": null,
+    "is_universal": true,
+    "created_at": "2026-02-25 19:36:27.146204+00",
+    "updated_at": "2026-02-25 19:36:27.146204+00"
+  },
+  {
+    "id": "3444277a-d206-401c-a6af-97377394dbd9",
+    "template_front_id": "2b5ce95b-27ad-4690-81b5-fafa6fbe4c9a",
+    "template_back_id": "d92b34f3-a6a6-4a14-8626-b0455af35d30",
+    "organization_id": null,
+    "is_universal": true,
+    "created_at": "2026-02-25 19:36:36.399024+00",
+    "updated_at": "2026-02-25 19:36:36.399024+00"
+  },
+  {
+    "id": "e8b9bf24-8b04-4471-87dd-fb99c7cc54f7",
+    "template_front_id": "7a76581d-4c34-443e-8074-af0eb07ae849",
+    "template_back_id": "0277e2ae-38ad-43d5-af91-e2e07d3ee180",
+    "organization_id": null,
+    "is_universal": true,
+    "created_at": "2026-02-25 19:36:41.858757+00",
+    "updated_at": "2026-02-25 19:36:41.858757+00"
+  },
+  {
+    "id": "fdba911f-fcf6-4ed1-bd4b-bd2f432430cc",
+    "template_front_id": "2c637c76-2da0-48b3-8f6b-51665077bd3c",
+    "template_back_id": "7495fe67-c980-4d1b-84ac-ce4ba78f7136",
+    "organization_id": null,
+    "is_universal": true,
+    "created_at": "2026-02-25 19:36:50.145441+00",
+    "updated_at": "2026-02-25 19:36:50.145441+00"
+  },
+  {
+    "id": "7d642902-7921-4ff0-9442-7f68fb0e98d7",
+    "template_front_id": "8cb036b3-d9fa-4e2b-aead-65a170f3f5ee",
+    "template_back_id": "596cda4e-7112-4e45-8c6f-9c43a5f4c858",
+    "organization_id": null,
+    "is_universal": true,
+    "created_at": "2026-02-25 19:36:55.629936+00",
+    "updated_at": "2026-02-25 19:36:55.629936+00"
+  },
+  {
+    "id": "7f98e9dd-a18b-477e-84f2-2a381621ed0c",
+    "template_front_id": "3e5b227e-8549-4949-8fa1-274e0c25d703",
+    "template_back_id": "2be09884-5f29-4403-a42c-b9bd9a44bd43",
+    "organization_id": null,
+    "is_universal": true,
+    "created_at": "2026-02-25 19:37:04.275746+00",
+    "updated_at": "2026-02-25 19:37:04.275746+00"
+  },
+  {
+    "id": "b0621628-c234-4b2e-88b1-4536a710ec08",
+    "template_front_id": "27913288-f090-479b-975a-88e957152c4e",
+    "template_back_id": "bc2127ad-c54b-4638-9157-ba1a44d30522",
+    "organization_id": null,
+    "is_universal": true,
+    "created_at": "2026-02-25 19:37:08.401781+00",
+    "updated_at": "2026-02-25 19:37:08.401781+00"
+  },
+  {
+    "id": "450c1e76-d9ac-4328-bf43-550ff83f4be6",
+    "template_front_id": "f0a69a8a-396c-467c-9a11-a49a17a501c8",
+    "template_back_id": "c6b439c9-a5a8-42e3-9c67-171b3ca549be",
+    "organization_id": null,
+    "is_universal": true,
+    "created_at": "2026-02-25 19:37:12.213428+00",
+    "updated_at": "2026-02-25 19:37:12.213428+00"
+  },
+  {
+    "id": "eea0ec94-8ca7-4e8a-9cd6-98db2fbeb809",
+    "template_front_id": "21708e6e-0f0d-4f75-bcef-c7b532c3a1ef",
+    "template_back_id": "409a070e-1c4e-4005-97f4-610f82df2d29",
+    "organization_id": null,
+    "is_universal": true,
+    "created_at": "2026-02-25 19:37:16.703811+00",
+    "updated_at": "2026-02-25 19:37:16.703811+00"
+  },
+  {
+    "id": "061febf2-4772-45af-9005-bf4df3a18455",
+    "template_front_id": "6f087732-8ffc-448a-8302-79acc5124a8f",
+    "template_back_id": "7c88a3b7-2b63-41ae-9aca-87c4d0080834",
+    "organization_id": null,
+    "is_universal": true,
+    "created_at": "2026-02-25 19:37:25.086941+00",
+    "updated_at": "2026-02-25 19:37:25.086941+00"
+  },
+  {
+    "id": "984ad568-7b7e-47f2-9e87-55666b4b4133",
+    "template_front_id": "f9289c42-b2ae-48c8-84de-ddeb4bfdc83f",
+    "template_back_id": "1a32e246-b616-4ed2-9926-7b4f296f2b5c",
+    "organization_id": null,
+    "is_universal": true,
+    "created_at": "2026-02-25 19:37:35.924271+00",
+    "updated_at": "2026-02-25 19:37:35.924271+00"
+  },
+  {
+    "id": "7b4f10ce-a2ec-4bb0-94b3-19d50ed30f23",
+    "template_front_id": "62dc97dd-369d-4e03-83a2-6889e069a6f1",
+    "template_back_id": "da3115ae-c3b6-496c-b55a-a42f57c43e8b",
+    "organization_id": null,
+    "is_universal": true,
+    "created_at": "2026-02-25 19:37:45.026169+00",
+    "updated_at": "2026-02-25 19:37:45.026169+00"
+  }
+]

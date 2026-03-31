@@ -1,0 +1,1852 @@
+[
+   {
+      "lat":32.7090572,
+      "long":-96.4341938,
+      "osm_id":null,
+      "status":"Valid",
+      "address":"10022 Greyson Dr, Forney, TX 75126",
+      "verified":true,
+      "zoneType":"radius",
+      "createdBy":{
+         "id":"a0f6909f-1a1d-4a90-8eaf-abcf4a705c32",
+         "full_name":"TGF Team",
+         "user_role":"ADMIN",
+         "created_at":"2026-03-25T16:05:54.19772+00:00",
+         "updated_at":"2026-03-25T16:09:11.402982+00:00"
+      },
+      "residential":true,
+      "propertyType":"Single Family Home",
+      "building_type":null,
+      "postcards_sent":0,
+      "original_address":"10022 Greyson Dr, Forney, TX 75126",
+      "campaigns_used_in":[
+         
+      ],
+      "distanceFromCenter":0,
+      "targeting_zone_name":"CleanAirEpoxy Addresses",
+      "verification_details":{
+         "city":"Forney",
+         "line1":"10022 Greyson Dr",
+         "status":"verified",
+         "details":{
+            
+         },
+         "postalOrZip":"75126",
+         "provinceOrState":"TX"
+      },
+      "first_post_card_sent_date":null
+   },
+   {
+      "lat":32.70980400000001,
+      "long":-96.4342013,
+      "osm_id":null,
+      "status":"Valid",
+      "address":"10045 Greyson Dr, Forney, TX 75126",
+      "verified":true,
+      "zoneType":"radius",
+      "createdBy":{
+         "id":"a0f6909f-1a1d-4a90-8eaf-abcf4a705c32",
+         "full_name":"TGF Team",
+         "user_role":"ADMIN",
+         "created_at":"2026-03-25T16:05:54.19772+00:00",
+         "updated_at":"2026-03-25T16:09:11.402982+00:00"
+      },
+      "residential":true,
+      "propertyType":"Single Family Home",
+      "building_type":null,
+      "postcards_sent":0,
+      "original_address":"10045 Greyson Dr, Forney, TX 75126",
+      "campaigns_used_in":[
+         
+      ],
+      "distanceFromCenter":0,
+      "targeting_zone_name":"CleanAirEpoxy Addresses",
+      "verification_details":{
+         "city":"Forney",
+         "line1":"10045 Greyson Dr",
+         "status":"verified",
+         "details":{
+            
+         },
+         "postalOrZip":"75126",
+         "provinceOrState":"TX"
+      },
+      "first_post_card_sent_date":null
+   },
+   {
+      "lat":32.7104256,
+      "long":-96.433486,
+      "osm_id":null,
+      "status":"Valid",
+      "address":"10069 Greyson Dr, Forney, TX 75126",
+      "verified":true,
+      "zoneType":"radius",
+      "createdBy":{
+         "id":"a0f6909f-1a1d-4a90-8eaf-abcf4a705c32",
+         "full_name":"TGF Team",
+         "user_role":"ADMIN",
+         "created_at":"2026-03-25T16:05:54.19772+00:00",
+         "updated_at":"2026-03-25T16:09:11.402982+00:00"
+      },
+      "residential":true,
+      "propertyType":"Single Family Home",
+      "building_type":null,
+      "postcards_sent":0,
+      "original_address":"10069 Greyson Dr, Forney, TX 75126",
+      "campaigns_used_in":[
+         
+      ],
+      "distanceFromCenter":0,
+      "targeting_zone_name":"CleanAirEpoxy Addresses",
+      "verification_details":{
+         "city":"Forney",
+         "line1":"10069 Greyson Dr",
+         "status":"verified",
+         "details":{
+            
+         },
+         "postalOrZip":"75126",
+         "provinceOrState":"TX"
+      },
+      "first_post_card_sent_date":null
+   },
+   {
+      "lat":32.7099626,
+      "long":-96.43288849999999,
+      "osm_id":null,
+      "status":"Valid",
+      "address":"10078 Greyson Dr, Forney, TX 75126",
+      "verified":true,
+      "zoneType":"radius",
+      "createdBy":{
+         "id":"a0f6909f-1a1d-4a90-8eaf-abcf4a705c32",
+         "full_name":"TGF Team",
+         "user_role":"ADMIN",
+         "created_at":"2026-03-25T16:05:54.19772+00:00",
+         "updated_at":"2026-03-25T16:09:11.402982+00:00"
+      },
+      "residential":true,
+      "propertyType":"Single Family Home",
+      "building_type":null,
+      "postcards_sent":0,
+      "original_address":"10078 Greyson Dr, Forney, TX 75126",
+      "campaigns_used_in":[
+         
+      ],
+      "distanceFromCenter":0,
+      "targeting_zone_name":"CleanAirEpoxy Addresses",
+      "verification_details":{
+         "city":"Forney",
+         "line1":"10078 Greyson Dr",
+         "status":"verified",
+         "details":{
+            
+         },
+         "postalOrZip":"75126",
+         "provinceOrState":"TX"
+      },
+      "first_post_card_sent_date":null
+   },
+   {
+      "lat":32.7107024,
+      "long":-96.4331088,
+      "osm_id":null,
+      "status":"Valid",
+      "address":"10091 Greyson Dr, Forney, TX 75126",
+      "verified":true,
+      "zoneType":"radius",
+      "createdBy":{
+         "id":"a0f6909f-1a1d-4a90-8eaf-abcf4a705c32",
+         "full_name":"TGF Team",
+         "user_role":"ADMIN",
+         "created_at":"2026-03-25T16:05:54.19772+00:00",
+         "updated_at":"2026-03-25T16:09:11.402982+00:00"
+      },
+      "residential":true,
+      "propertyType":"Single Family Home",
+      "building_type":null,
+      "postcards_sent":0,
+      "original_address":"10091 Greyson Dr, Forney, TX 75126",
+      "campaigns_used_in":[
+         
+      ],
+      "distanceFromCenter":0,
+      "targeting_zone_name":"CleanAirEpoxy Addresses",
+      "verification_details":{
+         "city":"Forney",
+         "line1":"10091 Greyson Dr",
+         "status":"verified",
+         "details":{
+            
+         },
+         "postalOrZip":"75126",
+         "provinceOrState":"TX"
+      },
+      "first_post_card_sent_date":null
+   },
+   {
+      "lat":32.7105295,
+      "long":-96.4323713,
+      "osm_id":null,
+      "status":"Valid",
+      "address":"10112 Greyson Dr, Forney, TX 75126",
+      "verified":true,
+      "zoneType":"radius",
+      "createdBy":{
+         "id":"a0f6909f-1a1d-4a90-8eaf-abcf4a705c32",
+         "full_name":"TGF Team",
+         "user_role":"ADMIN",
+         "created_at":"2026-03-25T16:05:54.19772+00:00",
+         "updated_at":"2026-03-25T16:09:11.402982+00:00"
+      },
+      "residential":true,
+      "propertyType":"Single Family Home",
+      "building_type":null,
+      "postcards_sent":0,
+      "original_address":"10112 Greyson Dr, Forney, TX 75126",
+      "campaigns_used_in":[
+         
+      ],
+      "distanceFromCenter":0,
+      "targeting_zone_name":"CleanAirEpoxy Addresses",
+      "verification_details":{
+         "city":"Forney",
+         "line1":"10112 Greyson Dr",
+         "status":"verified",
+         "details":{
+            
+         },
+         "postalOrZip":"75126",
+         "provinceOrState":"TX"
+      },
+      "first_post_card_sent_date":null
+   },
+   {
+      "lat":32.7109634,
+      "long":-96.4318426,
+      "osm_id":null,
+      "status":"Valid",
+      "address":"10138 Greyson Dr, Forney, TX 75126",
+      "verified":true,
+      "zoneType":"radius",
+      "createdBy":{
+         "id":"a0f6909f-1a1d-4a90-8eaf-abcf4a705c32",
+         "full_name":"TGF Team",
+         "user_role":"ADMIN",
+         "created_at":"2026-03-25T16:05:54.19772+00:00",
+         "updated_at":"2026-03-25T16:09:11.402982+00:00"
+      },
+      "residential":true,
+      "propertyType":"Single Family Home",
+      "building_type":null,
+      "postcards_sent":0,
+      "original_address":"10138 Greyson Dr, Forney, TX 75126",
+      "campaigns_used_in":[
+         
+      ],
+      "distanceFromCenter":0,
+      "targeting_zone_name":"CleanAirEpoxy Addresses",
+      "verification_details":{
+         "city":"Forney",
+         "line1":"10138 Greyson Dr",
+         "status":"verified",
+         "details":{
+            
+         },
+         "postalOrZip":"75126",
+         "provinceOrState":"TX"
+      },
+      "first_post_card_sent_date":null
+   },
+   {
+      "lat":32.7115354,
+      "long":-96.43210239999999,
+      "osm_id":null,
+      "status":"Valid",
+      "address":"10167 Greyson Dr, Forney, TX 75126",
+      "verified":true,
+      "zoneType":"radius",
+      "createdBy":{
+         "id":"a0f6909f-1a1d-4a90-8eaf-abcf4a705c32",
+         "full_name":"TGF Team",
+         "user_role":"ADMIN",
+         "created_at":"2026-03-25T16:05:54.19772+00:00",
+         "updated_at":"2026-03-25T16:09:11.402982+00:00"
+      },
+      "residential":true,
+      "propertyType":"Single Family Home",
+      "building_type":null,
+      "postcards_sent":0,
+      "original_address":"10167 Greyson Dr, Forney, TX 75126",
+      "campaigns_used_in":[
+         
+      ],
+      "distanceFromCenter":0,
+      "targeting_zone_name":"CleanAirEpoxy Addresses",
+      "verification_details":{
+         "city":"Forney",
+         "line1":"10167 Greyson Dr",
+         "status":"verified",
+         "details":{
+            
+         },
+         "postalOrZip":"75126",
+         "provinceOrState":"TX"
+      },
+      "first_post_card_sent_date":null
+   },
+   {
+      "lat":32.7118619,
+      "long":-96.431737,
+      "osm_id":null,
+      "status":"Valid",
+      "address":"10199 Greyson Dr, Forney, TX 75126",
+      "verified":true,
+      "zoneType":"radius",
+      "createdBy":{
+         "id":"a0f6909f-1a1d-4a90-8eaf-abcf4a705c32",
+         "full_name":"TGF Team",
+         "user_role":"ADMIN",
+         "created_at":"2026-03-25T16:05:54.19772+00:00",
+         "updated_at":"2026-03-25T16:09:11.402982+00:00"
+      },
+      "residential":true,
+      "propertyType":"Single Family Home",
+      "building_type":null,
+      "postcards_sent":0,
+      "original_address":"10199 Greyson Dr, Forney, TX 75126",
+      "campaigns_used_in":[
+         
+      ],
+      "distanceFromCenter":0,
+      "targeting_zone_name":"CleanAirEpoxy Addresses",
+      "verification_details":{
+         "city":"Forney",
+         "line1":"10199 Greyson Dr",
+         "status":"verified",
+         "details":{
+            
+         },
+         "postalOrZip":"75126",
+         "provinceOrState":"TX"
+      },
+      "first_post_card_sent_date":null
+   },
+   {
+      "lat":32.7127617,
+      "long":-96.43065299999999,
+      "osm_id":null,
+      "status":"Valid",
+      "address":"10245 Greyson Dr, Forney, TX 75126",
+      "verified":true,
+      "zoneType":"radius",
+      "createdBy":{
+         "id":"a0f6909f-1a1d-4a90-8eaf-abcf4a705c32",
+         "full_name":"TGF Team",
+         "user_role":"ADMIN",
+         "created_at":"2026-03-25T16:05:54.19772+00:00",
+         "updated_at":"2026-03-25T16:09:11.402982+00:00"
+      },
+      "residential":true,
+      "propertyType":"Single Family Home",
+      "building_type":null,
+      "postcards_sent":0,
+      "original_address":"10245 Greyson Dr, Forney, TX 75126",
+      "campaigns_used_in":[
+         
+      ],
+      "distanceFromCenter":0,
+      "targeting_zone_name":"CleanAirEpoxy Addresses",
+      "verification_details":{
+         "city":"Forney",
+         "line1":"10245 Greyson Dr",
+         "status":"verified",
+         "details":{
+            
+         },
+         "postalOrZip":"75126",
+         "provinceOrState":"TX"
+      },
+      "first_post_card_sent_date":null
+   },
+   {
+      "lat":32.7105287,
+      "long":-96.4363465,
+      "osm_id":null,
+      "status":"Valid",
+      "address":"10251 Jennifer Cir, Forney, TX 75126",
+      "verified":true,
+      "zoneType":"radius",
+      "createdBy":{
+         "id":"a0f6909f-1a1d-4a90-8eaf-abcf4a705c32",
+         "full_name":"TGF Team",
+         "user_role":"ADMIN",
+         "created_at":"2026-03-25T16:05:54.19772+00:00",
+         "updated_at":"2026-03-25T16:09:11.402982+00:00"
+      },
+      "residential":true,
+      "propertyType":"Single Family Home",
+      "building_type":null,
+      "postcards_sent":0,
+      "original_address":"10251 Jennifer Cir, Forney, TX 75126",
+      "campaigns_used_in":[
+         
+      ],
+      "distanceFromCenter":0,
+      "targeting_zone_name":"CleanAirEpoxy Addresses",
+      "verification_details":{
+         "city":"Forney",
+         "line1":"10251 Jennifer Cir",
+         "status":"verified",
+         "details":{
+            
+         },
+         "postalOrZip":"75126",
+         "provinceOrState":"TX"
+      },
+      "first_post_card_sent_date":null
+   },
+   {
+      "lat":32.7130437,
+      "long":-96.4302755,
+      "osm_id":null,
+      "status":"Valid",
+      "address":"10267 Greyson Dr, Forney, TX 75126",
+      "verified":true,
+      "zoneType":"radius",
+      "createdBy":{
+         "id":"a0f6909f-1a1d-4a90-8eaf-abcf4a705c32",
+         "full_name":"TGF Team",
+         "user_role":"ADMIN",
+         "created_at":"2026-03-25T16:05:54.19772+00:00",
+         "updated_at":"2026-03-25T16:09:11.402982+00:00"
+      },
+      "residential":true,
+      "propertyType":"Single Family Home",
+      "building_type":null,
+      "postcards_sent":0,
+      "original_address":"10267 Greyson Dr, Forney, TX 75126",
+      "campaigns_used_in":[
+         
+      ],
+      "distanceFromCenter":0,
+      "targeting_zone_name":"CleanAirEpoxy Addresses",
+      "verification_details":{
+         "city":"Forney",
+         "line1":"10267 Greyson Dr",
+         "status":"verified",
+         "details":{
+            
+         },
+         "postalOrZip":"75126",
+         "provinceOrState":"TX"
+      },
+      "first_post_card_sent_date":null
+   },
+   {
+      "lat":32.7133515,
+      "long":-96.42992129999999,
+      "osm_id":null,
+      "status":"Valid",
+      "address":"10279 Greyson Dr, Forney, TX 75126",
+      "verified":true,
+      "zoneType":"radius",
+      "createdBy":{
+         "id":"a0f6909f-1a1d-4a90-8eaf-abcf4a705c32",
+         "full_name":"TGF Team",
+         "user_role":"ADMIN",
+         "created_at":"2026-03-25T16:05:54.19772+00:00",
+         "updated_at":"2026-03-25T16:09:11.402982+00:00"
+      },
+      "residential":true,
+      "propertyType":"Single Family Home",
+      "building_type":null,
+      "postcards_sent":0,
+      "original_address":"10279 Greyson Dr, Forney, TX 75126",
+      "campaigns_used_in":[
+         
+      ],
+      "distanceFromCenter":0,
+      "targeting_zone_name":"CleanAirEpoxy Addresses",
+      "verification_details":{
+         "city":"Forney",
+         "line1":"10279 Greyson Dr",
+         "status":"verified",
+         "details":{
+            
+         },
+         "postalOrZip":"75126",
+         "provinceOrState":"TX"
+      },
+      "first_post_card_sent_date":null
+   },
+   {
+      "lat":32.7110211,
+      "long":-96.43572359999999,
+      "osm_id":null,
+      "status":"Valid",
+      "address":"10303 Jennifer Cir, Forney, TX 75126",
+      "verified":true,
+      "zoneType":"radius",
+      "createdBy":{
+         "id":"a0f6909f-1a1d-4a90-8eaf-abcf4a705c32",
+         "full_name":"TGF Team",
+         "user_role":"ADMIN",
+         "created_at":"2026-03-25T16:05:54.19772+00:00",
+         "updated_at":"2026-03-25T16:09:11.402982+00:00"
+      },
+      "residential":true,
+      "propertyType":"Single Family Home",
+      "building_type":null,
+      "postcards_sent":0,
+      "original_address":"10303 Jennifer Cir, Forney, TX 75126",
+      "campaigns_used_in":[
+         
+      ],
+      "distanceFromCenter":0,
+      "targeting_zone_name":"CleanAirEpoxy Addresses",
+      "verification_details":{
+         "city":"Forney",
+         "line1":"10303 Jennifer Cir",
+         "status":"verified",
+         "details":{
+            
+         },
+         "postalOrZip":"75126",
+         "provinceOrState":"TX"
+      },
+      "first_post_card_sent_date":null
+   },
+   {
+      "lat":32.7109041,
+      "long":-96.43487209999999,
+      "osm_id":null,
+      "status":"Valid",
+      "address":"10336 Jennifer Cir, Forney, TX 75126",
+      "verified":true,
+      "zoneType":"radius",
+      "createdBy":{
+         "id":"a0f6909f-1a1d-4a90-8eaf-abcf4a705c32",
+         "full_name":"TGF Team",
+         "user_role":"ADMIN",
+         "created_at":"2026-03-25T16:05:54.19772+00:00",
+         "updated_at":"2026-03-25T16:09:11.402982+00:00"
+      },
+      "residential":true,
+      "propertyType":"Single Family Home",
+      "building_type":null,
+      "postcards_sent":0,
+      "original_address":"10336 Jennifer Cir, Forney, TX 75126",
+      "campaigns_used_in":[
+         
+      ],
+      "distanceFromCenter":0,
+      "targeting_zone_name":"CleanAirEpoxy Addresses",
+      "verification_details":{
+         "city":"Forney",
+         "line1":"10336 Jennifer Cir",
+         "status":"verified",
+         "details":{
+            
+         },
+         "postalOrZip":"75126",
+         "provinceOrState":"TX"
+      },
+      "first_post_card_sent_date":null
+   },
+   {
+      "lat":32.7115996,
+      "long":-96.43497099999999,
+      "osm_id":null,
+      "status":"Valid",
+      "address":"10361 Jennifer Cir, Forney, TX 75126",
+      "verified":true,
+      "zoneType":"radius",
+      "createdBy":{
+         "id":"a0f6909f-1a1d-4a90-8eaf-abcf4a705c32",
+         "full_name":"TGF Team",
+         "user_role":"ADMIN",
+         "created_at":"2026-03-25T16:05:54.19772+00:00",
+         "updated_at":"2026-03-25T16:09:11.402982+00:00"
+      },
+      "residential":true,
+      "propertyType":"Single Family Home",
+      "building_type":null,
+      "postcards_sent":0,
+      "original_address":"10361 Jennifer Cir, Forney, TX 75126",
+      "campaigns_used_in":[
+         
+      ],
+      "distanceFromCenter":0,
+      "targeting_zone_name":"CleanAirEpoxy Addresses",
+      "verification_details":{
+         "city":"Forney",
+         "line1":"10361 Jennifer Cir",
+         "status":"verified",
+         "details":{
+            
+         },
+         "postalOrZip":"75126",
+         "provinceOrState":"TX"
+      },
+      "first_post_card_sent_date":null
+   },
+   {
+      "lat":32.7118956,
+      "long":-96.43463419999999,
+      "osm_id":null,
+      "status":"Valid",
+      "address":"10383 Jennifer Cir, Forney, TX 75126",
+      "verified":true,
+      "zoneType":"radius",
+      "createdBy":{
+         "id":"a0f6909f-1a1d-4a90-8eaf-abcf4a705c32",
+         "full_name":"TGF Team",
+         "user_role":"ADMIN",
+         "created_at":"2026-03-25T16:05:54.19772+00:00",
+         "updated_at":"2026-03-25T16:09:11.402982+00:00"
+      },
+      "residential":true,
+      "propertyType":"Single Family Home",
+      "building_type":null,
+      "postcards_sent":0,
+      "original_address":"10383 Jennifer Cir, Forney, TX 75126",
+      "campaigns_used_in":[
+         
+      ],
+      "distanceFromCenter":0,
+      "targeting_zone_name":"CleanAirEpoxy Addresses",
+      "verification_details":{
+         "city":"Forney",
+         "line1":"10383 Jennifer Cir",
+         "status":"verified",
+         "details":{
+            
+         },
+         "postalOrZip":"75126",
+         "provinceOrState":"TX"
+      },
+      "first_post_card_sent_date":null
+   },
+   {
+      "lat":32.7121967,
+      "long":-96.4343047,
+      "osm_id":null,
+      "status":"Valid",
+      "address":"10439 Jennifer Cir, Forney, TX 75126",
+      "verified":true,
+      "zoneType":"radius",
+      "createdBy":{
+         "id":"a0f6909f-1a1d-4a90-8eaf-abcf4a705c32",
+         "full_name":"TGF Team",
+         "user_role":"ADMIN",
+         "created_at":"2026-03-25T16:05:54.19772+00:00",
+         "updated_at":"2026-03-25T16:09:11.402982+00:00"
+      },
+      "residential":true,
+      "propertyType":"Single Family Home",
+      "building_type":null,
+      "postcards_sent":0,
+      "original_address":"10439 Jennifer Cir, Forney, TX 75126",
+      "campaigns_used_in":[
+         
+      ],
+      "distanceFromCenter":0,
+      "targeting_zone_name":"CleanAirEpoxy Addresses",
+      "verification_details":{
+         "city":"Forney",
+         "line1":"10439 Jennifer Cir",
+         "status":"verified",
+         "details":{
+            
+         },
+         "postalOrZip":"75126",
+         "provinceOrState":"TX"
+      },
+      "first_post_card_sent_date":null
+   },
+   {
+      "lat":32.7125054,
+      "long":-96.43397519999999,
+      "osm_id":null,
+      "status":"Valid",
+      "address":"10453 Jennifer Cir, Forney, TX 75126",
+      "verified":true,
+      "zoneType":"radius",
+      "createdBy":{
+         "id":"a0f6909f-1a1d-4a90-8eaf-abcf4a705c32",
+         "full_name":"TGF Team",
+         "user_role":"ADMIN",
+         "created_at":"2026-03-25T16:05:54.19772+00:00",
+         "updated_at":"2026-03-25T16:09:11.402982+00:00"
+      },
+      "residential":true,
+      "propertyType":"Single Family Home",
+      "building_type":null,
+      "postcards_sent":0,
+      "original_address":"10453 Jennifer Cir, Forney, TX 75126",
+      "campaigns_used_in":[
+         
+      ],
+      "distanceFromCenter":0,
+      "targeting_zone_name":"CleanAirEpoxy Addresses",
+      "verification_details":{
+         "city":"Forney",
+         "line1":"10453 Jennifer Cir",
+         "status":"verified",
+         "details":{
+            
+         },
+         "postalOrZip":"75126",
+         "provinceOrState":"TX"
+      },
+      "first_post_card_sent_date":null
+   },
+   {
+      "lat":32.7127755,
+      "long":-96.43363029999999,
+      "osm_id":null,
+      "status":"Valid",
+      "address":"10521 Jennifer Cir, Forney, TX 75126",
+      "verified":true,
+      "zoneType":"radius",
+      "createdBy":{
+         "id":"a0f6909f-1a1d-4a90-8eaf-abcf4a705c32",
+         "full_name":"TGF Team",
+         "user_role":"ADMIN",
+         "created_at":"2026-03-25T16:05:54.19772+00:00",
+         "updated_at":"2026-03-25T16:09:11.402982+00:00"
+      },
+      "residential":true,
+      "propertyType":"Single Family Home",
+      "building_type":null,
+      "postcards_sent":0,
+      "original_address":"10521 Jennifer Cir, Forney, TX 75126",
+      "campaigns_used_in":[
+         
+      ],
+      "distanceFromCenter":0,
+      "targeting_zone_name":"CleanAirEpoxy Addresses",
+      "verification_details":{
+         "city":"Forney",
+         "line1":"10521 Jennifer Cir",
+         "status":"verified",
+         "details":{
+            
+         },
+         "postalOrZip":"75126",
+         "provinceOrState":"TX"
+      },
+      "first_post_card_sent_date":null
+   },
+   {
+      "lat":32.7084155,
+      "long":-96.4311391,
+      "osm_id":null,
+      "status":"Valid",
+      "address":"11000 Glenview Dr, Forney, TX 75126",
+      "verified":true,
+      "zoneType":"radius",
+      "createdBy":{
+         "id":"a0f6909f-1a1d-4a90-8eaf-abcf4a705c32",
+         "full_name":"TGF Team",
+         "user_role":"ADMIN",
+         "created_at":"2026-03-25T16:05:54.19772+00:00",
+         "updated_at":"2026-03-25T16:09:11.402982+00:00"
+      },
+      "residential":true,
+      "propertyType":"Single Family Home",
+      "building_type":null,
+      "postcards_sent":0,
+      "original_address":"11000 Glenview Dr, Forney, TX 75126",
+      "campaigns_used_in":[
+         
+      ],
+      "distanceFromCenter":0,
+      "targeting_zone_name":"CleanAirEpoxy Addresses",
+      "verification_details":{
+         "city":"Forney",
+         "line1":"11000 Glenview Dr",
+         "status":"verified",
+         "details":{
+            
+         },
+         "postalOrZip":"75126",
+         "provinceOrState":"TX"
+      },
+      "first_post_card_sent_date":null
+   },
+   {
+      "lat":32.7079954,
+      "long":-96.4315122,
+      "osm_id":null,
+      "status":"Valid",
+      "address":"11011 Glenview Dr, Forney, TX 75126",
+      "verified":true,
+      "zoneType":"radius",
+      "createdBy":{
+         "id":"a0f6909f-1a1d-4a90-8eaf-abcf4a705c32",
+         "full_name":"TGF Team",
+         "user_role":"ADMIN",
+         "created_at":"2026-03-25T16:05:54.19772+00:00",
+         "updated_at":"2026-03-25T16:09:11.402982+00:00"
+      },
+      "residential":true,
+      "propertyType":"Single Family Home",
+      "building_type":null,
+      "postcards_sent":0,
+      "original_address":"11011 Glenview Dr, Forney, TX 75126",
+      "campaigns_used_in":[
+         
+      ],
+      "distanceFromCenter":0,
+      "targeting_zone_name":"CleanAirEpoxy Addresses",
+      "verification_details":{
+         "city":"Forney",
+         "line1":"11011 Glenview Dr",
+         "status":"verified",
+         "details":{
+            
+         },
+         "postalOrZip":"75126",
+         "provinceOrState":"TX"
+      },
+      "first_post_card_sent_date":null
+   },
+   {
+      "lat":32.7083214,
+      "long":-96.4318851,
+      "osm_id":null,
+      "status":"Valid",
+      "address":"11023 Glenview Dr, Forney, TX 75126",
+      "verified":true,
+      "zoneType":"radius",
+      "createdBy":{
+         "id":"a0f6909f-1a1d-4a90-8eaf-abcf4a705c32",
+         "full_name":"TGF Team",
+         "user_role":"ADMIN",
+         "created_at":"2026-03-25T16:05:54.19772+00:00",
+         "updated_at":"2026-03-25T16:09:11.402982+00:00"
+      },
+      "residential":true,
+      "propertyType":"Single Family Home",
+      "building_type":null,
+      "postcards_sent":0,
+      "original_address":"11023 Glenview Dr, Forney, TX 75126",
+      "campaigns_used_in":[
+         
+      ],
+      "distanceFromCenter":0,
+      "targeting_zone_name":"CleanAirEpoxy Addresses",
+      "verification_details":{
+         "city":"Forney",
+         "line1":"11023 Glenview Dr",
+         "status":"verified",
+         "details":{
+            
+         },
+         "postalOrZip":"75126",
+         "provinceOrState":"TX"
+      },
+      "first_post_card_sent_date":null
+   },
+   {
+      "lat":32.708649,
+      "long":-96.43230229999999,
+      "osm_id":null,
+      "status":"Valid",
+      "address":"11045 Glenview Dr, Forney, TX 75126",
+      "verified":true,
+      "zoneType":"radius",
+      "createdBy":{
+         "id":"a0f6909f-1a1d-4a90-8eaf-abcf4a705c32",
+         "full_name":"TGF Team",
+         "user_role":"ADMIN",
+         "created_at":"2026-03-25T16:05:54.19772+00:00",
+         "updated_at":"2026-03-25T16:09:11.402982+00:00"
+      },
+      "residential":true,
+      "propertyType":"Single Family Home",
+      "building_type":null,
+      "postcards_sent":0,
+      "original_address":"11045 Glenview Dr, Forney, TX 75126",
+      "campaigns_used_in":[
+         
+      ],
+      "distanceFromCenter":0,
+      "targeting_zone_name":"CleanAirEpoxy Addresses",
+      "verification_details":{
+         "city":"Forney",
+         "line1":"11045 Glenview Dr",
+         "status":"verified",
+         "details":{
+            
+         },
+         "postalOrZip":"75126",
+         "provinceOrState":"TX"
+      },
+      "first_post_card_sent_date":null
+   },
+   {
+      "lat":32.7091451,
+      "long":-96.43198459999999,
+      "osm_id":null,
+      "status":"Valid",
+      "address":"11056 Glenview Dr, Forney, TX 75126",
+      "verified":true,
+      "zoneType":"radius",
+      "createdBy":{
+         "id":"a0f6909f-1a1d-4a90-8eaf-abcf4a705c32",
+         "full_name":"TGF Team",
+         "user_role":"ADMIN",
+         "created_at":"2026-03-25T16:05:54.19772+00:00",
+         "updated_at":"2026-03-25T16:09:11.402982+00:00"
+      },
+      "residential":true,
+      "propertyType":"Single Family Home",
+      "building_type":null,
+      "postcards_sent":0,
+      "original_address":"11056 Glenview Dr, Forney, TX 75126",
+      "campaigns_used_in":[
+         
+      ],
+      "distanceFromCenter":0,
+      "targeting_zone_name":"CleanAirEpoxy Addresses",
+      "verification_details":{
+         "city":"Forney",
+         "line1":"11056 Glenview Dr",
+         "status":"verified",
+         "details":{
+            
+         },
+         "postalOrZip":"75126",
+         "provinceOrState":"TX"
+      },
+      "first_post_card_sent_date":null
+   },
+   {
+      "lat":32.7089674,
+      "long":-96.4326711,
+      "osm_id":null,
+      "status":"Valid",
+      "address":"11067 Glenview Dr, Forney, TX 75126",
+      "verified":true,
+      "zoneType":"radius",
+      "createdBy":{
+         "id":"a0f6909f-1a1d-4a90-8eaf-abcf4a705c32",
+         "full_name":"TGF Team",
+         "user_role":"ADMIN",
+         "created_at":"2026-03-25T16:05:54.19772+00:00",
+         "updated_at":"2026-03-25T16:09:11.402982+00:00"
+      },
+      "residential":true,
+      "propertyType":"Single Family Home",
+      "building_type":null,
+      "postcards_sent":0,
+      "original_address":"11067 Glenview Dr, Forney, TX 75126",
+      "campaigns_used_in":[
+         
+      ],
+      "distanceFromCenter":0,
+      "targeting_zone_name":"CleanAirEpoxy Addresses",
+      "verification_details":{
+         "city":"Forney",
+         "line1":"11067 Glenview Dr",
+         "status":"verified",
+         "details":{
+            
+         },
+         "postalOrZip":"75126",
+         "provinceOrState":"TX"
+      },
+      "first_post_card_sent_date":null
+   },
+   {
+      "lat":32.7093216,
+      "long":-96.4330062,
+      "osm_id":null,
+      "status":"Valid",
+      "address":"11089 Glenview Dr, Forney, TX 75126",
+      "verified":true,
+      "zoneType":"radius",
+      "createdBy":{
+         "id":"a0f6909f-1a1d-4a90-8eaf-abcf4a705c32",
+         "full_name":"TGF Team",
+         "user_role":"ADMIN",
+         "created_at":"2026-03-25T16:05:54.19772+00:00",
+         "updated_at":"2026-03-25T16:09:11.402982+00:00"
+      },
+      "residential":true,
+      "propertyType":"Single Family Home",
+      "building_type":null,
+      "postcards_sent":0,
+      "original_address":"11089 Glenview Dr, Forney, TX 75126",
+      "campaigns_used_in":[
+         
+      ],
+      "distanceFromCenter":0,
+      "targeting_zone_name":"CleanAirEpoxy Addresses",
+      "verification_details":{
+         "city":"Forney",
+         "line1":"11089 Glenview Dr",
+         "status":"verified",
+         "details":{
+            
+         },
+         "postalOrZip":"75126",
+         "provinceOrState":"TX"
+      },
+      "first_post_card_sent_date":null
+   },
+   {
+      "lat":32.7136567,
+      "long":-96.4353216,
+      "osm_id":null,
+      "status":"Valid",
+      "address":"11252 Jennifer Cir, Forney, TX 75126",
+      "verified":true,
+      "zoneType":"radius",
+      "createdBy":{
+         "id":"a0f6909f-1a1d-4a90-8eaf-abcf4a705c32",
+         "full_name":"TGF Team",
+         "user_role":"ADMIN",
+         "created_at":"2026-03-25T16:05:54.19772+00:00",
+         "updated_at":"2026-03-25T16:09:11.402982+00:00"
+      },
+      "residential":true,
+      "propertyType":"Single Family Home",
+      "building_type":null,
+      "postcards_sent":0,
+      "original_address":"11252 Jennifer Cir, Forney, TX 75126",
+      "campaigns_used_in":[
+         
+      ],
+      "distanceFromCenter":0,
+      "targeting_zone_name":"CleanAirEpoxy Addresses",
+      "verification_details":{
+         "city":"Forney",
+         "line1":"11252 Jennifer Cir",
+         "status":"verified",
+         "details":{
+            
+         },
+         "postalOrZip":"75126",
+         "provinceOrState":"TX"
+      },
+      "first_post_card_sent_date":null
+   },
+   {
+      "lat":32.71306,
+      "long":-96.43602039999999,
+      "osm_id":null,
+      "status":"Valid",
+      "address":"11312 Jennifer Cir, Forney, TX 75126",
+      "verified":true,
+      "zoneType":"radius",
+      "createdBy":{
+         "id":"a0f6909f-1a1d-4a90-8eaf-abcf4a705c32",
+         "full_name":"TGF Team",
+         "user_role":"ADMIN",
+         "created_at":"2026-03-25T16:05:54.19772+00:00",
+         "updated_at":"2026-03-25T16:09:11.402982+00:00"
+      },
+      "residential":true,
+      "propertyType":"Single Family Home",
+      "building_type":null,
+      "postcards_sent":0,
+      "original_address":"11312 Jennifer Cir, Forney, TX 75126",
+      "campaigns_used_in":[
+         
+      ],
+      "distanceFromCenter":0,
+      "targeting_zone_name":"CleanAirEpoxy Addresses",
+      "verification_details":{
+         "city":"Forney",
+         "line1":"11312 Jennifer Cir",
+         "status":"verified",
+         "details":{
+            
+         },
+         "postalOrZip":"75126",
+         "provinceOrState":"TX"
+      },
+      "first_post_card_sent_date":null
+   },
+   {
+      "lat":32.7126518,
+      "long":-96.43549639999999,
+      "osm_id":null,
+      "status":"Valid",
+      "address":"11317 Jennifer Cir, Forney, TX 75126",
+      "verified":true,
+      "zoneType":"radius",
+      "createdBy":{
+         "id":"a0f6909f-1a1d-4a90-8eaf-abcf4a705c32",
+         "full_name":"TGF Team",
+         "user_role":"ADMIN",
+         "created_at":"2026-03-25T16:05:54.19772+00:00",
+         "updated_at":"2026-03-25T16:09:11.402982+00:00"
+      },
+      "residential":true,
+      "propertyType":"Single Family Home",
+      "building_type":null,
+      "postcards_sent":0,
+      "original_address":"11317 Jennifer Cir, Forney, TX 75126",
+      "campaigns_used_in":[
+         
+      ],
+      "distanceFromCenter":0,
+      "targeting_zone_name":"CleanAirEpoxy Addresses",
+      "verification_details":{
+         "city":"Forney",
+         "line1":"11317 Jennifer Cir",
+         "status":"verified",
+         "details":{
+            
+         },
+         "postalOrZip":"75126",
+         "provinceOrState":"TX"
+      },
+      "first_post_card_sent_date":null
+   },
+   {
+      "lat":32.7127862,
+      "long":-96.4363503,
+      "osm_id":null,
+      "status":"Valid",
+      "address":"11348 Jennifer Cir, Forney, TX 75126",
+      "verified":true,
+      "zoneType":"radius",
+      "createdBy":{
+         "id":"a0f6909f-1a1d-4a90-8eaf-abcf4a705c32",
+         "full_name":"TGF Team",
+         "user_role":"ADMIN",
+         "created_at":"2026-03-25T16:05:54.19772+00:00",
+         "updated_at":"2026-03-25T16:09:11.402982+00:00"
+      },
+      "residential":true,
+      "propertyType":"Single Family Home",
+      "building_type":null,
+      "postcards_sent":0,
+      "original_address":"11348 Jennifer Cir, Forney, TX 75126",
+      "campaigns_used_in":[
+         
+      ],
+      "distanceFromCenter":0,
+      "targeting_zone_name":"CleanAirEpoxy Addresses",
+      "verification_details":{
+         "city":"Forney",
+         "line1":"11348 Jennifer Cir",
+         "status":"verified",
+         "details":{
+            
+         },
+         "postalOrZip":"75126",
+         "provinceOrState":"TX"
+      },
+      "first_post_card_sent_date":null
+   },
+   {
+      "lat":32.71253400000001,
+      "long":-96.4366934,
+      "osm_id":null,
+      "status":"Valid",
+      "address":"11366 Jennifer Cir, Forney, TX 75126",
+      "verified":true,
+      "zoneType":"radius",
+      "createdBy":{
+         "id":"a0f6909f-1a1d-4a90-8eaf-abcf4a705c32",
+         "full_name":"TGF Team",
+         "user_role":"ADMIN",
+         "created_at":"2026-03-25T16:05:54.19772+00:00",
+         "updated_at":"2026-03-25T16:09:11.402982+00:00"
+      },
+      "residential":true,
+      "propertyType":"Single Family Home",
+      "building_type":null,
+      "postcards_sent":0,
+      "original_address":"11366 Jennifer Cir, Forney, TX 75126",
+      "campaigns_used_in":[
+         
+      ],
+      "distanceFromCenter":0,
+      "targeting_zone_name":"CleanAirEpoxy Addresses",
+      "verification_details":{
+         "city":"Forney",
+         "line1":"11366 Jennifer Cir",
+         "status":"verified",
+         "details":{
+            
+         },
+         "postalOrZip":"75126",
+         "provinceOrState":"TX"
+      },
+      "first_post_card_sent_date":null
+   },
+   {
+      "lat":32.7122012,
+      "long":-96.4370699,
+      "osm_id":null,
+      "status":"Valid",
+      "address":"11374 Jennifer Cir, Forney, TX 75126",
+      "verified":true,
+      "zoneType":"radius",
+      "createdBy":{
+         "id":"a0f6909f-1a1d-4a90-8eaf-abcf4a705c32",
+         "full_name":"TGF Team",
+         "user_role":"ADMIN",
+         "created_at":"2026-03-25T16:05:54.19772+00:00",
+         "updated_at":"2026-03-25T16:09:11.402982+00:00"
+      },
+      "residential":true,
+      "propertyType":"Single Family Home",
+      "building_type":null,
+      "postcards_sent":0,
+      "original_address":"11374 Jennifer Cir, Forney, TX 75126",
+      "campaigns_used_in":[
+         
+      ],
+      "distanceFromCenter":0,
+      "targeting_zone_name":"CleanAirEpoxy Addresses",
+      "verification_details":{
+         "city":"Forney",
+         "line1":"11374 Jennifer Cir",
+         "status":"verified",
+         "details":{
+            
+         },
+         "postalOrZip":"75126",
+         "provinceOrState":"TX"
+      },
+      "first_post_card_sent_date":null
+   },
+   {
+      "lat":32.7118016,
+      "long":-96.4366122,
+      "osm_id":null,
+      "status":"Valid",
+      "address":"11405 Jennifer Cir, Forney, TX 75126",
+      "verified":true,
+      "zoneType":"radius",
+      "createdBy":{
+         "id":"a0f6909f-1a1d-4a90-8eaf-abcf4a705c32",
+         "full_name":"TGF Team",
+         "user_role":"ADMIN",
+         "created_at":"2026-03-25T16:05:54.19772+00:00",
+         "updated_at":"2026-03-25T16:09:11.402982+00:00"
+      },
+      "residential":true,
+      "propertyType":"Single Family Home",
+      "building_type":null,
+      "postcards_sent":0,
+      "original_address":"11405 Jennifer Cir, Forney, TX 75126",
+      "campaigns_used_in":[
+         
+      ],
+      "distanceFromCenter":0,
+      "targeting_zone_name":"CleanAirEpoxy Addresses",
+      "verification_details":{
+         "city":"Forney",
+         "line1":"11405 Jennifer Cir",
+         "status":"verified",
+         "details":{
+            
+         },
+         "postalOrZip":"75126",
+         "provinceOrState":"TX"
+      },
+      "first_post_card_sent_date":null
+   },
+   {
+      "lat":32.7115143,
+      "long":-96.43692949999999,
+      "osm_id":null,
+      "status":"Valid",
+      "address":"11429 Jennifer Cir, Forney, TX 75126",
+      "verified":true,
+      "zoneType":"radius",
+      "createdBy":{
+         "id":"a0f6909f-1a1d-4a90-8eaf-abcf4a705c32",
+         "full_name":"TGF Team",
+         "user_role":"ADMIN",
+         "created_at":"2026-03-25T16:05:54.19772+00:00",
+         "updated_at":"2026-03-25T16:09:11.402982+00:00"
+      },
+      "residential":true,
+      "propertyType":"Single Family Home",
+      "building_type":null,
+      "postcards_sent":0,
+      "original_address":"11429 Jennifer Cir, Forney, TX 75126",
+      "campaigns_used_in":[
+         
+      ],
+      "distanceFromCenter":0,
+      "targeting_zone_name":"CleanAirEpoxy Addresses",
+      "verification_details":{
+         "city":"Forney",
+         "line1":"11429 Jennifer Cir",
+         "status":"verified",
+         "details":{
+            
+         },
+         "postalOrZip":"75126",
+         "provinceOrState":"TX"
+      },
+      "first_post_card_sent_date":null
+   },
+   {
+      "lat":32.7075192,
+      "long":-96.43286289999999,
+      "osm_id":null,
+      "status":"Valid",
+      "address":"11472 Windy Ln, Forney, TX 75126",
+      "verified":true,
+      "zoneType":"radius",
+      "createdBy":{
+         "id":"a0f6909f-1a1d-4a90-8eaf-abcf4a705c32",
+         "full_name":"TGF Team",
+         "user_role":"ADMIN",
+         "created_at":"2026-03-25T16:05:54.19772+00:00",
+         "updated_at":"2026-03-25T16:09:11.402982+00:00"
+      },
+      "residential":true,
+      "propertyType":"Single Family Home",
+      "building_type":null,
+      "postcards_sent":0,
+      "original_address":"11472 Windy Ln, Forney, TX 75126",
+      "campaigns_used_in":[
+         
+      ],
+      "distanceFromCenter":0,
+      "targeting_zone_name":"CleanAirEpoxy Addresses",
+      "verification_details":{
+         "city":"Forney",
+         "line1":"11472 Windy Ln",
+         "status":"verified",
+         "details":{
+            
+         },
+         "postalOrZip":"75126",
+         "provinceOrState":"TX"
+      },
+      "first_post_card_sent_date":null
+   },
+   {
+      "lat":32.7084856,
+      "long":-96.4339926,
+      "osm_id":null,
+      "status":"Valid",
+      "address":"11558 Windy Ln, Forney, TX 75126",
+      "verified":true,
+      "zoneType":"radius",
+      "createdBy":{
+         "id":"a0f6909f-1a1d-4a90-8eaf-abcf4a705c32",
+         "full_name":"TGF Team",
+         "user_role":"ADMIN",
+         "created_at":"2026-03-25T16:05:54.19772+00:00",
+         "updated_at":"2026-03-25T16:09:11.402982+00:00"
+      },
+      "residential":true,
+      "propertyType":"Single Family Home",
+      "building_type":null,
+      "postcards_sent":0,
+      "original_address":"11558 Windy Ln, Forney, TX 75126",
+      "campaigns_used_in":[
+         
+      ],
+      "distanceFromCenter":0,
+      "targeting_zone_name":"CleanAirEpoxy Addresses",
+      "verification_details":{
+         "city":"Forney",
+         "line1":"11558 Windy Ln",
+         "status":"verified",
+         "details":{
+            
+         },
+         "postalOrZip":"75126",
+         "provinceOrState":"TX"
+      },
+      "first_post_card_sent_date":null
+   },
+   {
+      "lat":32.7081078,
+      "long":-96.435451,
+      "osm_id":null,
+      "status":"Valid",
+      "address":"11575 Windy Ln, Forney, TX 75126",
+      "verified":true,
+      "zoneType":"radius",
+      "createdBy":{
+         "id":"a0f6909f-1a1d-4a90-8eaf-abcf4a705c32",
+         "full_name":"TGF Team",
+         "user_role":"ADMIN",
+         "created_at":"2026-03-25T16:05:54.19772+00:00",
+         "updated_at":"2026-03-25T16:09:11.402982+00:00"
+      },
+      "residential":true,
+      "propertyType":"Single Family Home",
+      "building_type":null,
+      "postcards_sent":0,
+      "original_address":"11575 Windy Ln, Forney, TX 75126",
+      "campaigns_used_in":[
+         
+      ],
+      "distanceFromCenter":0,
+      "targeting_zone_name":"CleanAirEpoxy Addresses",
+      "verification_details":{
+         "city":"Forney",
+         "line1":"11575 Windy Ln",
+         "status":"verified",
+         "details":{
+            
+         },
+         "postalOrZip":"75126",
+         "provinceOrState":"TX"
+      },
+      "first_post_card_sent_date":null
+   },
+   {
+      "lat":32.7085929,
+      "long":-96.4351774,
+      "osm_id":null,
+      "status":"Valid",
+      "address":"11599 Windy Ln, Forney, TX 75126",
+      "verified":true,
+      "zoneType":"radius",
+      "createdBy":{
+         "id":"a0f6909f-1a1d-4a90-8eaf-abcf4a705c32",
+         "full_name":"TGF Team",
+         "user_role":"ADMIN",
+         "created_at":"2026-03-25T16:05:54.19772+00:00",
+         "updated_at":"2026-03-25T16:09:11.402982+00:00"
+      },
+      "residential":true,
+      "propertyType":"Single Family Home",
+      "building_type":null,
+      "postcards_sent":0,
+      "original_address":"11599 Windy Ln, Forney, TX 75126",
+      "campaigns_used_in":[
+         
+      ],
+      "distanceFromCenter":0,
+      "targeting_zone_name":"CleanAirEpoxy Addresses",
+      "verification_details":{
+         "city":"Forney",
+         "line1":"11599 Windy Ln",
+         "status":"verified",
+         "details":{
+            
+         },
+         "postalOrZip":"75126",
+         "provinceOrState":"TX"
+      },
+      "first_post_card_sent_date":null
+   },
+   {
+      "lat":32.7080412,
+      "long":-96.43642950000002,
+      "osm_id":null,
+      "status":"Valid",
+      "address":"11623 Windy Ln, Forney, TX 75126",
+      "verified":true,
+      "zoneType":"radius",
+      "createdBy":{
+         "id":"a0f6909f-1a1d-4a90-8eaf-abcf4a705c32",
+         "full_name":"TGF Team",
+         "user_role":"ADMIN",
+         "created_at":"2026-03-25T16:05:54.19772+00:00",
+         "updated_at":"2026-03-25T16:09:11.402982+00:00"
+      },
+      "residential":true,
+      "propertyType":"Single Family Home",
+      "building_type":null,
+      "postcards_sent":0,
+      "original_address":"11623 Windy Ln, Forney, TX 75126",
+      "campaigns_used_in":[
+         
+      ],
+      "distanceFromCenter":0,
+      "targeting_zone_name":"CleanAirEpoxy Addresses",
+      "verification_details":{
+         "city":"Forney",
+         "line1":"11623 Windy Ln",
+         "status":"verified",
+         "details":{
+            
+         },
+         "postalOrZip":"75126",
+         "provinceOrState":"TX"
+      },
+      "first_post_card_sent_date":null
+   },
+   {
+      "lat":32.7102658,
+      "long":-96.4313223,
+      "osm_id":null,
+      "status":"Valid",
+      "address":"12056 Terra Cir, Forney, TX 75126",
+      "verified":true,
+      "zoneType":"radius",
+      "createdBy":{
+         "id":"a0f6909f-1a1d-4a90-8eaf-abcf4a705c32",
+         "full_name":"TGF Team",
+         "user_role":"ADMIN",
+         "created_at":"2026-03-25T16:05:54.19772+00:00",
+         "updated_at":"2026-03-25T16:09:11.402982+00:00"
+      },
+      "residential":true,
+      "propertyType":"Single Family Home",
+      "building_type":null,
+      "postcards_sent":0,
+      "original_address":"12056 Terra Cir, Forney, TX 75126",
+      "campaigns_used_in":[
+         
+      ],
+      "distanceFromCenter":0,
+      "targeting_zone_name":"CleanAirEpoxy Addresses",
+      "verification_details":{
+         "city":"Forney",
+         "line1":"12056 Terra Cir",
+         "status":"verified",
+         "details":{
+            
+         },
+         "postalOrZip":"75126",
+         "provinceOrState":"TX"
+      },
+      "first_post_card_sent_date":null
+   },
+   {
+      "lat":32.7097058,
+      "long":-96.4309542,
+      "osm_id":null,
+      "status":"Valid",
+      "address":"12067 Terra Cir, Forney, TX 75126",
+      "verified":true,
+      "zoneType":"radius",
+      "createdBy":{
+         "id":"a0f6909f-1a1d-4a90-8eaf-abcf4a705c32",
+         "full_name":"TGF Team",
+         "user_role":"ADMIN",
+         "created_at":"2026-03-25T16:05:54.19772+00:00",
+         "updated_at":"2026-03-25T16:09:11.402982+00:00"
+      },
+      "residential":true,
+      "propertyType":"Single Family Home",
+      "building_type":null,
+      "postcards_sent":0,
+      "original_address":"12067 Terra Cir, Forney, TX 75126",
+      "campaigns_used_in":[
+         
+      ],
+      "distanceFromCenter":0,
+      "targeting_zone_name":"CleanAirEpoxy Addresses",
+      "verification_details":{
+         "city":"Forney",
+         "line1":"12067 Terra Cir",
+         "status":"verified",
+         "details":{
+            
+         },
+         "postalOrZip":"75126",
+         "provinceOrState":"TX"
+      },
+      "first_post_card_sent_date":null
+   },
+   {
+      "lat":32.7098996,
+      "long":-96.43124840000002,
+      "osm_id":null,
+      "status":"Valid",
+      "address":"12078 Terra Cir, Forney, TX 75126",
+      "verified":true,
+      "zoneType":"radius",
+      "createdBy":{
+         "id":"a0f6909f-1a1d-4a90-8eaf-abcf4a705c32",
+         "full_name":"TGF Team",
+         "user_role":"ADMIN",
+         "created_at":"2026-03-25T16:05:54.19772+00:00",
+         "updated_at":"2026-03-25T16:09:11.402982+00:00"
+      },
+      "residential":true,
+      "propertyType":"Single Family Home",
+      "building_type":null,
+      "postcards_sent":0,
+      "original_address":"12078 Terra Cir, Forney, TX 75126",
+      "campaigns_used_in":[
+         
+      ],
+      "distanceFromCenter":0,
+      "targeting_zone_name":"CleanAirEpoxy Addresses",
+      "verification_details":{
+         "city":"Forney",
+         "line1":"12078 Terra Cir",
+         "status":"verified",
+         "details":{
+            
+         },
+         "postalOrZip":"75126",
+         "provinceOrState":"TX"
+      },
+      "first_post_card_sent_date":null
+   },
+   {
+      "lat":32.7217209,
+      "long":-96.44707559999999,
+      "osm_id":null,
+      "status":"Valid",
+      "address":"10090 Country View Ln, Forney, TX 75126",
+      "verified":true,
+      "zoneType":"radius",
+      "createdBy":{
+         "id":"a0f6909f-1a1d-4a90-8eaf-abcf4a705c32",
+         "full_name":"TGF Team",
+         "user_role":"ADMIN",
+         "created_at":"2026-03-25T16:05:54.19772+00:00",
+         "updated_at":"2026-03-25T16:09:11.402982+00:00"
+      },
+      "residential":true,
+      "propertyType":"Single Family Home",
+      "building_type":null,
+      "postcards_sent":0,
+      "original_address":"10090 Country View Ln, Forney, TX 75126",
+      "campaigns_used_in":[
+         
+      ],
+      "distanceFromCenter":0,
+      "targeting_zone_name":"CleanAirEpoxy Addresses",
+      "verification_details":{
+         "city":"Forney",
+         "line1":"10090 Country View Ln",
+         "status":"verified",
+         "details":{
+            
+         },
+         "postalOrZip":"75126",
+         "provinceOrState":"TX"
+      },
+      "first_post_card_sent_date":null
+   },
+   {
+      "lat":32.7219484,
+      "long":-96.4467742,
+      "osm_id":null,
+      "status":"Valid",
+      "address":"10110 Country View Ln, Forney, TX 75126",
+      "verified":true,
+      "zoneType":"radius",
+      "createdBy":{
+         "id":"a0f6909f-1a1d-4a90-8eaf-abcf4a705c32",
+         "full_name":"TGF Team",
+         "user_role":"ADMIN",
+         "created_at":"2026-03-25T16:05:54.19772+00:00",
+         "updated_at":"2026-03-25T16:09:11.402982+00:00"
+      },
+      "residential":true,
+      "propertyType":"Single Family Home",
+      "building_type":null,
+      "postcards_sent":0,
+      "original_address":"10110 Country View Ln, Forney, TX 75126",
+      "campaigns_used_in":[
+         
+      ],
+      "distanceFromCenter":0,
+      "targeting_zone_name":"CleanAirEpoxy Addresses",
+      "verification_details":{
+         "city":"Forney",
+         "line1":"10110 Country View Ln",
+         "status":"verified",
+         "details":{
+            
+         },
+         "postalOrZip":"75126",
+         "provinceOrState":"TX"
+      },
+      "first_post_card_sent_date":null
+   },
+   {
+      "lat":32.7225908,
+      "long":-96.446967,
+      "osm_id":null,
+      "status":"Valid",
+      "address":"10133 Country View Ln, Forney, TX 75126",
+      "verified":true,
+      "zoneType":"radius",
+      "createdBy":{
+         "id":"a0f6909f-1a1d-4a90-8eaf-abcf4a705c32",
+         "full_name":"TGF Team",
+         "user_role":"ADMIN",
+         "created_at":"2026-03-25T16:05:54.19772+00:00",
+         "updated_at":"2026-03-25T16:09:11.402982+00:00"
+      },
+      "residential":true,
+      "propertyType":"Single Family Home",
+      "building_type":null,
+      "postcards_sent":0,
+      "original_address":"10133 Country View Ln, Forney, TX 75126",
+      "campaigns_used_in":[
+         
+      ],
+      "distanceFromCenter":0,
+      "targeting_zone_name":"CleanAirEpoxy Addresses",
+      "verification_details":{
+         "city":"Forney",
+         "line1":"10133 Country View Ln",
+         "status":"verified",
+         "details":{
+            
+         },
+         "postalOrZip":"75126",
+         "provinceOrState":"TX"
+      },
+      "first_post_card_sent_date":null
+   },
+   {
+      "lat":32.7158281,
+      "long":-96.4423824,
+      "osm_id":null,
+      "status":"Valid",
+      "address":"10020 Richard Cir, Forney, TX 75126",
+      "verified":true,
+      "zoneType":"radius",
+      "createdBy":{
+         "id":"a0f6909f-1a1d-4a90-8eaf-abcf4a705c32",
+         "full_name":"TGF Team",
+         "user_role":"ADMIN",
+         "created_at":"2026-03-25T16:05:54.19772+00:00",
+         "updated_at":"2026-03-25T16:09:11.402982+00:00"
+      },
+      "residential":true,
+      "propertyType":"Single Family Home",
+      "building_type":null,
+      "postcards_sent":0,
+      "original_address":"10020 Richard Cir, Forney, TX 75126",
+      "campaigns_used_in":[
+         
+      ],
+      "distanceFromCenter":0,
+      "targeting_zone_name":"CleanAirEpoxy Addresses",
+      "verification_details":{
+         "city":"Forney",
+         "line1":"10020 Richard Cir",
+         "status":"verified",
+         "details":{
+            
+         },
+         "postalOrZip":"75126",
+         "provinceOrState":"TX"
+      },
+      "first_post_card_sent_date":null
+   },
+   {
+      "lat":32.7132699,
+      "long":-96.4291112,
+      "osm_id":null,
+      "status":"Valid",
+      "address":"10298 Greyson Dr, Forney, TX 75126",
+      "verified":true,
+      "zoneType":"radius",
+      "createdBy":{
+         "id":"a0f6909f-1a1d-4a90-8eaf-abcf4a705c32",
+         "full_name":"TGF Team",
+         "user_role":"ADMIN",
+         "created_at":"2026-03-25T16:05:54.19772+00:00",
+         "updated_at":"2026-03-25T16:09:11.402982+00:00"
+      },
+      "residential":true,
+      "propertyType":"Single Family Home",
+      "building_type":null,
+      "postcards_sent":0,
+      "original_address":"10298 Greyson Dr, Forney, TX 75126",
+      "campaigns_used_in":[
+         
+      ],
+      "distanceFromCenter":0,
+      "targeting_zone_name":"CleanAirEpoxy Addresses",
+      "verification_details":{
+         "city":"Forney",
+         "line1":"10298 Greyson Dr",
+         "status":"verified",
+         "details":{
+            
+         },
+         "postalOrZip":"75126",
+         "provinceOrState":"TX"
+      },
+      "first_post_card_sent_date":null
+   },
+   {
+      "lat":32.7139068,
+      "long":-96.42924190000001,
+      "osm_id":null,
+      "status":"Valid",
+      "address":"10323 Greyson Dr, Forney, TX 75126",
+      "verified":true,
+      "zoneType":"radius",
+      "createdBy":{
+         "id":"a0f6909f-1a1d-4a90-8eaf-abcf4a705c32",
+         "full_name":"TGF Team",
+         "user_role":"ADMIN",
+         "created_at":"2026-03-25T16:05:54.19772+00:00",
+         "updated_at":"2026-03-25T16:09:11.402982+00:00"
+      },
+      "residential":true,
+      "propertyType":"Single Family Home",
+      "building_type":null,
+      "postcards_sent":0,
+      "original_address":"10323 Greyson Dr, Forney, TX 75126",
+      "campaigns_used_in":[
+         
+      ],
+      "distanceFromCenter":0,
+      "targeting_zone_name":"CleanAirEpoxy Addresses",
+      "verification_details":{
+         "city":"Forney",
+         "line1":"10323 Greyson Dr",
+         "status":"verified",
+         "details":{
+            
+         },
+         "postalOrZip":"75126",
+         "provinceOrState":"TX"
+      },
+      "first_post_card_sent_date":null
+   },
+   {
+      "lat":32.7142028,
+      "long":-96.42898489999999,
+      "osm_id":null,
+      "status":"Valid",
+      "address":"10355 Greyson Dr, Forney, TX 75126",
+      "verified":true,
+      "zoneType":"radius",
+      "createdBy":{
+         "id":"a0f6909f-1a1d-4a90-8eaf-abcf4a705c32",
+         "full_name":"TGF Team",
+         "user_role":"ADMIN",
+         "created_at":"2026-03-25T16:05:54.19772+00:00",
+         "updated_at":"2026-03-25T16:09:11.402982+00:00"
+      },
+      "residential":true,
+      "propertyType":"Single Family Home",
+      "building_type":null,
+      "postcards_sent":0,
+      "original_address":"10355 Greyson Dr, Forney, TX 75126",
+      "campaigns_used_in":[
+         
+      ],
+      "distanceFromCenter":0,
+      "targeting_zone_name":"CleanAirEpoxy Addresses",
+      "verification_details":{
+         "city":"Forney",
+         "line1":"10355 Greyson Dr",
+         "status":"verified",
+         "details":{
+            
+         },
+         "postalOrZip":"75126",
+         "provinceOrState":"TX"
+      },
+      "first_post_card_sent_date":null
+   }
+]
