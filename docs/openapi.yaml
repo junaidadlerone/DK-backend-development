@@ -10249,6 +10249,11 @@ paths:
                   type: string
                   description: "Stripe Promotion Code string (optional). Must be active and within redemption limits."
                   example: "10OFF"
+                campaign_id:
+                  type: string
+                  format: uuid
+                  description: "Campaign ID (optional). If provided, saves a record to payment_history linked to this campaign."
+                  example: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
                 isTestMode:
                   type: boolean
                   description: "If true, use Stripe test keys; if false or not provided, use production keys"
@@ -10758,6 +10763,186 @@ paths:
                   value:
                     error: "FORBIDDEN"
                     message: "Only ADMIN users can validate coupon codes"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /getPaymentHistoryForCampaign:
+    post:
+      tags:
+        - Billing
+      summary: Get payment history for a campaign (ADMIN only)
+      description: |
+        Returns all payment records saved to `payment_history` for a specific campaign.
+        Records are only created when `campaign_id` is passed to `chargePaymentMethod`.
+
+        **Features:**
+        - ✅ ADMIN only
+        - ✅ Returns payments linked to a specific campaign
+        - ✅ Validates campaign belongs to the user's organization
+        - ✅ Results sorted newest first
+        - ✅ Enriched amount and timezone fields
+
+        **Business Rules:**
+        - Only ADMIN users can view payment history
+        - Campaign must belong to the user's organization
+        - Returns empty array if no payments have been recorded for the campaign
+
+        **Authentication:** Required (JWT token)
+
+        **Authorization:** ADMIN only
+      operationId: getPaymentHistoryForCampaign
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - campaign_id
+              properties:
+                campaign_id:
+                  type: string
+                  format: uuid
+                  description: "Campaign ID to fetch payment history for"
+                  example: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+      responses:
+        "200":
+          description: Payment history retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: "success"
+                  campaign_id:
+                    type: string
+                    format: uuid
+                    example: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+                  total:
+                    type: integer
+                    description: "Total number of payment records"
+                    example: 3
+                  payments:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                          format: uuid
+                          description: "Payment history record ID"
+                          example: "f1e2d3c4-b5a6-7890-abcd-ef1234567890"
+                        campaign_id:
+                          type: string
+                          format: uuid
+                          example: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+                        amount_paid:
+                          type: number
+                          description: "Final amount charged in USD dollars (after any discount)"
+                          example: 45.00
+                        amount_display:
+                          $ref: "#/components/schemas/CurrencyEnrichment"
+                        currency:
+                          type: string
+                          example: "usd"
+                        stripe_charge_id:
+                          type: string
+                          nullable: true
+                          description: "Stripe Charge ID (ch_xxx)"
+                          example: "ch_1234567890abcdefghijklmn"
+                        stripe_invoice_id:
+                          type: string
+                          nullable: true
+                          description: "Stripe Invoice ID (in_xxx)"
+                          example: "in_1234567890abcdefghijklmn"
+                        coupon_applied:
+                          type: string
+                          nullable: true
+                          description: "Promotion Code string used at charge time, if any"
+                          example: "10OFF"
+                        created_at:
+                          type: string
+                          format: date-time
+                          example: "2026-04-01T09:30:00.000Z"
+                        created_tz:
+                          $ref: "#/components/schemas/TimezoneEnrichment"
+              examples:
+                withPayments:
+                  value:
+                    status: "success"
+                    campaign_id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+                    total: 2
+                    payments:
+                      - id: "f1e2d3c4-b5a6-7890-abcd-ef1234567890"
+                        campaign_id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+                        amount_paid: 45.00
+                        currency: "usd"
+                        stripe_charge_id: "ch_1234567890abcdefghijklmn"
+                        stripe_invoice_id: "in_1234567890abcdefghijklmn"
+                        coupon_applied: "10OFF"
+                        created_at: "2026-04-01T09:30:00.000Z"
+                      - id: "a2b3c4d5-e6f7-8901-bcde-f12345678901"
+                        campaign_id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+                        amount_paid: 50.00
+                        currency: "usd"
+                        stripe_charge_id: "ch_abcdefghijklmn1234567890"
+                        stripe_invoice_id: "in_abcdefghijklmn1234567890"
+                        coupon_applied: null
+                        created_at: "2026-03-28T14:00:00.000Z"
+                    has_more: false
+                noPayments:
+                  value:
+                    status: "success"
+                    campaign_id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+                    total: 0
+                    payments: []
+        "400":
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              examples:
+                invalidInput:
+                  value:
+                    error: "INVALID_INPUT"
+                    message: "campaign_id is required and must be a string"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Forbidden - not ADMIN
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              examples:
+                notAdmin:
+                  value:
+                    error: "FORBIDDEN"
+                    message: "Only ADMIN users can view payment history"
+        "404":
+          description: Campaign not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              examples:
+                notFound:
+                  value:
+                    error: "NOT_FOUND"
+                    message: "Campaign not found or does not belong to your organization"
         "500":
           description: Internal server error
           content:

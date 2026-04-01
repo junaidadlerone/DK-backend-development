@@ -40,6 +40,7 @@ interface RequestBody {
   currency?: string;
   description?: string;
   campaign_name?: string;
+  campaign_id?: string;
   isTestMode?: boolean;
   coupon_code?: string;
 }
@@ -115,6 +116,7 @@ Deno.serve(async (req) => {
       currency = "usd",
       description,
       campaign_name,
+      campaign_id,
       isTestMode,
       coupon_code,
     } = body;
@@ -316,7 +318,20 @@ Deno.serve(async (req) => {
 
         const charge = chargeId ? await stripe.charges.retrieve(chargeId) : null;
 
-        // 9. Create notification for ADMIN users
+        // 9. Save to payment_history if campaign_id provided
+        if (campaign_id) {
+          await supabase.from("payment_history").insert({
+            campaign_id,
+            organization_id: organizationId,
+            amount_paid: finalAmountCents / 100,
+            currency: currency.toLowerCase(),
+            stripe_charge_id: chargeId || null,
+            stripe_invoice_id: paidInvoice.id,
+            coupon_applied: coupon_code || null,
+          });
+        }
+
+        // 10. Create notification for ADMIN users
         const last4 = paymentMethod.card?.last4 || "****";
         const amountInDollars = (finalAmountCents / 100).toFixed(2);
         const campaignText = campaign_name ? ` for campaign launch "${campaign_name}"` : "";
@@ -466,6 +481,19 @@ Deno.serve(async (req) => {
         ? paidPlainInvoice.charge
         : (paidPlainInvoice.charge as any)?.id;
       const charge = chargeId ? await stripe.charges.retrieve(chargeId) : null;
+
+      // Save to payment_history if campaign_id provided
+      if (campaign_id) {
+        await supabase.from("payment_history").insert({
+          campaign_id,
+          organization_id: organizationId,
+          amount_paid: amountInCents / 100,
+          currency: currency.toLowerCase(),
+          stripe_charge_id: chargeId || null,
+          stripe_invoice_id: paidPlainInvoice.id,
+          coupon_applied: null,
+        });
+      }
 
       const last4 = paymentMethod.card?.last4 || "****";
       const amountInDollars = (amountInCents / 100).toFixed(2);
