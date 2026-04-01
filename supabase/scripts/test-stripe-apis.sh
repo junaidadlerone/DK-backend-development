@@ -15,7 +15,7 @@ BOLD='\033[1m'
 
 # Configuration
 BASE_URL="https://xnflihspegizweqidvow.supabase.co/functions/v1"
-ADMIN_EMAIL="execute@yopmail.com"
+ADMIN_EMAIL="nile@yopmail.com"
 ADMIN_PASSWORD="SecurePass123!"
 
 # Stripe Test Tokens (Stripe requires using tokens, not raw card numbers)
