@@ -49,6 +49,7 @@ Deno.serve(async (req) => {
     }
 
     // Get user's organization
+    // getUserOrganizationId fires owner + member lookups in parallel internally
     const organizationId = await getUserOrganizationId(supabase, user.userId);
     if (!organizationId) {
       return errorResponse(
@@ -81,69 +82,30 @@ Deno.serve(async (req) => {
     let page = pageParam ? parseInt(pageParam, 10) : 1;
     let limit = limitParam ? parseInt(limitParam, 10) : 10;
 
-    // Validate page and limit
-    if (isNaN(page) || page < 1) {
-      page = 1;
-    }
+    if (isNaN(page) || page < 1) page = 1;
+    if (isNaN(limit) || limit < 1) limit = 10;
+    if (limit > 100) limit = 100;
 
-    if (isNaN(limit) || limit < 1) {
-      limit = 10;
-    }
-
-    // Limit maximum results per page to 100
-    if (limit > 100) {
-      limit = 100;
-    }
-
-    // Calculate offset
     const offset = (page - 1) * limit;
 
-    // Build the data query (postcardSize pushed to DB; other filters remain in JS)
-    let dataQuery = supabase
-      .from("template_bundles")
-      .select(`
-        *,
-        front:template_front_id (*),
-        back:template_back_id (*)
-      `)
-      .or(`organization_id.eq.${organizationId},is_universal.eq.true`)
-      .order("created_at", { ascending: false })
-      .range(offset, offset + limit - 1);
-
-    // Push postcardSize filter into DB to avoid fetching rows we'll discard
-    if (postcardSize && ['4x6', '6x9', '6x11'].includes(postcardSize)) {
-      dataQuery = dataQuery.eq('front.postcard_size', postcardSize);
-    }
-
-    // Build the count query (same filters as data query)
-    let countQuery = supabase
-      .from("template_bundles")
-      .select("*", { count: "exact", head: true })
-      .or(`organization_id.eq.${organizationId},is_universal.eq.true`);
-
-    if (postcardSize && ['4x6', '6x9', '6x11'].includes(postcardSize)) {
-      countQuery = countQuery.eq('front.postcard_size', postcardSize);
-    }
-
-    // Fire COUNT, data fetch, and preferences in parallel — eliminates 2 sequential round-trips
+    // Single RPC call: native SQL JOIN + COUNT(*) OVER() window function.
+    // This replaces the previous two-query pattern (separate COUNT + SELECT via PostgREST).
+    // Preferences are fetched in parallel since they are independent.
     const [
-      { count: totalCount, error: countError },
-      { data: bundles, error: fetchError },
+      { data: rows, error: fetchError },
       preferences
     ] = await Promise.all([
-      countQuery,
-      dataQuery,
+      supabase.rpc("get_template_bundles", {
+        p_organization_id: organizationId,
+        p_limit:           limit,
+        p_offset:          offset,
+        p_postcard_size:   postcardSize && ['4x6', '6x9', '6x11'].includes(postcardSize)
+                             ? postcardSize
+                             : null,
+        p_include_deleted: includeDeleted
+      }),
       getPreferences(supabase, user.userId)
     ]);
-
-    if (countError) {
-      console.error("Error counting bundles:", countError);
-      return errorResponse(
-        "COUNT_FAILED",
-        "Failed to count template bundles",
-        500
-      );
-    }
 
     if (fetchError) {
       console.error("Error fetching bundles:", fetchError);
@@ -154,33 +116,70 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Filter and transform bundles (deleted + campaignId logic stays in JS)
+    // Extract total_count from the window function column (same value on every row)
+    const totalCount: number = rows && rows.length > 0 ? Number(rows[0].total_count) : 0;
+
+    // Re-shape flat RPC rows into bundle-like objects so the filter/sort/transform
+    // logic below is identical to the original PostgREST-join version.
+    const bundles = (rows || []).map((r: any) => ({
+      id:           r.bundle_id,
+      is_universal: r.is_universal,
+      created_at:   r.bundle_created_at,
+      updated_at:   r.bundle_updated_at,
+      front: {
+        id:                   r.front_id,
+        html:                 r.front_html,
+        description:          r.front_description,
+        postgrid_template_id: r.front_postgrid_id,
+        template_type:        r.front_type,
+        postcard_size:        r.front_size,
+        is_universal:         r.front_is_universal,
+        is_manual_edit:       r.front_is_manual,
+        campaigns_used:       r.front_campaigns,
+        created_by:           r.front_created_by,
+        live:                 r.front_live,
+        deleted:              r.front_deleted,
+        created_at:           r.front_created_at,
+        updated_at:           r.front_updated_at
+      },
+      back: {
+        id:                   r.back_id,
+        html:                 r.back_html,
+        description:          r.back_description,
+        postgrid_template_id: r.back_postgrid_id,
+        template_type:        r.back_type,
+        postcard_size:        r.back_size,
+        is_universal:         r.back_is_universal,
+        is_manual_edit:       r.back_is_manual,
+        campaigns_used:       r.back_campaigns,
+        created_by:           r.back_created_by,
+        live:                 r.back_live,
+        deleted:              r.back_deleted,
+        created_at:           r.back_created_at,
+        updated_at:           r.back_updated_at
+      }
+    }));
+
+    // Filter bundles — deleted is already handled inside the RPC.
+    // Only campaignId / manual-edit logic remains in JS.
     let filteredBundles = bundles
       .filter(bundle => {
-        // Filter out bundles with deleted templates unless includeDeleted=true
-        if (!includeDeleted) {
-          if (bundle.front?.deleted || bundle.back?.deleted) {
-            return false;
-          }
-        }
-
         // Filter based on manual edit status and campaign_id
-        // A bundle is considered manual edit if either template is manual edit
         const isManual = bundle.front?.is_manual_edit || bundle.back?.is_manual_edit;
 
         if (isManual) {
           if (!campaignId) {
-             // If no campaign_id provided, hide manual edit bundles
-             return false;
+            // If no campaign_id provided, hide manual edit bundles
+            return false;
           } else {
-             // If campaign_id provided, check if bundle is used by this campaign
-             const frontUsed = bundle.front?.campaigns_used?.includes(campaignId);
-             const backUsed = bundle.back?.campaigns_used?.includes(campaignId);
+            // If campaign_id provided, check if bundle is used by this campaign
+            const frontUsed = bundle.front?.campaigns_used?.includes(campaignId);
+            const backUsed  = bundle.back?.campaigns_used?.includes(campaignId);
 
-             // Include if either front or back uses this campaign
-             if (!frontUsed && !backUsed) {
-               return false;
-             }
+            // Include if either front or back uses this campaign
+            if (!frontUsed && !backUsed) {
+              return false;
+            }
           }
         }
 
@@ -190,7 +189,6 @@ Deno.serve(async (req) => {
     // Apply sorting
     switch (sortOption) {
       case 'a-z':
-        // Sort alphabetically by front template description
         filteredBundles.sort((a, b) => {
           const aDesc = (a.front?.description || '').toLowerCase();
           const bDesc = (b.front?.description || '').toLowerCase();
@@ -199,7 +197,6 @@ Deno.serve(async (req) => {
         break;
 
       case 'z-a':
-        // Sort reverse alphabetically by front template description
         filteredBundles.sort((a, b) => {
           const aDesc = (a.front?.description || '').toLowerCase();
           const bDesc = (b.front?.description || '').toLowerCase();
@@ -208,25 +205,18 @@ Deno.serve(async (req) => {
         break;
 
       case 'newest':
-        // Sort by created_at descending (newest first)
         filteredBundles.sort((a, b) => {
-          const aTime = new Date(a.created_at).getTime();
-          const bTime = new Date(b.created_at).getTime();
-          return bTime - aTime;
+          return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
         });
         break;
 
       case 'oldest':
-        // Sort by created_at ascending (oldest first)
         filteredBundles.sort((a, b) => {
-          const aTime = new Date(a.created_at).getTime();
-          const bTime = new Date(b.created_at).getTime();
-          return aTime - bTime;
+          return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
         });
         break;
 
       case 'most-used':
-        // Sort by number of campaigns using the bundle (descending)
         filteredBundles.sort((a, b) => {
           const aUsed = (a.front?.campaigns_used || []).length + (a.back?.campaigns_used || []).length;
           const bUsed = (b.front?.campaigns_used || []).length + (b.back?.campaigns_used || []).length;
@@ -235,71 +225,68 @@ Deno.serve(async (req) => {
         break;
     }
 
-    // Transform bundles to response format
-    const transformedBundles = filteredBundles
-      .map(bundle => ({
-        id: bundle.id,
-        isUniversal: bundle.is_universal || false,
-        front_template: {
-          id: bundle.front.id,
-          postgrid_template_id: bundle.front.postgrid_template_id,
-          description: bundle.front.description,
-          html: bundle.front.html,
-          templateType: bundle.front.template_type,
-          postcardSize: bundle.front.postcard_size,
-          isUniversal: bundle.front.is_universal || false,
-          isManualEdit: bundle.front.is_manual_edit || false,
-          campaigns_used: bundle.front.campaigns_used || [],
-          createdBy: bundle.front.created_by,
-          live: bundle.front.live,
-          deleted: bundle.front.deleted,
-          created_at: bundle.front.created_at,
-          created_at_tz: enrichTimestamp(bundle.front.created_at, preferences.timezone),
-          updated_at: bundle.front.updated_at,
-          updated_at_tz: enrichTimestamp(bundle.front.updated_at, preferences.timezone)
-        },
-        back_template: {
-          id: bundle.back.id,
-          postgrid_template_id: bundle.back.postgrid_template_id,
-          description: bundle.back.description,
-          html: bundle.back.html,
-          templateType: bundle.back.template_type,
-          postcardSize: bundle.back.postcard_size,
-          isUniversal: bundle.back.is_universal || false,
-          isManualEdit: bundle.back.is_manual_edit || false,
-          campaigns_used: bundle.back.campaigns_used || [],
-          createdBy: bundle.back.created_by,
-          live: bundle.back.live,
-          deleted: bundle.back.deleted,
-          created_at: bundle.back.created_at,
-          created_at_tz: enrichTimestamp(bundle.back.created_at, preferences.timezone),
-          updated_at: bundle.back.updated_at,
-          updated_at_tz: enrichTimestamp(bundle.back.updated_at, preferences.timezone)
-        },
-        created_at: bundle.created_at,
-        created_at_tz: enrichTimestamp(bundle.created_at, preferences.timezone),
-        updated_at: bundle.updated_at,
-        updated_at_tz: enrichTimestamp(bundle.updated_at, preferences.timezone)
-      }));
+    // Transform bundles to response format — identical shape as before
+    const transformedBundles = filteredBundles.map(bundle => ({
+      id: bundle.id,
+      isUniversal: bundle.is_universal || false,
+      front_template: {
+        id:                   bundle.front.id,
+        postgrid_template_id: bundle.front.postgrid_template_id,
+        description:          bundle.front.description,
+        html:                 bundle.front.html,
+        templateType:         bundle.front.template_type,
+        postcardSize:         bundle.front.postcard_size,
+        isUniversal:          bundle.front.is_universal  || false,
+        isManualEdit:         bundle.front.is_manual_edit || false,
+        campaigns_used:       bundle.front.campaigns_used || [],
+        createdBy:            bundle.front.created_by,
+        live:                 bundle.front.live,
+        deleted:              bundle.front.deleted,
+        created_at:           bundle.front.created_at,
+        created_at_tz:        enrichTimestamp(bundle.front.created_at, preferences.timezone),
+        updated_at:           bundle.front.updated_at,
+        updated_at_tz:        enrichTimestamp(bundle.front.updated_at, preferences.timezone)
+      },
+      back_template: {
+        id:                   bundle.back.id,
+        postgrid_template_id: bundle.back.postgrid_template_id,
+        description:          bundle.back.description,
+        html:                 bundle.back.html,
+        templateType:         bundle.back.template_type,
+        postcardSize:         bundle.back.postcard_size,
+        isUniversal:          bundle.back.is_universal  || false,
+        isManualEdit:         bundle.back.is_manual_edit || false,
+        campaigns_used:       bundle.back.campaigns_used || [],
+        createdBy:            bundle.back.created_by,
+        live:                 bundle.back.live,
+        deleted:              bundle.back.deleted,
+        created_at:           bundle.back.created_at,
+        created_at_tz:        enrichTimestamp(bundle.back.created_at, preferences.timezone),
+        updated_at:           bundle.back.updated_at,
+        updated_at_tz:        enrichTimestamp(bundle.back.updated_at, preferences.timezone)
+      },
+      created_at:    bundle.created_at,
+      created_at_tz: enrichTimestamp(bundle.created_at, preferences.timezone),
+      updated_at:    bundle.updated_at,
+      updated_at_tz: enrichTimestamp(bundle.updated_at, preferences.timezone)
+    }));
 
     const processingTimeMs = Date.now() - startTime;
 
-    // Calculate pagination metadata
-    const totalPages = Math.ceil((totalCount || 0) / limit);
-    const hasNextPage = page < totalPages;
+    const totalPages      = Math.ceil((totalCount || 0) / limit);
+    const hasNextPage     = page < totalPages;
     const hasPreviousPage = page > 1;
 
-    // Build response
     const response = {
-      status: "success",
+      status:  "success",
       message: `Found ${filteredBundles.length} template bundle(s) on page ${page}`,
-      data: filteredBundles,
+      data:    filteredBundles,
       pagination: {
-        page: page,
-        limit: limit,
-        total_count: totalCount || 0,
-        total_pages: totalPages,
-        has_next_page: hasNextPage,
+        page,
+        limit,
+        total_count:      totalCount || 0,
+        total_pages:      totalPages,
+        has_next_page:    hasNextPage,
         has_previous_page: hasPreviousPage
       },
       metadata: {
@@ -307,7 +294,7 @@ Deno.serve(async (req) => {
           includeDeleted,
           postcardSize: postcardSize || null
         },
-        sort_option: sortOption,
+        sort_option:     sortOption,
         processingTimeMs
       }
     };

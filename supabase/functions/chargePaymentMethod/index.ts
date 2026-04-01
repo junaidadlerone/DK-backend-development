@@ -15,7 +15,9 @@ import { enrichCurrency } from "../_shared/currency.ts";
  * Business Rules:
  * - ADMIN only
  * - Charges the specified payment method
- * - Creates a Payment Intent in Stripe
+ * - If coupon_code is provided (Stripe Promotion Code string), applies it via
+ *   an Invoice so the discount appears as a real line item on the receipt PDF.
+ * - If no coupon_code, creates a Payment Intent directly (original behavior).
  * - Confirms the payment immediately
  * - Organization-scoped
  * - Creates notification for ADMIN users
@@ -27,7 +29,8 @@ import { enrichCurrency } from "../_shared/currency.ts";
  *   "currency": "usd",
  *   "description": "Campaign postcard printing",
  *   "campaign_name": "Summer Sale 2024",
- *   "isTestMode": true
+ *   "isTestMode": true,
+ *   "coupon_code": "SUMMER20"   // optional — Stripe Promotion Code (user-facing string)
  * }
  */
 
@@ -38,6 +41,7 @@ interface RequestBody {
   description?: string;
   campaign_name?: string;
   isTestMode?: boolean;
+  coupon_code?: string;
 }
 
 Deno.serve(async (req) => {
@@ -105,7 +109,15 @@ Deno.serve(async (req) => {
       );
     }
 
-    const { payment_method_id, amount, currency = "usd", description, campaign_name, isTestMode } = body;
+    const {
+      payment_method_id,
+      amount,
+      currency = "usd",
+      description,
+      campaign_name,
+      isTestMode,
+      coupon_code,
+    } = body;
 
     // Validate payment_method_id
     if (!payment_method_id || typeof payment_method_id !== "string") {
@@ -169,30 +181,294 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Create and confirm Payment Intent
-    const paymentIntent = await stripe.paymentIntents.create({
-      amount: amountInCents,
-      currency: currency.toLowerCase(),
+    // ─────────────────────────────────────────────────────────────────────────
+    // COUPON CODE PATH — Invoice-based approach (Approach B)
+    //
+    // Stripe Coupons/Promotion Codes cannot be applied to a PaymentIntent
+    // directly. Using an Invoice ensures:
+    //   1. The discount appears as a proper line item on the Stripe PDF receipt.
+    //   2. Stripe enforces redemption limits / expiry automatically.
+    //   3. getBillingHistory can surface the invoice_id and coupon_applied.
+    // ─────────────────────────────────────────────────────────────────────────
+    if (coupon_code) {
+      // 1. Look up the Stripe Promotion Code by the user-facing string
+      const promoCodes = await stripe.promotionCodes.list({
+        code: coupon_code,
+        active: true,
+        limit: 1,
+      });
+
+      if (!promoCodes.data.length) {
+        return errorResponse(
+          "INVALID_COUPON",
+          "The coupon code is invalid, inactive, or has expired",
+          400
+        );
+      }
+
+      const promoCode = promoCodes.data[0];
+      const coupon = promoCode.coupon;
+
+      // Check that the underlying coupon is still valid
+      if (!coupon.valid) {
+        return errorResponse(
+          "COUPON_EXPIRED",
+          "The coupon code has expired or reached its maximum redemption limit",
+          400
+        );
+      }
+
+      // 2. Compute expected discount so we can return it in the response
+      let discountAmountCents = 0;
+      if (coupon.percent_off) {
+        discountAmountCents = Math.round(amountInCents * (coupon.percent_off / 100));
+      } else if (coupon.amount_off) {
+        discountAmountCents = Math.min(coupon.amount_off, amountInCents);
+      }
+      const finalAmountCents = amountInCents - discountAmountCents;
+
+      // 3. Create the Invoice first so we can explicitly attach the line item
+      //    to it. Creating the invoice item before the invoice risks Stripe
+      //    picking up stale pending items from previous voided invoices, which
+      //    results in a $0.00 PDF with no line items.
+      let invoice = await stripe.invoices.create({
+        customer: org.stripe_customer_id,
+        default_payment_method: payment_method_id,
+        discounts: [{ promotion_code: promoCode.id }],
+        auto_advance: false,
+        metadata: {
+          organization_id: organizationId,
+          coupon_applied: coupon_code,
+          campaign_name: campaign_name || "",
+          // Store amounts and card info so getBillingHistory can display them
+          // accurately without relying on Stripe's async invoice fields or
+          // expand calls that may not resolve in the Deno SDK.
+          final_amount_cents: finalAmountCents.toString(),
+          original_amount_cents: amountInCents.toString(),
+          discount_amount_cents: discountAmountCents.toString(),
+          card_brand: paymentMethod.card?.brand || "",
+          card_last4: paymentMethod.card?.last4 || "",
+        },
+      });
+
+      // 4. Attach the line item explicitly to this invoice by passing invoice.id.
+      //    This guarantees the PDF shows the correct description and unit price.
+      await stripe.invoiceItems.create({
+        customer: org.stripe_customer_id,
+        invoice: invoice.id,
+        amount: amountInCents,
+        currency: currency.toLowerCase(),
+        description: description || `Charge for ${org.business_name || "organization"}`,
+      });
+
+      // 5. Finalize the invoice — locks in line items, discount, and totals
+      invoice = await stripe.invoices.finalizeInvoice(invoice.id);
+
+      // 6. Propagate metadata to the underlying PaymentIntent so that
+      //    getBillingHistory can read coupon_applied from the charge's metadata
+      if (invoice.payment_intent && typeof invoice.payment_intent === "string") {
+        await stripe.paymentIntents.update(invoice.payment_intent, {
+          metadata: {
+            organization_id: organizationId,
+            coupon_applied: coupon_code,
+            campaign_name: campaign_name || "",
+          },
+        });
+      }
+
+      // 7. Pay the invoice using the provided payment method.
+      //    Stripe may auto-pay the invoice during finalization when the customer
+      //    has collection_method: 'charge_automatically' and a default PM set.
+      //    In that case invoice.status is already 'paid' — skip the explicit pay call.
+      let paidInvoice;
+      if (invoice.status === "paid") {
+        paidInvoice = invoice;
+      } else {
+        try {
+          paidInvoice = await stripe.invoices.pay(invoice.id);
+        } catch (_payError) {
+          const payError = _payError as any;
+          // Void the invoice to clean up the pending invoice item on payment failure
+          try {
+            await stripe.invoices.voidInvoice(invoice.id);
+          } catch (voidError) {
+            console.error("Failed to void invoice after payment error:", voidError);
+          }
+
+          if (payError.type === "StripeCardError") {
+            return errorResponse("CARD_ERROR", payError.message, 400);
+          }
+          return errorResponse(
+            "PAYMENT_FAILED",
+            payError.message || "Invoice payment failed. Please try a different payment method.",
+            400
+          );
+        }
+      }
+
+      const processingTimeMs = Date.now() - startTime;
+
+      if (paidInvoice.status === "paid") {
+        // 8. Retrieve the underlying Stripe Charge for its receipt_url
+        const chargeId = typeof paidInvoice.charge === "string"
+          ? paidInvoice.charge
+          : (paidInvoice.charge as any)?.id;
+
+        const charge = chargeId ? await stripe.charges.retrieve(chargeId) : null;
+
+        // 9. Create notification for ADMIN users
+        const last4 = paymentMethod.card?.last4 || "****";
+        const amountInDollars = (finalAmountCents / 100).toFixed(2);
+        const campaignText = campaign_name ? ` for campaign launch "${campaign_name}"` : "";
+        const discountText = discountAmountCents > 0
+          ? ` (saved $${(discountAmountCents / 100).toFixed(2)} with code ${coupon_code})`
+          : "";
+
+        await createNotification({
+          supabase,
+          organizationId,
+          notificationType: "PAYMENT_CHARGED",
+          title: "Payment Charged",
+          description: `A charge of $${amountInDollars} made against ${last4} card${campaignText}${discountText}`,
+          targetRoles: ["ADMIN"],
+          metadata: {
+            invoice_id: paidInvoice.id,
+            payment_method_id: paymentMethod.id,
+            amount: finalAmountCents,
+            original_amount: amountInCents,
+            discount_amount: discountAmountCents,
+            coupon_applied: coupon_code,
+            currency: currency.toLowerCase(),
+            last4,
+            campaign_name: campaign_name || null,
+          },
+        });
+
+        // 10. Fetch user preferences for enrichment
+        const preferences = await getUserPreferences(supabase, user.userId);
+
+        return successResponse({
+          status: "success",
+          message: "Payment succeeded",
+          payment: {
+            id: charge?.id || paidInvoice.id,
+            amount: finalAmountCents,
+            currency: currency.toLowerCase(),
+
+            // Enriched financial data — reflects the discounted amount charged
+            amount_display: enrichCurrency(finalAmountCents / 100, preferences.currency),
+
+            status: "succeeded",
+            description: description || `Charge for ${org.business_name || "organization"}`,
+            created: new Date(paidInvoice.created * 1000).toISOString(),
+
+            // Enriched timezone data
+            created_tz: enrichTimestamp(
+              new Date(paidInvoice.created * 1000).toISOString(),
+              preferences.timezone
+            ),
+
+            // The receipt_url opens a Stripe-hosted PDF that shows the
+            // original amount, coupon name, discount line, and final total
+            receipt_url: charge?.receipt_url || null,
+
+            // Discount breakdown
+            original_amount: amountInCents,
+            discount_amount: discountAmountCents,
+            coupon_applied: coupon_code,
+            discount_percent_off: coupon.percent_off ?? null,
+            discount_amount_off: coupon.amount_off ?? null,
+
+            payment_method: {
+              id: paymentMethod.id,
+              type: paymentMethod.type,
+              card: paymentMethod.card ? {
+                brand: paymentMethod.card.brand,
+                last4: paymentMethod.card.last4,
+                exp_month: paymentMethod.card.exp_month,
+                exp_year: paymentMethod.card.exp_year,
+              } : null,
+            },
+          },
+          processingTimeMs,
+        }, 201);
+      } else {
+        // Invoice didn't end up paid — void it and surface the error
+        try {
+          await stripe.invoices.voidInvoice(invoice.id);
+        } catch (voidError) {
+          console.error("Failed to void invoice:", voidError);
+        }
+
+        return errorResponse(
+          "PAYMENT_ERROR",
+          `Invoice payment status: ${paidInvoice.status}`,
+          400
+        );
+      }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // NO COUPON PATH — Invoice approach (same as coupon path, no discount)
+    // Using invoices for all charges ensures consistent receipt PDF format.
+    // ─────────────────────────────────────────────────────────────────────────
+
+    // 1. Create invoice first, then attach the line item to it
+    let plainInvoice = await stripe.invoices.create({
       customer: org.stripe_customer_id,
-      payment_method: payment_method_id,
-      description: description || `Charge for ${org.business_name || "organization"}`,
-      confirm: true,
-      automatic_payment_methods: {
-        enabled: true,
-        allow_redirects: "never",
-      },
+      default_payment_method: payment_method_id,
+      auto_advance: false,
       metadata: {
         organization_id: organizationId,
+        campaign_name: campaign_name || "",
+        final_amount_cents: amountInCents.toString(),
+        card_brand: paymentMethod.card?.brand || "",
+        card_last4: paymentMethod.card?.last4 || "",
       },
     });
 
+    await stripe.invoiceItems.create({
+      customer: org.stripe_customer_id,
+      invoice: plainInvoice.id,
+      amount: amountInCents,
+      currency: currency.toLowerCase(),
+      description: description || `Charge for ${org.business_name || "organization"}`,
+    });
+
+    // 2. Finalize
+    plainInvoice = await stripe.invoices.finalizeInvoice(plainInvoice.id);
+
+    // 3. Pay (or it may already be paid if auto-advance kicked in)
+    let paidPlainInvoice;
+    if (plainInvoice.status === "paid") {
+      paidPlainInvoice = plainInvoice;
+    } else {
+      try {
+        paidPlainInvoice = await stripe.invoices.pay(plainInvoice.id);
+      } catch (_payError) {
+        const payError = _payError as any;
+        try { await stripe.invoices.voidInvoice(plainInvoice.id); } catch (_) { /* ignore */ }
+        if (payError.type === "StripeCardError") {
+          return errorResponse("CARD_ERROR", payError.message, 400);
+        }
+        return errorResponse(
+          "PAYMENT_FAILED",
+          payError.message || "Invoice payment failed. Please try a different payment method.",
+          400
+        );
+      }
+    }
+
     const processingTimeMs = Date.now() - startTime;
 
-    // Format response based on payment intent status
-    if (paymentIntent.status === "succeeded") {
-      // Create notification for ADMIN users
+    if (paidPlainInvoice.status === "paid") {
+      const chargeId = typeof paidPlainInvoice.charge === "string"
+        ? paidPlainInvoice.charge
+        : (paidPlainInvoice.charge as any)?.id;
+      const charge = chargeId ? await stripe.charges.retrieve(chargeId) : null;
+
       const last4 = paymentMethod.card?.last4 || "****";
-      const amountInDollars = (paymentIntent.amount / 100).toFixed(2);
+      const amountInDollars = (amountInCents / 100).toFixed(2);
       const campaignText = campaign_name ? ` for campaign launch "${campaign_name}"` : "";
 
       await createNotification({
@@ -203,37 +479,30 @@ Deno.serve(async (req) => {
         description: `A charge of $${amountInDollars} made against ${last4} card${campaignText}`,
         targetRoles: ["ADMIN"],
         metadata: {
-          payment_intent_id: paymentIntent.id,
+          invoice_id: paidPlainInvoice.id,
           payment_method_id: paymentMethod.id,
-          amount: paymentIntent.amount,
-          currency: paymentIntent.currency,
-          last4: last4,
-          campaign_name: campaign_name || null
-        }
+          amount: amountInCents,
+          currency: currency.toLowerCase(),
+          last4,
+          campaign_name: campaign_name || null,
+        },
       });
-      
-      // Fetch user preferences for enrichment
+
       const preferences = await getUserPreferences(supabase, user.userId);
 
       return successResponse({
         status: "success",
         message: "Payment succeeded",
         payment: {
-          id: paymentIntent.id,
-          amount: paymentIntent.amount,
-          currency: paymentIntent.currency,
-          
-          // Enriched financial data - paymentIntent.amount is in cents
-          amount_display: enrichCurrency(paymentIntent.amount / 100, preferences.currency),
-          
-          status: paymentIntent.status,
-          description: paymentIntent.description,
-          created: new Date(paymentIntent.created * 1000).toISOString(),
-          
-          // Enriched timezone data
-          created_tz: enrichTimestamp(new Date(paymentIntent.created * 1000).toISOString(), preferences.timezone),
-          
-          receipt_url: paymentIntent.charges?.data?.[0]?.receipt_url || null,
+          id: charge?.id || paidPlainInvoice.id,
+          amount: amountInCents,
+          currency: currency.toLowerCase(),
+          amount_display: enrichCurrency(amountInCents / 100, preferences.currency),
+          status: "succeeded",
+          description: description || `Charge for ${org.business_name || "organization"}`,
+          created: new Date(paidPlainInvoice.created * 1000).toISOString(),
+          created_tz: enrichTimestamp(new Date(paidPlainInvoice.created * 1000).toISOString(), preferences.timezone),
+          receipt_url: charge?.receipt_url || null,
           payment_method: {
             id: paymentMethod.id,
             type: paymentMethod.type,
@@ -247,27 +516,13 @@ Deno.serve(async (req) => {
         },
         processingTimeMs,
       }, 201);
-    } else if (paymentIntent.status === "requires_action") {
-      return errorResponse(
-        "REQUIRES_ACTION",
-        "Payment requires additional authentication. Please use Stripe.js on the frontend for 3D Secure.",
-        400
-      );
-    } else if (paymentIntent.status === "requires_payment_method") {
-      return errorResponse(
-        "PAYMENT_FAILED",
-        paymentIntent.last_payment_error?.message || "Payment failed. Please try a different payment method.",
-        400
-      );
     } else {
-      return errorResponse(
-        "PAYMENT_ERROR",
-        `Payment status: ${paymentIntent.status}`,
-        400
-      );
+      try { await stripe.invoices.voidInvoice(plainInvoice.id); } catch (_) { /* ignore */ }
+      return errorResponse("PAYMENT_ERROR", `Invoice payment status: ${paidPlainInvoice.status}`, 400);
     }
 
-  } catch (error) {
+  } catch (_error) {
+    const error = _error as any;
     console.error("Unexpected error in chargePaymentMethod:", error);
 
     // Handle Stripe-specific errors

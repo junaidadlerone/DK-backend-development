@@ -10179,12 +10179,16 @@ paths:
         - Billing
       summary: Charge a payment method (ADMIN only)
       description: |
-        Creates and confirms a charge using a specific payment method.
+        Creates and confirms a charge using a specific payment method via a Stripe Invoice.
+        All charges (with or without a coupon) go through invoices to ensure consistent
+        receipt PDF format with proper line items and discount breakdowns.
 
         **Features:**
         - ✅ ADMIN only
-        - ✅ Creates Payment Intent in Stripe
-        - ✅ Confirms payment immediately
+        - ✅ All charges use Stripe Invoices for consistent receipt PDFs
+        - ✅ Optional coupon code support (Stripe Promotion Codes)
+        - ✅ Discount applied as a line item on the invoice PDF
+        - ✅ Stripe enforces redemption limits automatically
         - ✅ Supports custom amount, currency, and description
         - ✅ Organization-scoped
         - ✅ Supports test/production mode selection
@@ -10193,15 +10197,15 @@ paths:
         **Business Rules:**
         - Only ADMIN users can charge payment methods
         - Payment method must belong to the organization's customer
-        - Amount is in cents (e.g., 5000 = $50.00)
-        - Minimum charge is 50 cents
-        - Creates charge history visible in getBillingHistory
-        - Triggers Stripe webhook events (payment_intent.succeeded, etc.)
-        - Generates notification: "A charge of ${amount} made against {last4} card for campaign launch '{campaign_name}'"
+        - Amount is in USD dollars (e.g., 50 = $50.00)
+        - If `coupon_code` is provided, it must be an active Stripe Promotion Code string (e.g. "10OFF")
+        - Stripe enforces coupon redemption limits — expired/exhausted codes are rejected
+        - Generates notification: "A charge of ${amount} made against {last4} card"
 
-        **Amount Format:**
-        - USD: amount in cents (5000 = $50.00)
-        - All currencies use smallest unit (no decimals)
+        **Receipt PDFs:**
+        - All receipts are Stripe-hosted invoice PDFs (`receipt_url`)
+        - Coupon receipts show: original amount, discount line, and final total
+        - Use `validateCouponCode` to preview discount before charging
 
         **Authentication:** Required (JWT token)
 
@@ -10224,10 +10228,10 @@ paths:
                   description: "Payment method ID from Stripe (pm_xxxxx)"
                   example: "pm_1234567890abcdefghijklmn"
                 amount:
-                  type: integer
-                  description: "Amount to charge in cents (5000 = $50.00)"
-                  minimum: 50
-                  example: 5000
+                  type: number
+                  description: "Amount to charge in USD dollars (e.g. 50 = $50.00)"
+                  minimum: 0.50
+                  example: 50
                 currency:
                   type: string
                   description: "Currency code (default: usd)"
@@ -10241,6 +10245,10 @@ paths:
                   type: string
                   description: "Campaign name for notification (optional)"
                   example: "Summer Sale 2024"
+                coupon_code:
+                  type: string
+                  description: "Stripe Promotion Code string (optional). Must be active and within redemption limits."
+                  example: "10OFF"
                 isTestMode:
                   type: boolean
                   description: "If true, use Stripe test keys; if false or not provided, use production keys"
@@ -10265,12 +10273,12 @@ paths:
                     properties:
                       id:
                         type: string
-                        description: "Payment Intent ID"
-                        example: "pi_1234567890abcdefghijklmn"
+                        description: "Charge ID (ch_xxx) or Invoice ID (in_xxx) if auto-collected"
+                        example: "ch_1234567890abcdefghijklmn"
                       amount:
-                        type: integer
-                        description: "Amount charged in cents"
-                        example: 5000
+                        type: number
+                        description: "Final amount charged in USD dollars (after discount)"
+                        example: 45
                       currency:
                         type: string
                         example: "usd"
@@ -10292,7 +10300,33 @@ paths:
                         type: string
                         format: uri
                         nullable: true
-                        example: "https://pay.stripe.com/receipts/xxxxx"
+                        description: "Stripe-hosted invoice PDF URL showing full breakdown"
+                        example: "https://pay.stripe.com/receipts/invoices/xxxxx"
+                      original_amount:
+                        type: number
+                        nullable: true
+                        description: "Pre-discount amount in cents (only present when coupon_code is used)"
+                        example: 5000
+                      discount_amount:
+                        type: number
+                        nullable: true
+                        description: "Discount applied in cents (only present when coupon_code is used)"
+                        example: 500
+                      coupon_applied:
+                        type: string
+                        nullable: true
+                        description: "Promotion Code string that was applied (only present when coupon_code is used)"
+                        example: "10OFF"
+                      discount_percent_off:
+                        type: number
+                        nullable: true
+                        description: "Percentage discount (if coupon is percent-based)"
+                        example: 10
+                      discount_amount_off:
+                        type: number
+                        nullable: true
+                        description: "Fixed discount amount in cents (if coupon is fixed-amount)"
+                        example: null
                       payment_method:
                         type: object
                         properties:
@@ -10330,7 +10364,15 @@ paths:
                 invalidInput:
                   value:
                     error: "INVALID_INPUT"
-                    message: "amount is required and must be a positive number (in cents)"
+                    message: "amount is required and must be a positive number (in USD)"
+                invalidCoupon:
+                  value:
+                    error: "INVALID_COUPON"
+                    message: "The coupon code is invalid, inactive, or has expired"
+                couponExpired:
+                  value:
+                    error: "COUPON_EXPIRED"
+                    message: "The coupon code has expired or reached its maximum redemption limit"
                 invalidPaymentMethod:
                   value:
                     error: "INVALID_PAYMENT_METHOD"
@@ -10347,10 +10389,6 @@ paths:
                   value:
                     error: "PAYMENT_FAILED"
                     message: "Payment failed. Please try a different payment method."
-                requiresAction:
-                  value:
-                    error: "REQUIRES_ACTION"
-                    message: "Payment requires additional authentication. Please use Stripe.js on the frontend for 3D Secure."
         "401":
           description: Unauthorized
           content:
@@ -10392,23 +10430,24 @@ paths:
         - Billing
       summary: Get billing history for organization (ADMIN only)
       description: |
-        Retrieves all charges and transactions from Stripe for the organization with pagination support.
+        Retrieves all charges and invoice transactions from Stripe for the organization with pagination support.
+        Merges direct charges and invoice-based transactions (coupon charges) into a single sorted list.
 
         **Features:**
         - ✅ ADMIN only
-        - ✅ Returns all charges from Stripe
+        - ✅ Returns direct charges AND invoice-based coupon transactions
         - ✅ Supports pagination via request body
-        - ✅ Shows amount, status, date, description, receipt URL
+        - ✅ Shows amount, status, date, description, receipt URL, coupon applied
         - ✅ Returns empty array if no billing history yet
         - ✅ Organization-scoped
         - ✅ Supports test/production mode selection
 
         **Business Rules:**
         - Only ADMIN users can view billing history
-        - Returns charges in reverse chronological order (newest first)
+        - Returns transactions in reverse chronological order (newest first)
+        - Coupon transactions include `invoice_id` and `discount_applied` fields
+        - `receipt_url` links to Stripe-hosted invoice PDF for all transactions
         - Supports pagination with limit and starting_after parameters
-        - Shows refund information if applicable
-        - Returns empty array if organization has no Stripe customer yet
 
         **Pagination:**
         - Use `limit` to control number of results (default: 50, max: 100)
@@ -10462,11 +10501,12 @@ paths:
                       properties:
                         id:
                           type: string
+                          description: "Charge ID (ch_xxx) or Invoice ID (in_xxx)"
                           example: "ch_1234567890abcdefghijklmn"
                         amount:
-                          type: integer
-                          description: "Amount in cents"
-                          example: 5000
+                          type: number
+                          description: "Final amount charged in USD dollars (after any discount)"
+                          example: 45
                         currency:
                           type: string
                           example: "usd"
@@ -10488,7 +10528,9 @@ paths:
                         receipt_url:
                           type: string
                           format: uri
-                          example: "https://pay.stripe.com/receipts/xxxxx"
+                          nullable: true
+                          description: "Stripe-hosted invoice PDF URL"
+                          example: "https://pay.stripe.com/receipts/invoices/xxxxx"
                         payment_method:
                           type: object
                           nullable: true
@@ -10503,9 +10545,19 @@ paths:
                           type: boolean
                           example: false
                         amount_refunded:
-                          type: integer
+                          type: number
                           description: "Amount refunded in cents"
                           example: 0
+                        invoice_id:
+                          type: string
+                          nullable: true
+                          description: "Stripe Invoice ID — present for coupon-based charges"
+                          example: "in_1234567890abcdefghijklmn"
+                        discount_applied:
+                          type: string
+                          nullable: true
+                          description: "Promotion Code string applied at charge time (e.g. '10OFF')"
+                          example: "10OFF"
                   has_more:
                     type: boolean
                     description: "Whether more results exist"
@@ -10519,17 +10571,33 @@ paths:
                     status: "success"
                     transactions:
                       - id: "ch_1234567890abcdefghijklmn"
-                        amount: 5000
+                        amount: 45
                         currency: "usd"
                         status: "succeeded"
                         description: "Campaign postcard printing"
                         created: "2025-02-11T10:30:00.000Z"
-                        receipt_url: "https://pay.stripe.com/receipts/xxxxx"
+                        receipt_url: "https://pay.stripe.com/receipts/invoices/xxxxx"
                         payment_method:
                           brand: "visa"
                           last4: "4242"
                         refunded: false
                         amount_refunded: 0
+                        invoice_id: "in_1234567890abcdefghijklmn"
+                        discount_applied: "10OFF"
+                      - id: "ch_abcdefghijklmn1234567890"
+                        amount: 50
+                        currency: "usd"
+                        status: "succeeded"
+                        description: "Test charge for campaign"
+                        created: "2025-02-10T08:00:00.000Z"
+                        receipt_url: "https://pay.stripe.com/receipts/invoices/yyyyy"
+                        payment_method:
+                          brand: "visa"
+                          last4: "4242"
+                        refunded: false
+                        amount_refunded: 0
+                        invoice_id: null
+                        discount_applied: null
                     has_more: true
                     processingTimeMs: 178
                 noHistory:
@@ -10555,6 +10623,141 @@ paths:
                   value:
                     error: "FORBIDDEN"
                     message: "Only ADMIN users can view billing history"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /validateCouponCode:
+    post:
+      tags:
+        - Billing
+      summary: Validate a coupon code and preview discount (ADMIN only)
+      description: |
+        Validates a Stripe Promotion Code and returns discount details without charging anything.
+        Use this before `chargePaymentMethod` to show the user what discount they will receive.
+
+        **Features:**
+        - ✅ ADMIN only
+        - ✅ Validates promotion code against Stripe (active, not expired, within limits)
+        - ✅ Returns human-readable discount label ("10% OFF" or "$5.00 discount")
+        - ✅ Returns original and discounted amounts
+        - ✅ Does NOT create any charge or invoice
+
+        **Business Rules:**
+        - Only ADMIN users can validate coupon codes
+        - Coupon must be active and within its redemption limit
+        - `amount` is in USD dollars (e.g. 100 = $100.00)
+
+        **Authentication:** Required (JWT token)
+
+        **Authorization:** ADMIN only
+      operationId: validateCouponCode
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - coupon_code
+                - amount
+              properties:
+                coupon_code:
+                  type: string
+                  description: "Stripe Promotion Code string (user-facing, e.g. '10OFF')"
+                  example: "10OFF"
+                amount:
+                  type: number
+                  description: "Original charge amount in USD dollars (e.g. 100 = $100.00)"
+                  minimum: 0.01
+                  example: 100
+                isTestMode:
+                  type: boolean
+                  description: "If true, use Stripe test keys; if false or not provided, use production keys"
+                  example: true
+                  default: false
+      responses:
+        "200":
+          description: Coupon code is valid
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: "success"
+                  message:
+                    type: string
+                    example: "Coupon code is valid"
+                  discount:
+                    type: string
+                    description: "Human-readable discount label"
+                    example: "10% OFF"
+                  initial_amount:
+                    type: number
+                    description: "Original amount in USD dollars"
+                    example: 100
+                  discounted_amount:
+                    type: number
+                    description: "Final amount after discount in USD dollars"
+                    example: 90
+              examples:
+                percentOff:
+                  value:
+                    status: "success"
+                    message: "Coupon code is valid"
+                    discount: "10% OFF"
+                    initial_amount: 100
+                    discounted_amount: 90
+                fixedOff:
+                  value:
+                    status: "success"
+                    message: "Coupon code is valid"
+                    discount: "$5.00 discount"
+                    initial_amount: 100
+                    discounted_amount: 95
+        "400":
+          description: Invalid or expired coupon code
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              examples:
+                invalidCoupon:
+                  value:
+                    error: "INVALID_COUPON"
+                    message: "The coupon code is invalid, inactive, or has expired"
+                couponExpired:
+                  value:
+                    error: "COUPON_EXPIRED"
+                    message: "The coupon code has expired or reached its maximum redemption limit"
+                invalidInput:
+                  value:
+                    error: "INVALID_INPUT"
+                    message: "coupon_code is required and must be a string"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Forbidden - not ADMIN
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              examples:
+                notAdmin:
+                  value:
+                    error: "FORBIDDEN"
+                    message: "Only ADMIN users can validate coupon codes"
         "500":
           description: Internal server error
           content:
