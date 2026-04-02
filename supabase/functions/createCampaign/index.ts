@@ -751,23 +751,22 @@ async function handleStep4(supabase: any, req: Request, body: any, campaign_id: 
 
   if (data.qr_url) {
     try {
-      // Get Linkly credentials from request headers
-      const linklyApiKey = req.headers.get("x-linkly-api-key");
-      const linklyWorkspaceId = req.headers.get("x-linkly-workspace-id");
+      const linklyApiKey = Deno.env.get("LINKLY_API_KEY");
+      const linklyWorkspaceId = Deno.env.get("LINKLY_WORKSPACE_ID");
 
       if (!linklyApiKey) {
         return errorResponse(
           "MISSING_LINKLY_API_KEY",
-          "x-linkly-api-key header is required when qr_url is provided",
-          400
+          "LINKLY_API_KEY environment variable is not set",
+          500
         );
       }
 
       if (!linklyWorkspaceId) {
         return errorResponse(
           "MISSING_LINKLY_WORKSPACE_ID",
-          "x-linkly-workspace-id header is required when qr_url is provided",
-          400
+          "LINKLY_WORKSPACE_ID environment variable is not set",
+          500
         );
       }
 

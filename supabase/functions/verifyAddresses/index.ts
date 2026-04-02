@@ -256,13 +256,12 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Get PostGrid API key from headers
-    const postgridApiKey = req.headers.get("x-postgrid-api-key");
+    const postgridApiKey = Deno.env.get("POSTGRID_API_KEY");
     if (!postgridApiKey) {
       return errorResponse(
         "MISSING_API_KEY",
-        "PostGrid API key is required in x-postgrid-api-key header",
-        400,
+        "POSTGRID_API_KEY environment variable is not set",
+        500,
       );
     }
 

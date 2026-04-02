@@ -115,15 +115,14 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Get Linkly credentials from headers
-    const linklyApiKey = req.headers.get("x-linkly-api-key");
-    const linklyWorkspaceId = req.headers.get("x-linkly-workspace-id");
+    const linklyApiKey = Deno.env.get("LINKLY_API_KEY");
+    const linklyWorkspaceId = Deno.env.get("LINKLY_WORKSPACE_ID");
 
     if (!linklyApiKey || !linklyWorkspaceId) {
       return errorResponse(
         "MISSING_CREDENTIALS",
-        "Linkly credentials required in headers: x-linkly-api-key, x-linkly-workspace-id",
-        400
+        "LINKLY_API_KEY or LINKLY_WORKSPACE_ID environment variables are not set",
+        500
       );
     }
 

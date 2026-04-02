@@ -333,8 +333,7 @@ Deno.serve(async (req) => {
     // Auto-determine manual_search based on campaign_id presence
     const isManualSearch = !campaign_id; // true if no campaign_id, false if campaign_id provided
 
-    // Get optional Google API key from headers
-    const googleApiKey = req.headers.get("x-google-api-key");
+    const googleApiKey = Deno.env.get("GOOGLE_MAPS_API_KEY");
 
     // Create Supabase client
     const supabase = createSupabaseClient();

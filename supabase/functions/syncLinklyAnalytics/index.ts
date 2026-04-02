@@ -29,11 +29,8 @@ Deno.serve(async (req) => {
     // Create Supabase client
     const supabase = createSupabaseClient();
 
-    // Get Linkly credentials from headers or environment
-    const linklyApiKey = req.headers.get("x-linkly-api-key") ||
-      Deno.env.get("LINKLY_API_KEY");
-    const linklyWorkspaceId = req.headers.get("x-linkly-workspace-id") ||
-      Deno.env.get("LINKLY_WORKSPACE_ID");
+    const linklyApiKey = Deno.env.get("LINKLY_API_KEY");
+    const linklyWorkspaceId = Deno.env.get("LINKLY_WORKSPACE_ID");
     const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
 
     if (!linklyApiKey || !linklyWorkspaceId) {

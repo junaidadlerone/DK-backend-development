@@ -1,0 +1,171 @@
+================================================================================
+DK+ BACKEND — DEPLOYMENT INSTRUCTIONS
+Last updated: 2026-04-02
+================================================================================
+
+This file covers everything needed to deploy the backend to PRODUCTION.
+All changes below are already code-complete. These are deployment-only steps.
+
+--------------------------------------------------------------------------------
+ENVIRONMENTS
+--------------------------------------------------------------------------------
+
+  Dev  Supabase project ref : xnflihspegizweqidvow
+  Prod Supabase project ref : iywivotqnphrjijztxtu
+  GCP  project              : doorknockerplus
+
+  Dev  env file  : supabase/functions/dev.env
+  Prod env file  : supabase/functions/prod.env
+
+--------------------------------------------------------------------------------
+SECTION 1 — DEPLOY SUPABASE EDGE FUNCTIONS TO PROD
+--------------------------------------------------------------------------------
+
+Prerequisites:
+  - Supabase CLI installed and authenticated
+  - Run from repo root: dk+_backend/
+
+Command:
+  supabase functions deploy --project-ref iywivotqnphrjijztxtu --no-verify-jwt
+
+This deploys ALL 100+ edge functions with JWT verification disabled (matching
+how dev is configured). Run this any time edge function code changes.
+
+--------------------------------------------------------------------------------
+SECTION 2 — PROD SUPABASE SECRETS (already set, re-run if rotated)
+--------------------------------------------------------------------------------
+
+These secrets are already set on the prod project. Re-run this command only
+if any key is rotated or a new env var is added.
+
+  supabase secrets set \
+    POSTGRID_API_KEY=live_sk_5kb1w3DcuD7ZgyNAgsanDG \
+    POSTGRID_POSTCARD_API_KEY=live_sk_kfbKowbfa6iSwyD5r3HJwS \
+    "LINKLY_API_KEY=O/NiIrgtD2R73JON9UlO7w==" \
+    LINKLY_WORKSPACE_ID=360047 \
+    GOOGLE_MAPS_API_KEY=AIzaSyBJqgwpAdKlQG706WGtz-gOHfI7pC54xzg \
+    --project-ref iywivotqnphrjijztxtu
+
+To verify secrets are set:
+  supabase secrets list --project-ref iywivotqnphrjijztxtu
+
+Already-set secrets on prod (set by Supabase automatically or previously):
+  SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY, SUPABASE_DB_URL,
+  STRIPE_SECRET_KEY, STRIPE_TEST_SECRET_KEY, STRIPE_WEBHOOK_SECRET,
+  STRIPE_TEST_WEBHOOK_SECRET, SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, SMTP_FROM
+
+--------------------------------------------------------------------------------
+SECTION 3 — DEPLOY PROD GCP WEBSOCKET SERVICES
+--------------------------------------------------------------------------------
+
+These are 3 Node.js Cloud Run services (WebSocket servers).
+Source code is in: supabase/functions/WebSocket/
+
+Get the prod Supabase service_role key first:
+  supabase projects api-keys --project-ref iywivotqnphrjijztxtu
+  (copy the "service_role" value — referred to as PROD_SVC_KEY below)
+
+--- 3a. addressverification (us-central1) ---
+
+  gcloud run deploy addressverification \
+    --source supabase/functions/WebSocket/addressverification \
+    --project doorknockerplus \
+    --region us-central1 \
+    --allow-unauthenticated \
+    --set-env-vars "SUPABASE_SERVICE_ROLE_KEY=<PROD_SVC_KEY>,POSTGRID_API_KEY=live_sk_5kb1w3DcuD7ZgyNAgsanDG" \
+    --quiet
+
+--- 3b. findaddresses (europe-west1) ---
+
+  gcloud run deploy findaddresses \
+    --source supabase/functions/WebSocket/findaddresses \
+    --project doorknockerplus \
+    --region europe-west1 \
+    --allow-unauthenticated \
+    --set-env-vars "SUPABASE_SERVICE_ROLE_KEY=<PROD_SVC_KEY>" \
+    --quiet
+
+--- 3c. postcardsendingsocket (europe-west1) ---
+
+  gcloud run deploy postcardsendingsocket \
+    --source supabase/functions/WebSocket/postcardsendingsocket \
+    --project doorknockerplus \
+    --region europe-west1 \
+    --allow-unauthenticated \
+    --set-env-vars "SUPABASE_SERVICE_ROLE_KEY=<PROD_SVC_KEY>,POSTGRID_POSTCARD_API_KEY=live_sk_kfbKowbfa6iSwyD5r3HJwS" \
+    --quiet
+
+--------------------------------------------------------------------------------
+SECTION 4 — DEPLOY DEV GCP WEBSOCKET SERVICES (for reference)
+--------------------------------------------------------------------------------
+
+Already deployed. Re-run if dev socket code changes.
+
+Get dev service_role key:
+  supabase projects api-keys --project-ref xnflihspegizweqidvow
+
+  gcloud run deploy address-verification-test \
+    --source supabase/functions/WebSocket/address-verification-test \
+    --project doorknockerplus --region europe-west1 --allow-unauthenticated \
+    --set-env-vars "SUPABASE_SERVICE_ROLE_KEY=<DEV_SVC_KEY>,POSTGRID_API_KEY=test_sk_oLzPZuT94GFgVEkU7UmJVg" \
+    --quiet
+
+  gcloud run deploy findadresses-test \
+    --source supabase/functions/WebSocket/findadresses-test \
+    --project doorknockerplus --region europe-west1 --allow-unauthenticated \
+    --set-env-vars "SUPABASE_SERVICE_ROLE_KEY=<DEV_SVC_KEY>" \
+    --quiet
+
+  gcloud run deploy find-addresses-openmaps \
+    --source supabase/functions/WebSocket/find-addresses-openmaps \
+    --project doorknockerplus --region us-south1 --allow-unauthenticated \
+    --set-env-vars "SUPABASE_SERVICE_ROLE_KEY=<DEV_SVC_KEY>" \
+    --quiet
+
+  gcloud run deploy postcardsendingsocket-test \
+    --source supabase/functions/WebSocket/postcardsendingsocket-test \
+    --project doorknockerplus --region europe-west1 --allow-unauthenticated \
+    --set-env-vars "SUPABASE_SERVICE_ROLE_KEY=<DEV_SVC_KEY>,POSTGRID_POSTCARD_API_KEY=test_sk_7oVoDY45m5aPpjKmMZJxz3" \
+    --quiet
+
+--------------------------------------------------------------------------------
+SECTION 5 — GCP SERVICE URLS (for front-end env files)
+--------------------------------------------------------------------------------
+
+DEV (dev.env):
+  VITE_FIND_ADDRESSES_WEBSOCKET_URL     = https://findadresses-test-331293375800.europe-west1.run.app
+  VITE_VERIFY_ADDRESSES_WEBSOCKET_URL   = https://address-verification-test-331293375800.europe-west1.run.app
+  VITE_POSTCARD_SENDING_WEBSOCKET_URL   = https://postcardsendingsocket-test-331293375800.europe-west1.run.app
+
+PROD (prod.env):
+  VITE_FIND_ADDRESSES_WEBSOCKET_URL     = https://findaddresses-331293375800.europe-west1.run.app
+  VITE_VERIFY_ADDRESSES_WEBSOCKET_URL   = https://addressverification-331293375800.us-central1.run.app
+  VITE_POSTCARD_SENDING_WEBSOCKET_URL   = https://postcardsendingsocket-331293375800.europe-west1.run.app
+
+--------------------------------------------------------------------------------
+SECTION 6 — WHAT WAS CHANGED (security hardening, April 2026)
+--------------------------------------------------------------------------------
+
+These changes removed all API keys from front-end request bodies/headers/messages
+so secrets are only held server-side.
+
+Edge Functions (supabase/functions/) — keys moved from request headers to env vars:
+  - verifyAddresses       : x-postgrid-api-key   → POSTGRID_API_KEY
+  - createCampaign        : x-linkly-api-key/id  → LINKLY_API_KEY / LINKLY_WORKSPACE_ID
+  - linkQRCodeToCampaign  : x-linkly-api-key/id  → LINKLY_API_KEY / LINKLY_WORKSPACE_ID
+  - getAnalyticsPageData  : x-linkly-api-key/id  → LINKLY_API_KEY / LINKLY_WORKSPACE_ID
+  - syncLinklyAnalytics   : x-linkly-api-key/id  → LINKLY_API_KEY / LINKLY_WORKSPACE_ID
+  - getAddressesFromZone  : x-google-api-key      → GOOGLE_MAPS_API_KEY
+
+WebSocket Services — keys moved from WS message body to process.env:
+  - addressverification       : postgrid_api_key + supabase_anon_key removed from message
+  - postcardsendingsocket     : postgrid_api_key removed from message; hardcoded anon key removed
+  - findaddresses             : hardcoded service_role key fallback removed
+  - address-verification-test : same as addressverification
+  - postcardsendingsocket-test: same as postcardsendingsocket
+  - find-addresses-openmaps   : hardcoded service_role key fallback removed
+  - findadresses-test         : hardcoded service_role key fallback removed
+
+================================================================================
+END OF INSTRUCTIONS
+================================================================================
