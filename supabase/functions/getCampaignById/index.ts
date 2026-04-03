@@ -136,6 +136,7 @@ Deno.serve(async (req) => {
         message: "Campaign fetched successfully",
         data: {
           ...campaign,
+          total_spent: (campaign.postcards_sent || 0) * 3,
           image_url,
           template_bundle_id,
           start_date: campaign.offer_data?.start_date || null,

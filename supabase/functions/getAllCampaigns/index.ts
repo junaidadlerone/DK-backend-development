@@ -117,9 +117,11 @@ Deno.serve(async (req) => {
     const referralIds = (campaigns || []).map(c => c.referral_id).filter(Boolean);
     const imageUrlMap = await getImageUrlsForReferrals(supabase, referralIds);
 
-    // Add image_url and timezone info to each campaign
+    // Add image_url, computed total_spent, and timezone info to each campaign
+    const COST_PER_POSTCARD = 3;
     const campaignsWithImages = (campaigns || []).map(campaign => ({
       ...campaign,
+      total_spent: (campaign.postcards_sent || 0) * COST_PER_POSTCARD,
       image_url: campaign.referral_id ? (imageUrlMap[campaign.referral_id] || "") : "",
       created_at_tz: enrichTimestamp(campaign.created_at, preferences.timezone),
       updated_at_tz: enrichTimestamp(campaign.updated_at, preferences.timezone)
