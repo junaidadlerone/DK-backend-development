@@ -10,7 +10,8 @@ import { createNotification, ROLES } from "../_shared/notifications.ts";
  * Updates both front and back templates in a bundle
  *
  * Business Rules:
- * - Requires bundle ID and PostGrid API key
+ * - Reads PostGrid API key from POSTGRID_API_KEY environment variable (Supabase secret)
+ * - Requires bundle ID
  * - Bundle must belong to user's organization (or be universal and user is ADMIN)
  * - Can update html_front, html_back, and/or description
  * - Updates PostGrid templates first, then database
@@ -18,7 +19,6 @@ import { createNotification, ROLES } from "../_shared/notifications.ts";
  *
  * Request body:
  * {
- *   "postgridApiKey": string (required),
  *   "template_bundle_id": string (required),
  *   "html_front": string (optional),
  *   "html_back": string (optional),
@@ -27,7 +27,6 @@ import { createNotification, ROLES } from "../_shared/notifications.ts";
  */
 
 interface RequestBody {
-  postgridApiKey: string;
   template_bundle_id: string;
   html_front?: string;
   html_back?: string;
@@ -84,21 +83,24 @@ Deno.serve(async (req) => {
       );
     }
 
-    const { postgridApiKey, template_bundle_id, html_front, html_back, description, postcardSize } = requestBody;
+    const { template_bundle_id, html_front, html_back, description, postcardSize } = requestBody;
+
+    // Read PostGrid API key from environment
+    const postgridApiKey = Deno.env.get("POSTGRID_POSTCARD_API_KEY");
+    if (!postgridApiKey) {
+      console.error("POSTGRID_POSTCARD_API_KEY environment variable is not set");
+      return errorResponse(
+        "CONFIGURATION_ERROR",
+        "PostGrid postcard API key is not configured",
+        500
+      );
+    }
 
     // Validate required fields
     if (!template_bundle_id || typeof template_bundle_id !== 'string') {
       return errorResponse(
         "INVALID_INPUT",
         "template_bundle_id is required and must be a string",
-        400
-      );
-    }
-
-    if (!postgridApiKey || typeof postgridApiKey !== 'string') {
-      return errorResponse(
-        "INVALID_INPUT",
-        "postgridApiKey is required and must be a string",
         400
       );
     }
