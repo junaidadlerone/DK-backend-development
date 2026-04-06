@@ -38,8 +38,8 @@ interface OnboardingRequest {
     };
   };
   // Step 4 fields
-  team_member_ids?: string[]; // Existing user IDs to grant access to this org
-  invite_emails?: string[];   // Email addresses to invite as new users
+  team_member_ids?: { id: string; role?: "ADMIN" | "MARKETER" | "TECHNICIAN" }[]; // Existing user IDs to grant access to this org
+  invite_emails?: { email: string; role?: "ADMIN" | "MARKETER" | "TECHNICIAN" }[]; // Email addresses to invite as new users
 }
 
 Deno.serve(async (req) => {
@@ -331,17 +331,21 @@ Deno.serve(async (req) => {
       const existingMembers: any[] = org.organization_members || [];
       const newMembers: any[] = [];
 
-      // Add existing users by ID (unchanged behaviour)
+      // Add existing users by ID
       if (team_member_ids && team_member_ids.length > 0) {
+        const ids = team_member_ids.map(t => t.id);
         const { data: memberProfiles } = await supabase
           .from("profiles")
           .select("id, role")
-          .in("id", team_member_ids);
+          .in("id", ids);
 
         for (const mp of memberProfiles || []) {
           const alreadyMember = existingMembers.some((m: any) => m?.member_uid === mp.id);
           if (!alreadyMember) {
-            newMembers.push({ member_uid: mp.id, member_role: mp.role });
+            // Use caller-specified role if provided, otherwise keep the user's existing role
+            const overrideEntry = team_member_ids.find(t => t.id === mp.id);
+            const assignedRole = overrideEntry?.role || mp.role;
+            newMembers.push({ member_uid: mp.id, member_role: assignedRole });
           }
         }
       }
@@ -351,12 +355,15 @@ Deno.serve(async (req) => {
 
       // Invite new users by email
       if (invite_emails && invite_emails.length > 0) {
-        for (const email of invite_emails) {
+        for (const invite of invite_emails) {
+          const email = invite.email;
+          const role = invite.role || "TECHNICIAN";
+
           try {
             // Create user and send invite email via Supabase Auth admin
             const { data: inviteData, error: inviteError } = await supabase.auth.admin.inviteUserByEmail(
               email,
-              { data: { role: "TECHNICIAN" } }
+              { data: { role } }
             );
 
             if (inviteError || !inviteData?.user) {
@@ -369,7 +376,7 @@ Deno.serve(async (req) => {
             // Create the profile row for the invited user
             await supabase.from("profiles").upsert({
               id: newUserId,
-              role: "TECHNICIAN",
+              role,
               full_name: null,
               onboarding: true,
               is_super_admin: false,
@@ -382,7 +389,7 @@ Deno.serve(async (req) => {
             // Add to the org being onboarded
             const alreadyInNewOrg = existingMembers.some((m: any) => m?.member_uid === newUserId);
             if (!alreadyInNewOrg) {
-              newMembers.push({ member_uid: newUserId, member_role: "TECHNICIAN" });
+              newMembers.push({ member_uid: newUserId, member_role: role });
             }
 
             // Also add to caller's main org if it differs from the org being onboarded
@@ -400,7 +407,7 @@ Deno.serve(async (req) => {
                   await supabase
                     .from("organizations")
                     .update({
-                      organization_members: [...mainMembers, { member_uid: newUserId, member_role: "TECHNICIAN" }],
+                      organization_members: [...mainMembers, { member_uid: newUserId, member_role: role }],
                       updated_at: new Date().toISOString(),
                     })
                     .eq("id", callerMainOrgId);
