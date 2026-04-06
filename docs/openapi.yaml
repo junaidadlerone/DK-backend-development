@@ -12677,13 +12677,14 @@ paths:
 
         ## Step 4: Team Members
 
-        Assign existing users (by their profile IDs) to your organization.
+        Assign existing users by ID and/or invite new users by email. Both fields are optional and can be combined.
 
         **Request:**
         ```json
         {
           "step": 4,
-          "team_member_ids": ["uuid-1", "uuid-2"]
+          "team_member_ids": ["uuid-1", "uuid-2"],
+          "invite_emails": ["alice@example.com", "bob@example.com"]
         }
         ```
 
@@ -12691,12 +12692,18 @@ paths:
         - `step`: Must be 4
 
         **Optional Fields:**
-        - `team_member_ids`: Array of profile UUIDs to add as organization members. Pass an empty array or omit to skip adding members.
+        - `team_member_ids`: Array of existing profile UUIDs to add as organization members.
+        - `invite_emails`: Array of email addresses to invite as new TECHNICIAN users. Each email gets:
+          - A new Supabase Auth account created
+          - An invite email sent with a magic link to set their password
+          - A profile row created with role `TECHNICIAN`
+          - Membership in both the org being onboarded **and** the caller's primary organization
 
         **What Happens:**
-        - Looks up each profile ID to get the user's role
-        - Adds each user as a member of the organization (skips duplicates)
-        - Returns count of newly added members
+        - Existing users from `team_member_ids` are added (duplicates skipped)
+        - Each email in `invite_emails` triggers `auth.admin.inviteUserByEmail` — the invited user receives an email to set their password
+        - Invited users are added to the org being onboarded AND to the caller's main organization (if different)
+        - Returns counts of members added and invites sent; includes any per-email failures without aborting the whole request
         - **Onboarding complete!**
       operationId: completeOnboarding
       security:
@@ -12783,7 +12790,13 @@ paths:
                       items:
                         type: string
                         format: uuid
-                      description: Profile UUIDs of users to add as organization members
+                      description: Profile UUIDs of existing users to add as organization members
+                    invite_emails:
+                      type: array
+                      items:
+                        type: string
+                        format: email
+                      description: Email addresses of new users to invite. Each gets an account created and an invite email sent.
             examples:
               step1_business:
                 summary: Step 1 - Business Information
@@ -12818,12 +12831,15 @@ paths:
                       body:
                         name: "Roboto"
               step4_team_members:
-                summary: Step 4 - Team Members
+                summary: Step 4 - Existing members + email invites
                 value:
                   step: 4
                   team_member_ids:
                     - "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
                     - "b2c3d4e5-f6a7-8901-bcde-f12345678901"
+                  invite_emails:
+                    - "alice@example.com"
+                    - "bob@example.com"
           multipart/form-data:
             schema:
               type: object

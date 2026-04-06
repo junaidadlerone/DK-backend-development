@@ -39,6 +39,7 @@ interface OnboardingRequest {
   };
   // Step 4 fields
   team_member_ids?: string[]; // Existing user IDs to grant access to this org
+  invite_emails?: string[];   // Email addresses to invite as new users
 }
 
 Deno.serve(async (req) => {
@@ -311,8 +312,11 @@ Deno.serve(async (req) => {
       }
 
     } else if (step === 4) {
-      // Step 4: Assign team members to the organization
-      const { team_member_ids } = body;
+      // Step 4: Assign existing team members + invite new users by email
+      const { team_member_ids, invite_emails } = body;
+
+      // Get caller's primary org — invited users are also added there
+      const callerMainOrgId = await getUserOrganizationId(supabase, user.userId);
 
       const { data: org, error: orgError } = await supabase
         .from("organizations")
@@ -327,6 +331,7 @@ Deno.serve(async (req) => {
       const existingMembers: any[] = org.organization_members || [];
       const newMembers: any[] = [];
 
+      // Add existing users by ID (unchanged behaviour)
       if (team_member_ids && team_member_ids.length > 0) {
         const { data: memberProfiles } = await supabase
           .from("profiles")
@@ -341,9 +346,81 @@ Deno.serve(async (req) => {
         }
       }
 
+      const invitedEmails: string[] = [];
+      const failedInvites: { email: string; error: string }[] = [];
+
+      // Invite new users by email
+      if (invite_emails && invite_emails.length > 0) {
+        for (const email of invite_emails) {
+          try {
+            // Create user and send invite email via Supabase Auth admin
+            const { data: inviteData, error: inviteError } = await supabase.auth.admin.inviteUserByEmail(
+              email,
+              { data: { role: "TECHNICIAN" } }
+            );
+
+            if (inviteError || !inviteData?.user) {
+              failedInvites.push({ email, error: inviteError?.message || "Failed to invite user" });
+              continue;
+            }
+
+            const newUserId = inviteData.user.id;
+
+            // Create the profile row for the invited user
+            await supabase.from("profiles").upsert({
+              id: newUserId,
+              role: "TECHNICIAN",
+              full_name: null,
+              onboarding: true,
+              is_super_admin: false,
+              multi_org_enabled: false,
+              active_organization_id: callerMainOrgId,
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            });
+
+            // Add to the org being onboarded
+            const alreadyInNewOrg = existingMembers.some((m: any) => m?.member_uid === newUserId);
+            if (!alreadyInNewOrg) {
+              newMembers.push({ member_uid: newUserId, member_role: "TECHNICIAN" });
+            }
+
+            // Also add to caller's main org if it differs from the org being onboarded
+            if (callerMainOrgId && callerMainOrgId !== organizationId) {
+              const { data: mainOrg } = await supabase
+                .from("organizations")
+                .select("organization_members")
+                .eq("id", callerMainOrgId)
+                .single();
+
+              if (mainOrg) {
+                const mainMembers: any[] = mainOrg.organization_members || [];
+                const alreadyInMainOrg = mainMembers.some((m: any) => m?.member_uid === newUserId);
+                if (!alreadyInMainOrg) {
+                  await supabase
+                    .from("organizations")
+                    .update({
+                      organization_members: [...mainMembers, { member_uid: newUserId, member_role: "TECHNICIAN" }],
+                      updated_at: new Date().toISOString(),
+                    })
+                    .eq("id", callerMainOrgId);
+                }
+              }
+            }
+
+            invitedEmails.push(email);
+          } catch (e: any) {
+            failedInvites.push({ email, error: e.message });
+          }
+        }
+      }
+
       const { error: updateError } = await supabase
         .from("organizations")
-        .update({ organization_members: [...existingMembers, ...newMembers] })
+        .update({
+          organization_members: [...existingMembers, ...newMembers],
+          updated_at: new Date().toISOString(),
+        })
         .eq("id", organizationId);
 
       if (updateError) {
@@ -354,6 +431,9 @@ Deno.serve(async (req) => {
         status: "success",
         message: "Team members assigned to organization",
         members_added: newMembers.length,
+        invites_sent: invitedEmails.length,
+        invited_emails: invitedEmails,
+        failed_invites: failedInvites,
       });
 
     } else {
