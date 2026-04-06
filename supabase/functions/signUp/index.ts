@@ -123,6 +123,7 @@ Deno.serve(async (req) => {
         id: authData.user.id,
         role: assignedRole,
         full_name: fullName || null,
+        is_super_admin: true,
       });
 
     if (profileError) {
@@ -165,6 +166,12 @@ Deno.serve(async (req) => {
     }
 
     console.log("Organization created successfully, ID:", organization.id);
+
+    // Set active org on profile so first login resolves instantly
+    await supabase
+      .from("profiles")
+      .update({ active_organization_id: organization.id })
+      .eq("id", authData.user.id);
 
     // Create default app content for the new organization
     console.log("Creating default app content...");

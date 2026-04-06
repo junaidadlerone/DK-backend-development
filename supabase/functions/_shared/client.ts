@@ -11,6 +11,9 @@ export interface Profile {
   created_at: string;
   updated_at: string;
   onboarding?: boolean;
+  is_super_admin: boolean;
+  multi_org_enabled: boolean;
+  active_organization_id: string | null;
 }
 
 /**

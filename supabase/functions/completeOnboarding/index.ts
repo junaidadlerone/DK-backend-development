@@ -1,7 +1,7 @@
 import { corsResponse, errorResponse, successResponse } from "../_shared/response.ts";
 import { createSupabaseClient } from "../_shared/client.ts";
 import { getUserFromRequest } from "../_shared/history.ts";
-import { getUserOrganizationId } from "../_shared/organization.ts";
+import { getUserOrganizationId, validateOrganizationAccess } from "../_shared/organization.ts";
 import { decode } from "https://deno.land/std@0.168.0/encoding/base64.ts";
 
 /**
@@ -11,6 +11,7 @@ import { decode } from "https://deno.land/std@0.168.0/encoding/base64.ts";
 
 interface OnboardingRequest {
   step: number;
+  organization_id?: string; // Optional — targets a specific org (multi-org creation flow)
   // Step 1 fields
   business_name?: string;
   industry?: string;
@@ -36,6 +37,8 @@ interface OnboardingRequest {
       body: { name: string };
     };
   };
+  // Step 4 fields
+  team_member_ids?: string[]; // Existing user IDs to grant access to this org
 }
 
 Deno.serve(async (req) => {
@@ -57,11 +60,6 @@ Deno.serve(async (req) => {
       return errorResponse("UNAUTHORIZED", "Unable to authenticate user", 401);
     }
 
-    const organizationId = await getUserOrganizationId(supabase, user.userId);
-    if (!organizationId) {
-      return errorResponse("NO_ORGANIZATION", "User is not associated with any organization", 403);
-    }
-
     const contentType = req.headers.get("content-type") || "";
     let step: number;
     let body: OnboardingRequest = {} as OnboardingRequest;
@@ -70,11 +68,15 @@ Deno.serve(async (req) => {
       // Handle Multipart Form Data (Step 3 with File Upload)
       const formData = await req.formData();
       const stepStr = formData.get("step");
-      
+
       if (!stepStr) {
          return errorResponse("INVALID_INPUT", "Step is required", 400);
       }
       step = parseInt(stepStr.toString());
+
+      // Extract organization_id from FormData if provided
+      const orgIdFromForm = formData.get("organization_id");
+      if (orgIdFromForm) body.organization_id = orgIdFromForm.toString();
 
       if (step === 3) {
         // Extract Step 3 specific fields from FormData
@@ -115,13 +117,29 @@ Deno.serve(async (req) => {
       }
 
     } else {
-      // Handle JSON (Step 1, 2, and backward compat Step 3)
+      // Handle JSON (Steps 1, 2, 3, and 4)
       try {
         body = await req.json();
         step = body.step;
       } catch {
         return errorResponse("INVALID_INPUT", "Invalid JSON body", 400);
       }
+    }
+
+    // Resolve organization — use provided org_id if given, else fall back to active org
+    let organizationId: string | null = null;
+    if (body.organization_id) {
+      const hasAccess = await validateOrganizationAccess(supabase, body.organization_id, user.userId);
+      if (!hasAccess) {
+        return errorResponse("FORBIDDEN", "You do not have access to this organization", 403);
+      }
+      organizationId = body.organization_id;
+    } else {
+      organizationId = await getUserOrganizationId(supabase, user.userId);
+    }
+
+    if (!organizationId) {
+      return errorResponse("NO_ORGANIZATION", "User is not associated with any organization", 403);
     }
 
     // Check if onboarding entry exists, if not create it
@@ -292,8 +310,54 @@ Deno.serve(async (req) => {
           .eq("id", user.userId);
       }
 
+    } else if (step === 4) {
+      // Step 4: Assign team members to the organization
+      const { team_member_ids } = body;
+
+      const { data: org, error: orgError } = await supabase
+        .from("organizations")
+        .select("organization_members")
+        .eq("id", organizationId)
+        .single();
+
+      if (orgError || !org) {
+        return errorResponse("ORG_NOT_FOUND", "Organization not found", 404);
+      }
+
+      const existingMembers: any[] = org.organization_members || [];
+      const newMembers: any[] = [];
+
+      if (team_member_ids && team_member_ids.length > 0) {
+        const { data: memberProfiles } = await supabase
+          .from("profiles")
+          .select("id, role")
+          .in("id", team_member_ids);
+
+        for (const mp of memberProfiles || []) {
+          const alreadyMember = existingMembers.some((m: any) => m?.member_uid === mp.id);
+          if (!alreadyMember) {
+            newMembers.push({ member_uid: mp.id, member_role: mp.role });
+          }
+        }
+      }
+
+      const { error: updateError } = await supabase
+        .from("organizations")
+        .update({ organization_members: [...existingMembers, ...newMembers] })
+        .eq("id", organizationId);
+
+      if (updateError) {
+        return errorResponse("UPDATE_FAILED", "Failed to update team members", 500);
+      }
+
+      return successResponse({
+        status: "success",
+        message: "Team members assigned to organization",
+        members_added: newMembers.length,
+      });
+
     } else {
-      return errorResponse("INVALID_INPUT", "Invalid step number", 400);
+      return errorResponse("INVALID_INPUT", "Invalid step number. Must be 1, 2, 3, or 4", 400);
     }
 
     const processingTimeMs = Date.now() - startTime;

@@ -13,7 +13,23 @@ export async function getUserOrganizationId(
   userId: string
 ): Promise<string | null> {
   try {
-    // Fire owner-check and member-scan in parallel to avoid two sequential round-trips
+    // 1. Check active org pointer on profile
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("active_organization_id")
+      .eq("id", userId)
+      .maybeSingle();
+
+    if (profile?.active_organization_id) {
+      const hasAccess = await validateOrganizationAccess(
+        supabase,
+        profile.active_organization_id,
+        userId
+      );
+      if (hasAccess) return profile.active_organization_id;
+    }
+
+    // 2. Fallback: find org by ownership or membership
     const [
       { data: ownerOrg, error: ownerError },
       { data: memberOrgs, error: memberError }
@@ -30,34 +46,32 @@ export async function getUserOrganizationId(
         .not("organization_members", "is", null)
     ]);
 
-    // Prefer owner result (fastest path)
+    let foundOrgId: string | null = null;
+
     if (!ownerError && ownerOrg) {
-      return ownerOrg.id;
-    }
-
-    // Fall back to member scan
-    if (memberError || !memberOrgs || memberOrgs.length === 0) {
-      return null;
-    }
-
-    // Find organization where user is a member
-    for (const org of memberOrgs) {
-      const members = org.organization_members || [];
-
-      if (Array.isArray(members)) {
-        // Check if user is in organization_members array
-        // organization_members contains objects with member_uid and member_role
-        const isMember = members.some((member: any) =>
-          member && typeof member === 'object' && member.member_uid === userId
-        );
-
-        if (isMember) {
-          return org.id;
+      foundOrgId = ownerOrg.id;
+    } else if (!memberError && memberOrgs && memberOrgs.length > 0) {
+      for (const org of memberOrgs) {
+        const members = org.organization_members || [];
+        if (
+          Array.isArray(members) &&
+          members.some((m: any) => m && typeof m === "object" && m.member_uid === userId)
+        ) {
+          foundOrgId = org.id;
+          break;
         }
       }
     }
 
-    return null;
+    // 3. Persist so next call skips the scan
+    if (foundOrgId) {
+      await supabase
+        .from("profiles")
+        .update({ active_organization_id: foundOrgId })
+        .eq("id", userId);
+    }
+
+    return foundOrgId;
   } catch (error) {
     console.error("[getUserOrganizationId] Error:", error);
     return null;
@@ -108,5 +122,71 @@ export async function validateOrganizationAccess(
   } catch (error) {
     console.error("[validateOrganizationAccess] Error:", error);
     return false;
+  }
+}
+
+/**
+ * Returns all organizations accessible to the user (owned + member).
+ * Each entry includes the user's role and pending deletion status.
+ *
+ * @param supabase - Supabase client
+ * @param userId - User ID from JWT token
+ * @param activeOrgId - Currently active org id (used to mark is_active)
+ */
+export async function getUserOrganizations(
+  supabase: SupabaseClient,
+  userId: string,
+  activeOrgId?: string | null
+): Promise<Array<{
+  id: string;
+  business_name: string | null;
+  business_email: string | null;
+  role: "OWNER" | "ADMIN" | "MARKETER" | "TECHNICIAN";
+  is_active: boolean;
+  deletion_scheduled_at: string | null;
+}>> {
+  try {
+    const { data: orgs, error } = await supabase
+      .from("organizations")
+      .select("id, business_name, business_email, owner_id, organization_members, deletion_scheduled_at");
+
+    if (error || !orgs) return [];
+
+    const result = [];
+
+    for (const org of orgs) {
+      let role: "OWNER" | "ADMIN" | "MARKETER" | "TECHNICIAN" | null = null;
+
+      if (org.owner_id === userId) {
+        role = "OWNER";
+      } else {
+        const members = org.organization_members || [];
+        const member = Array.isArray(members)
+          ? members.find((m: any) => m?.member_uid === userId)
+          : null;
+        if (member) {
+          role = member.member_role;
+        }
+      }
+
+      if (!role) continue;
+
+      // Non-owners do not see orgs pending deletion
+      if (org.deletion_scheduled_at && role !== "OWNER") continue;
+
+      result.push({
+        id: org.id,
+        business_name: org.business_name ?? null,
+        business_email: org.business_email ?? null,
+        role,
+        is_active: org.id === activeOrgId,
+        deletion_scheduled_at: org.deletion_scheduled_at ?? null,
+      });
+    }
+
+    return result;
+  } catch (error) {
+    console.error("[getUserOrganizations] Error:", error);
+    return [];
   }
 }

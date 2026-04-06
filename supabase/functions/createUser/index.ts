@@ -9,7 +9,7 @@ import {
 import { getUserProfile } from "../_shared/history.ts";
 import type { SignUpResponse } from "../_shared/types.ts";
 import { createNotification, ROLES } from "../_shared/notifications.ts";
-import { getUserOrganizationId } from "../_shared/organization.ts";
+import { getUserOrganizationId, validateOrganizationAccess } from "../_shared/organization.ts";
 
 /**
  * Create User Edge Function
@@ -34,6 +34,7 @@ interface CreateUserRequest {
   email: string;
   fullName?: string;
   role: UserRole;
+  organization_id?: string; // Optional — target a specific org in multi-org mode
 }
 Deno.serve(async (req) => {
   // Handle CORS preflight requests
@@ -98,7 +99,7 @@ Deno.serve(async (req) => {
 
     // Parse request body
     const body = await req.json() as CreateUserRequest;
-    const { email, fullName, role } = body;
+    const { email, fullName, role, organization_id } = body;
 
     // Validate required fields (password removed)
     if (!email || !role) {
@@ -188,8 +189,19 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Get the admin's organization (works for both org owners and ADMIN members)
-    const adminOrgId = await getUserOrganizationId(supabase, user.id);
+    // Resolve target organization — use provided org_id if given, else fall back to active org
+    let adminOrgId: string | null = null;
+    if (organization_id) {
+      const hasAccess = await validateOrganizationAccess(supabase, organization_id, user.id);
+      if (!hasAccess) {
+        await supabase.from("profiles").delete().eq("id", authData.user.id);
+        await supabase.auth.admin.deleteUser(authData.user.id);
+        return errorResponse("FORBIDDEN", "You do not have access to this organization", 403);
+      }
+      adminOrgId = organization_id;
+    } else {
+      adminOrgId = await getUserOrganizationId(supabase, user.id);
+    }
 
     if (!adminOrgId) {
       // If organization not found, rollback user creation

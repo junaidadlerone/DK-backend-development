@@ -29,6 +29,7 @@ supabase/.env
 # Deno cache
 .deno/
 vendor/
+tasks/
 
 # ============================================
 # Node.js (if using any Node tools)

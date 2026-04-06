@@ -113,12 +113,23 @@ tags:
     description: Template Bundle APIs - Manage front and back PostGrid templates as a single unit
   - name: Email Notifications
     description: System-triggered email notifications for users (welcome, maintenance, etc.)
+  - name: Multi-Tenant Organization Management
+    description: |
+      Multi-org mode for agency owners (Super Admins). Enables creating and switching between
+      multiple organizations under one account, with full tenant isolation.
+
+      **New endpoints:** enableMultiOrg, disableMultiOrg, createOrganization, switchOrganization,
+      getUserOrganizations, deleteOrganization, recoverOrganization, transferOrganizationOwnership
+
+      **Modified endpoints:** login (org list in response), signUp (sets Super Admin flag),
+      completeOnboarding (org_id param + step 4), createUser (org_id param), getUser (org column for Super Admins)
 
 paths:
   /signUp:
     post:
       tags:
         - Authentication
+        - Multi-Tenant Organization Management
       summary: Register a new ADMIN user and create organization
       description: |
         Creates a new ADMIN user account with email and password, and automatically creates an associated organization.
@@ -243,6 +254,7 @@ paths:
     post:
       tags:
         - User Management
+        - Multi-Tenant Organization Management
       summary: Create user and send invitation email (ADMIN only)
       description: |
         Allows ADMIN users to create new ADMIN, MARKETER, or TECHNICIAN users via email invitation.
@@ -546,6 +558,7 @@ paths:
     post:
       tags:
         - Authentication
+        - Multi-Tenant Organization Management
       summary: Login existing user
       description: |
         Authenticates a user with email and password using Supabase Auth.
@@ -773,6 +786,7 @@ paths:
     get:
       tags:
         - User Management
+        - Multi-Tenant Organization Management
       summary: Fetch user profile and role
       description: |
         Retrieves the authenticated user's profile information including role, email, and full name.
@@ -12540,7 +12554,8 @@ paths:
     post:
       tags:
         - Version 2 APIs
-      summary: Complete onboarding steps (3-step process)
+        - Multi-Tenant Organization Management
+      summary: Complete onboarding steps (4-step process)
       description: |
         **Multi-step onboarding process for setting up organization details**
 
@@ -14171,6 +14186,672 @@ paths:
           $ref: "#/components/schemas/Error"
         "500":
           $ref: "#/components/schemas/Error"
+
+  # ─── Multi-Tenant Organization Management ──────────────────────────────────
+
+  /enableMultiOrg:
+    post:
+      tags:
+        - Multi-Tenant Organization Management
+      summary: Enable multi-org mode (Super Admin only)
+      description: |
+        Enables multi-org mode for the authenticated Super Admin, allowing them to create
+        and manage multiple organizations. Optionally saves intent questionnaire answers
+        for product analytics. Idempotent — safe to call if already enabled.
+      operationId: enableMultiOrg
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason_for_multiple_orgs:
+                  type: string
+                  nullable: true
+                  description: Why the user wants multiple orgs (intent question 1)
+                expected_org_count:
+                  type: string
+                  nullable: true
+                  description: How many orgs they expect to create (intent question 2)
+                teammate_overlap:
+                  type: string
+                  nullable: true
+                  description: Whether team members will overlap across orgs (intent question 3)
+            example:
+              reason_for_multiple_orgs: Managing multiple clients
+              expected_org_count: 3-5
+              teammate_overlap: Some overlap
+      responses:
+        "200":
+          description: Multi-org mode enabled (or was already enabled)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  message:
+                    type: string
+                  multi_org_enabled:
+                    type: boolean
+              example:
+                status: success
+                message: Multi-org mode enabled
+                multi_org_enabled: true
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Forbidden — caller is not a Super Admin
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: FORBIDDEN
+                message: Only Super Admins can enable multi-org mode
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /disableMultiOrg:
+    post:
+      tags:
+        - Multi-Tenant Organization Management
+      summary: Disable multi-org mode (Super Admin only)
+      description: |
+        Disables multi-org mode for the authenticated Super Admin.
+        **Blocked** if more than one active (non-deleted) org exists.
+        The user must delete extra orgs or transfer ownership before disabling.
+        Idempotent — safe to call if already disabled.
+      operationId: disableMultiOrg
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: Multi-org mode disabled (or was already disabled)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  message:
+                    type: string
+                  multi_org_enabled:
+                    type: boolean
+              example:
+                status: success
+                message: Multi-org mode disabled
+                multi_org_enabled: false
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Forbidden — caller is not a Super Admin
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Cleanup required — extra orgs must be deleted or transferred first
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  message:
+                    type: string
+                  extra_organizations:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                          format: uuid
+                        business_name:
+                          type: string
+              example:
+                error: CLEANUP_REQUIRED
+                message: You must delete or transfer ownership of extra organizations before disabling multi-org mode
+                extra_organizations:
+                  - id: 550e8400-e29b-41d4-a716-446655440001
+                    business_name: Acme Roofing
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /createOrganization:
+    post:
+      tags:
+        - Multi-Tenant Organization Management
+      summary: Create a new blank organization (Super Admin only)
+      description: |
+        Creates a new blank organization for an existing Super Admin user.
+        Requires `multi_org_enabled = true`.
+
+        **After calling this endpoint**, complete setup by calling:
+        1. `POST /completeOnboarding` steps 1–4 with the returned `organization_id`
+        2. `POST /switchOrganization` with the `organization_id` to auto-switch into it
+      operationId: createOrganization
+      security:
+        - BearerAuth: []
+      responses:
+        "201":
+          description: Organization created successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  message:
+                    type: string
+                  organization_id:
+                    type: string
+                    format: uuid
+              example:
+                status: success
+                message: Organization created. Complete onboarding steps 1–4 to finish setup.
+                organization_id: 550e8400-e29b-41d4-a716-446655440001
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Forbidden — not a Super Admin or multi-org not enabled
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              examples:
+                notSuperAdmin:
+                  summary: Not a Super Admin
+                  value:
+                    error: FORBIDDEN
+                    message: Only Super Admins can create organizations
+                multiOrgNotEnabled:
+                  summary: Multi-org not enabled
+                  value:
+                    error: MULTI_ORG_NOT_ENABLED
+                    message: Enable multi-org mode before creating additional organizations
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /switchOrganization:
+    post:
+      tags:
+        - Multi-Tenant Organization Management
+      summary: Switch active organization
+      description: |
+        Updates the user's active organization context. All subsequent API calls will
+        return data scoped to the new active org.
+
+        **Fail-closed:** If the switch fails for any reason, the user's active org is unchanged.
+        Switching to an org pending deletion is blocked.
+        All switches are logged to the `org_switch_log` audit table.
+      operationId: switchOrganization
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - organization_id
+              properties:
+                organization_id:
+                  type: string
+                  format: uuid
+                  description: The organization to switch into
+            example:
+              organization_id: 550e8400-e29b-41d4-a716-446655440001
+      responses:
+        "200":
+          description: Organization switched successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  switched:
+                    type: boolean
+                  organization:
+                    type: object
+                    description: Full organization object
+              example:
+                status: success
+                switched: true
+                organization:
+                  id: 550e8400-e29b-41d4-a716-446655440001
+                  business_name: Acme Roofing
+                  business_email: acme@example.com
+        "400":
+          description: Missing organization_id
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: MISSING_ORG_ID
+                message: organization_id is required
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: User does not have access to this organization
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: FORBIDDEN
+                message: You do not have access to this organization
+        "409":
+          description: Organization is pending deletion and cannot be switched to
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: ORG_PENDING_DELETION
+                message: This organization is scheduled for deletion and cannot be switched to
+        "500":
+          description: Switch failed — active org is unchanged
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: SWITCH_FAILED
+                message: Failed to switch organization. Your active org is unchanged.
+
+  /getUserOrganizations:
+    get:
+      tags:
+        - Multi-Tenant Organization Management
+      summary: Get all organizations accessible to the current user
+      description: |
+        Returns all organizations the authenticated user can access (owned + member).
+        Used to populate the top-bar org dropdown.
+
+        Each entry includes the user's role within that org, whether it is the currently
+        active org, and any pending deletion status.
+
+        Target response time: < 300ms.
+      operationId: getUserOrganizations
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: List of accessible organizations
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  organizations:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                          format: uuid
+                        business_name:
+                          type: string
+                          nullable: true
+                        business_email:
+                          type: string
+                          nullable: true
+                        role:
+                          type: string
+                          enum: [OWNER, ADMIN, MARKETER, TECHNICIAN]
+                        is_active:
+                          type: boolean
+                          description: Whether this is the currently active org
+                        deletion_scheduled_at:
+                          type: string
+                          format: date-time
+                          nullable: true
+              example:
+                status: success
+                organizations:
+                  - id: 550e8400-e29b-41d4-a716-446655440000
+                    business_name: My Agency
+                    business_email: agency@example.com
+                    role: OWNER
+                    is_active: true
+                    deletion_scheduled_at: null
+                  - id: 550e8400-e29b-41d4-a716-446655440001
+                    business_name: Acme Roofing
+                    business_email: acme@example.com
+                    role: OWNER
+                    is_active: false
+                    deletion_scheduled_at: null
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /deleteOrganization:
+    post:
+      tags:
+        - Multi-Tenant Organization Management
+      summary: Soft-delete an organization (owner only)
+      description: |
+        Schedules an organization for permanent deletion after a 30-day recovery window.
+        Requires a type-to-confirm safety check — `confirm_name` must exactly match
+        `organizations.business_name`.
+
+        The org becomes non-switchable and is shown as "Deleting in 30 days" in the dropdown.
+        Use `/recoverOrganization` within 30 days to cancel the deletion.
+
+        If the deleted org was the user's active org, they are automatically switched
+        to their next available org.
+      operationId: deleteOrganization
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - organization_id
+                - confirm_name
+              properties:
+                organization_id:
+                  type: string
+                  format: uuid
+                confirm_name:
+                  type: string
+                  description: Must exactly match the organization's business_name
+            example:
+              organization_id: 550e8400-e29b-41d4-a716-446655440001
+              confirm_name: Acme Roofing
+      responses:
+        "200":
+          description: Organization scheduled for deletion
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  message:
+                    type: string
+                  scheduled_deletion_at:
+                    type: string
+                    format: date-time
+                  recover_before:
+                    type: string
+                    format: date-time
+              example:
+                status: success
+                message: Organization scheduled for deletion
+                scheduled_deletion_at: "2026-05-06T12:00:00Z"
+                recover_before: "2026-05-06T12:00:00Z"
+        "400":
+          description: Confirmation name mismatch or missing fields
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: NAME_MISMATCH
+                message: Confirmation name does not match the organization name
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Only the organization owner can delete it
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: FORBIDDEN
+                message: Only the organization owner can delete it
+        "409":
+          description: Deletion already scheduled
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: ALREADY_SCHEDULED
+                message: Deletion is already scheduled for this organization
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /recoverOrganization:
+    post:
+      tags:
+        - Multi-Tenant Organization Management
+      summary: Cancel a scheduled org deletion (owner only)
+      description: |
+        Cancels a pending org deletion by clearing `deletion_scheduled_at`.
+        Must be called within the 30-day recovery window.
+        After recovery the org is fully active again and switchable.
+      operationId: recoverOrganization
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - organization_id
+              properties:
+                organization_id:
+                  type: string
+                  format: uuid
+            example:
+              organization_id: 550e8400-e29b-41d4-a716-446655440001
+      responses:
+        "200":
+          description: Organization recovered successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  recovered:
+                    type: boolean
+                  message:
+                    type: string
+              example:
+                status: success
+                recovered: true
+                message: Organization successfully recovered
+        "400":
+          description: Org is not scheduled for deletion
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: NOT_SCHEDULED
+                message: This organization is not scheduled for deletion
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Only the organization owner can recover it
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: FORBIDDEN
+                message: Only the organization owner can recover it
+        "410":
+          description: Recovery window has expired
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: RECOVERY_WINDOW_EXPIRED
+                message: The 30-day recovery window has passed. This organization cannot be recovered.
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /transferOrganizationOwnership:
+    post:
+      tags:
+        - Multi-Tenant Organization Management
+      summary: Transfer organization ownership to a member (owner only)
+      description: |
+        Transfers ownership of an organization to an existing member of that org.
+        The old owner is added back into `organization_members` with their current profile role.
+        Typically used before calling `/disableMultiOrg` when the user wants to keep
+        an org running under a different owner.
+      operationId: transferOrganizationOwnership
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - organization_id
+                - new_owner_id
+              properties:
+                organization_id:
+                  type: string
+                  format: uuid
+                new_owner_id:
+                  type: string
+                  format: uuid
+                  description: Must be an existing member of the organization
+            example:
+              organization_id: 550e8400-e29b-41d4-a716-446655440001
+              new_owner_id: 660e9400-e29b-41d4-a716-446655440999
+      responses:
+        "200":
+          description: Ownership transferred successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  transferred:
+                    type: boolean
+                  new_owner_id:
+                    type: string
+                    format: uuid
+              example:
+                status: success
+                transferred: true
+                new_owner_id: 660e9400-e29b-41d4-a716-446655440999
+        "400":
+          description: Invalid input or new owner is not a member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              examples:
+                sameOwner:
+                  summary: Transferring to self
+                  value:
+                    error: SAME_OWNER
+                    message: Cannot transfer ownership to yourself
+                notMember:
+                  summary: Target user is not a member
+                  value:
+                    error: NOT_A_MEMBER
+                    message: The specified user is not a member of this organization
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Only the current owner can transfer ownership
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: FORBIDDEN
+                message: Only the current owner can transfer ownership
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 
 components:
   schemas:

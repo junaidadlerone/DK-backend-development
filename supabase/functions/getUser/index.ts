@@ -6,6 +6,7 @@ import {
 } from "../_shared/client.ts";
 import { getUserPreferences } from "../_shared/preferences.ts";
 import { enrichTimestamp } from "../_shared/timezone.ts";
+import { getUserOrganizations } from "../_shared/organization.ts";
 
 /**
  * Get User Edge Function
@@ -112,18 +113,16 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Fetch user preferences for timezone enrichment
-    // We use the *authenticated* user's preferences for formatting (the viewer), 
-    // unless we want to show the target user's local time?
-    // Standard practice for "viewing a user" is usually showing "created_at" in viewer's timezone
-    // but here we might be mixing concepts. 
-    // Wait, preferences are per-user. If I am Admin viewing User B, I probably want to see User B's creation time in MY timezone (Admin's timezone) OR UTC?
-    // Or maybe User B's timezone?
-    // The requirement is "reflected in each API response... modified as per user's selected timezone".
-    // "User" here usually implies the *requesting* user (the client).
-    // So we fetch preferences for `authUser.id` (the viewer).
+    // Fetch preferences for timezone enrichment (viewer's timezone)
     const preferences = await getUserPreferences(supabase, authUser.id);
-  
+
+    // For Super Admins: include which orgs the target user belongs to
+    let userOrganizations = undefined;
+    const requesterProfile = await getUserProfile(authUser.id);
+    if (requesterProfile?.is_super_admin) {
+      userOrganizations = await getUserOrganizations(supabase, targetUserId);
+    }
+
     // Prepare success response with user data
     const response = {
       status: "success",
@@ -137,6 +136,7 @@ Deno.serve(async (req) => {
         is_verified: !!targetAuthUser.email_confirmed_at,
         onboarding: profile.onboarding,
         auth_type: targetAuthUser.app_metadata.provider,
+        ...(userOrganizations !== undefined && { organizations: userOrganizations }),
       },
     };
 
