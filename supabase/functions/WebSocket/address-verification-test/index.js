@@ -18,12 +18,12 @@ const VERIFICATION_API_URL = 'https://api.postgrid.com/v1/addver/verifications';
 // =============================================================================
 const isTestMode = true; // Set to true to inject mock data if no addresses are verified
 
-function getTestAddresses() {
+function getTestAddresses(count) {
   const addresses = [];
   const baseLat = 37.7749;
   const baseLong = -122.4194;
-  
-  for (let i = 0; i < 20; i++) {
+
+  for (let i = 0; i < count; i++) {
     // Generate a random street number (e.g. 100 to 9999)
     const randomStreetNum = Math.floor(Math.random() * 9900) + 100;
     
@@ -290,8 +290,10 @@ async function verifyAddresses(ws, zoneId, apiKey, supabaseAnonKey, showOnlyVeri
         let verifiedCount = 0;
 
         if (isTestMode) {
-            console.log('Test Mode: Skipping verification API, using hardcoded randomized addresses');
-            verifiedAddresses.push(...getTestAddresses());
+            const unverifiedCount = addresses.filter(addr => addr.verified !== true).length;
+            const testCount = unverifiedCount > 0 ? unverifiedCount : addresses.length || 20;
+            console.log(`Test Mode: ${unverifiedCount} unverified addresses found, generating ${testCount} test addresses`);
+            verifiedAddresses.push(...getTestAddresses(testCount));
             verifiedCount = verifiedAddresses.filter(addr => addr.verified === true).length;
             
             ws.send(JSON.stringify({

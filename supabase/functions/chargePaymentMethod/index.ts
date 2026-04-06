@@ -229,14 +229,13 @@ Deno.serve(async (req) => {
       }
       const finalAmountCents = amountInCents - discountAmountCents;
 
-      // 3. Create the Invoice first so we can explicitly attach the line item
-      //    to it. Creating the invoice item before the invoice risks Stripe
-      //    picking up stale pending items from previous voided invoices, which
-      //    results in a $0.00 PDF with no line items.
+      // 3. Create the Invoice first (no discounts field — coupons with
+      //    minimum_amount restrictions cannot be applied via the discounts param
+      //    on invoices that use invoice items; Stripe rejects it).
+      //    Instead we manually apply the discount as a negative invoice item.
       let invoice = await stripe.invoices.create({
         customer: org.stripe_customer_id,
         default_payment_method: payment_method_id,
-        discounts: [{ promotion_code: promoCode.id }],
         auto_advance: false,
         metadata: {
           organization_id: organizationId,
@@ -253,8 +252,7 @@ Deno.serve(async (req) => {
         },
       });
 
-      // 4. Attach the line item explicitly to this invoice by passing invoice.id.
-      //    This guarantees the PDF shows the correct description and unit price.
+      // 4. Attach the full-price line item
       await stripe.invoiceItems.create({
         customer: org.stripe_customer_id,
         invoice: invoice.id,
@@ -263,10 +261,21 @@ Deno.serve(async (req) => {
         description: description || `Charge for ${org.business_name || "organization"}`,
       });
 
-      // 5. Finalize the invoice — locks in line items, discount, and totals
+      // 5. Attach a negative line item for the discount so it appears on the PDF
+      if (discountAmountCents > 0) {
+        await stripe.invoiceItems.create({
+          customer: org.stripe_customer_id,
+          invoice: invoice.id,
+          amount: -discountAmountCents,
+          currency: currency.toLowerCase(),
+          description: `Discount: ${coupon_code}`,
+        });
+      }
+
+      // 6. Finalize the invoice — locks in line items, discount, and totals
       invoice = await stripe.invoices.finalizeInvoice(invoice.id);
 
-      // 6. Propagate metadata to the underlying PaymentIntent so that
+      // 7. Propagate metadata to the underlying PaymentIntent so that
       //    getBillingHistory can read coupon_applied from the charge's metadata
       if (invoice.payment_intent && typeof invoice.payment_intent === "string") {
         await stripe.paymentIntents.update(invoice.payment_intent, {
@@ -278,7 +287,7 @@ Deno.serve(async (req) => {
         });
       }
 
-      // 7. Pay the invoice using the provided payment method.
+      // 8. Pay the invoice using the provided payment method.
       //    Stripe may auto-pay the invoice during finalization when the customer
       //    has collection_method: 'charge_automatically' and a default PM set.
       //    In that case invoice.status is already 'paid' — skip the explicit pay call.
@@ -311,14 +320,14 @@ Deno.serve(async (req) => {
       const processingTimeMs = Date.now() - startTime;
 
       if (paidInvoice.status === "paid") {
-        // 8. Retrieve the underlying Stripe Charge for its receipt_url
+        // 9. Retrieve the underlying Stripe Charge for its receipt_url
         const chargeId = typeof paidInvoice.charge === "string"
           ? paidInvoice.charge
           : (paidInvoice.charge as any)?.id;
 
         const charge = chargeId ? await stripe.charges.retrieve(chargeId) : null;
 
-        // 9. Save to payment_history if campaign_id provided
+        // 10. Save to payment_history if campaign_id provided
         if (campaign_id) {
           await supabase.from("payment_history").insert({
             campaign_id,
@@ -331,7 +340,7 @@ Deno.serve(async (req) => {
           });
         }
 
-        // 10. Create notification for ADMIN users
+        // 11. Create notification for ADMIN users
         const last4 = paymentMethod.card?.last4 || "****";
         const amountInDollars = (finalAmountCents / 100).toFixed(2);
         const campaignText = campaign_name ? ` for campaign launch "${campaign_name}"` : "";

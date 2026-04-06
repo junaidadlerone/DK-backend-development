@@ -101,6 +101,15 @@ Deno.serve(async (req) => {
     // Fetch image_url from referral's gallery
     const image_url = await getImageUrlForReferral(supabase, campaign.referral_id);
 
+    // Compute total_spent from payment_history (reflects coupons)
+    const { data: paymentRows } = await supabase
+      .from("payment_history")
+      .select("amount_paid")
+      .eq("campaign_id", id);
+    const total_spent = paymentRows && paymentRows.length > 0
+      ? paymentRows.reduce((sum: number, r: any) => sum + Number(r.amount_paid), 0)
+      : (campaign.postcards_sent || 0) * 3;
+
     // Fetch user preferences
     const preferences = await getPreferences(supabase, user.userId);
 
@@ -136,7 +145,7 @@ Deno.serve(async (req) => {
         message: "Campaign fetched successfully",
         data: {
           ...campaign,
-          total_spent: (campaign.postcards_sent || 0) * 3,
+          total_spent,
           image_url,
           template_bundle_id,
           start_date: campaign.offer_data?.start_date || null,

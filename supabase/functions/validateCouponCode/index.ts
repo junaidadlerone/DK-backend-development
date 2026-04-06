@@ -109,8 +109,18 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Calculate discount
+    // Check minimum amount restriction on the promo code
     const amountInCents = Math.round(amount * 100);
+    if (promoCode.restrictions?.minimum_amount && amountInCents < promoCode.restrictions.minimum_amount) {
+      const minAmount = (promoCode.restrictions.minimum_amount / 100).toFixed(2);
+      return errorResponse(
+        "MINIMUM_AMOUNT_NOT_MET",
+        `This coupon requires a minimum order of $${minAmount}`,
+        400
+      );
+    }
+
+    // Calculate discount
     let discountAmountCents = 0;
     let discountLabel = "";
 

@@ -12559,10 +12559,11 @@ paths:
       description: |
         **Multi-step onboarding process for setting up organization details**
 
-        Complete setup of your organization through three distinct steps:
+        Complete setup of your organization through four distinct steps:
         - Step 1: Business information (name, industry, phone, website)
         - Step 2: Address information (country, street, city, state, zip)
         - Step 3: Branding (company logo upload and theme settings)
+        - Step 4: Team members (assign existing users to the organization)
 
         **File Upload (Step 3)**
         Step 3 supports `multipart/form-data` for direct file uploads.
@@ -12671,6 +12672,31 @@ paths:
         - Stores logo URL in organization
         - Saves theme preferences
         - Sets onboarding step 3 as complete
+
+        ---
+
+        ## Step 4: Team Members
+
+        Assign existing users (by their profile IDs) to your organization.
+
+        **Request:**
+        ```json
+        {
+          "step": 4,
+          "team_member_ids": ["uuid-1", "uuid-2"]
+        }
+        ```
+
+        **Required Fields:**
+        - `step`: Must be 4
+
+        **Optional Fields:**
+        - `team_member_ids`: Array of profile UUIDs to add as organization members. Pass an empty array or omit to skip adding members.
+
+        **What Happens:**
+        - Looks up each profile ID to get the user's role
+        - Adds each user as a member of the organization (skips duplicates)
+        - Returns count of newly added members
         - **Onboarding complete!**
       operationId: completeOnboarding
       security:
@@ -12746,6 +12772,18 @@ paths:
                               properties:
                                 name:
                                   type: string
+                - type: object
+                  required: [step]
+                  properties:
+                    step:
+                      type: integer
+                      enum: [4]
+                    team_member_ids:
+                      type: array
+                      items:
+                        type: string
+                        format: uuid
+                      description: Profile UUIDs of users to add as organization members
             examples:
               step1_business:
                 summary: Step 1 - Business Information
@@ -12779,6 +12817,13 @@ paths:
                         name: "Inter"
                       body:
                         name: "Roboto"
+              step4_team_members:
+                summary: Step 4 - Team Members
+                value:
+                  step: 4
+                  team_member_ids:
+                    - "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+                    - "b2c3d4e5-f6a7-8901-bcde-f12345678901"
           multipart/form-data:
             schema:
               type: object
