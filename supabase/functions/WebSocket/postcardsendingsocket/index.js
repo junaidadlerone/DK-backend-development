@@ -221,21 +221,18 @@ async function sendPostcard(addressObj, templates, businessData, offerData, post
     };
     const size = sizeMap[rawSize] || "6x4";
 
-const payload = {
-    to: {
-        addressLine1: addressObj.address,
-        firstName: "Current Resident",
-        countryCode: 'US'
-    },
-    size: size,
-    frontTemplate: templates.front_template_id,
-    backTemplate: templates.back_template_id,
-    description: offerData.offer_headline || "Campaign Postcard",
-    mergeVariables: {},
-    color: true,
-    //mailingClass: "first_class",        // "first_class" (default) or "standard_class" (slower, cheaper)
-    express: true             // ⚠️ Use this instead if you want 2-3 day express — NOT together with standard_class
-};
+    const payload = {
+        to: {
+            addressLine1: addressObj.address,
+            firstName: "Current Resident",
+            countryCode: 'US'
+        },
+        size: size,
+        frontTemplate: templates.front_template_id,
+        backTemplate: templates.back_template_id,
+        description: offerData.offer_headline || "Campaign Postcard",
+        mergeVariables: {} // Will set below
+    };
 
     // Construct mergeVariables explicitly
     // specific fields from businessData (excluding generic merge_variable object if present)
