@@ -116,12 +116,12 @@ Deno.serve(async (req) => {
     // Fetch preferences for timezone enrichment (viewer's timezone)
     const preferences = await getUserPreferences(supabase, authUser.id);
 
-    // For Super Admins: include which orgs the target user belongs to
-    let userOrganizations = undefined;
-    const requesterProfile = await getUserProfile(authUser.id);
-    if (requesterProfile?.is_super_admin) {
-      userOrganizations = await getUserOrganizations(supabase, targetUserId);
-    }
+    // Fetch orgs the target user can access (for multi-tenant dropdown)
+    const organizations = await getUserOrganizations(
+      supabase,
+      targetUserId,
+      profile.active_organization_id ?? undefined
+    );
 
     // Prepare success response with user data
     const response = {
@@ -136,7 +136,10 @@ Deno.serve(async (req) => {
         is_verified: !!targetAuthUser.email_confirmed_at,
         onboarding: profile.onboarding,
         auth_type: targetAuthUser.app_metadata.provider,
-        ...(userOrganizations !== undefined && { organizations: userOrganizations }),
+        is_super_admin: profile.is_super_admin || false,
+        multi_org_enabled: profile.multi_org_enabled || false,
+        active_organization_id: profile.active_organization_id || null,
+        organizations,
       },
     };
 
