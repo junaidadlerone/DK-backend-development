@@ -110,11 +110,12 @@ Deno.serve(async (req) => {
     // Fetch user preferences
     const preferences = await getPreferences(supabase, user.id);
 
-    // Enrich organization with timezone info
+    // Enrich organization with timezone info and agency flag
     if (organization) {
       organization = {
         ...organization,
         created_at_tz: enrichTimestamp(organization.created_at, preferences.timezone),
+        isAgencyAccount: organization.is_agency ?? true,
       };
     }
 

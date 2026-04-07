@@ -31,36 +31,28 @@ export async function getUserOrganizationId(
 
     // 2. Fallback: find org by ownership or membership
     const [
-      { data: ownerOrg, error: ownerError },
+      { data: ownerOrgs, error: ownerError },
       { data: memberOrgs, error: memberError }
     ] = await Promise.all([
       supabase
         .from("organizations")
         .select("id")
-        .eq("owner_id", userId)
-        .maybeSingle(),
+        .eq("owner_id", userId),
 
       supabase
         .from("organizations")
-        .select("id, organization_members")
-        .not("organization_members", "is", null)
+        .select("id")
+        .contains("organization_members", [{ member_uid: userId }])
     ]);
 
     let foundOrgId: string | null = null;
 
-    if (!ownerError && ownerOrg) {
-      foundOrgId = ownerOrg.id;
+    if (!ownerError && ownerOrgs && ownerOrgs.length > 0) {
+      // If multiple owned orgs found, pick the first one as fallback
+      foundOrgId = ownerOrgs[0].id;
     } else if (!memberError && memberOrgs && memberOrgs.length > 0) {
-      for (const org of memberOrgs) {
-        const members = org.organization_members || [];
-        if (
-          Array.isArray(members) &&
-          members.some((m: any) => m && typeof m === "object" && m.member_uid === userId)
-        ) {
-          foundOrgId = org.id;
-          break;
-        }
-      }
+      // If multiple member orgs found, pick the first one as fallback
+      foundOrgId = memberOrgs[0].id;
     }
 
     // 3. Persist so next call skips the scan
