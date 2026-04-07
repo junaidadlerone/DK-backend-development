@@ -1,0 +1,1 @@
+-- Migration applied directly to remote on 2026-02-24. Placeholder to sync local history.

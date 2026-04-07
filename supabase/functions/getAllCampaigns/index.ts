@@ -117,9 +117,26 @@ Deno.serve(async (req) => {
     const referralIds = (campaigns || []).map(c => c.referral_id).filter(Boolean);
     const imageUrlMap = await getImageUrlsForReferrals(supabase, referralIds);
 
-    // Add image_url and timezone info to each campaign
+    // Fetch payment_history totals for all campaigns on this page
+    const campaignIds = (campaigns || []).map(c => c.id);
+    const { data: paymentRows } = campaignIds.length > 0
+      ? await supabase
+          .from("payment_history")
+          .select("campaign_id, amount_paid")
+          .in("campaign_id", campaignIds)
+      : { data: [] };
+
+    const paymentTotals: Record<string, number> = {};
+    for (const row of (paymentRows || [])) {
+      paymentTotals[row.campaign_id] = (paymentTotals[row.campaign_id] || 0) + Number(row.amount_paid);
+    }
+
+    // Add image_url, computed total_spent, and timezone info to each campaign
     const campaignsWithImages = (campaigns || []).map(campaign => ({
       ...campaign,
+      total_spent: campaign.id in paymentTotals
+        ? paymentTotals[campaign.id]
+        : (campaign.postcards_sent || 0) * 3,
       image_url: campaign.referral_id ? (imageUrlMap[campaign.referral_id] || "") : "",
       created_at_tz: enrichTimestamp(campaign.created_at, preferences.timezone),
       updated_at_tz: enrichTimestamp(campaign.updated_at, preferences.timezone)

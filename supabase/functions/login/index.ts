@@ -1,9 +1,11 @@
 import { corsResponse, errorResponse, successResponse } from "../_shared/response.ts";
 import {
   createSupabaseAnonClient,
+  createSupabaseClient,
   getUserProfile,
   isValidEmail,
 } from "../_shared/client.ts";
+import { getUserOrganizations } from "../_shared/organization.ts";
 import type { LoginRequest, LoginResponse } from "../_shared/types.ts";
 
 /**
@@ -91,6 +93,14 @@ Deno.serve(async (req) => {
       );
     }
 
+    // Fetch all orgs the user can access for the org dropdown
+    const supabaseService = createSupabaseClient();
+    const organizations = await getUserOrganizations(
+      supabaseService,
+      authData.user.id,
+      profile.active_organization_id
+    );
+
     // Prepare success response
     const response: LoginResponse = {
       status: "success",
@@ -100,6 +110,10 @@ Deno.serve(async (req) => {
       expiresIn: authData.session.expires_in || 3600, // Default to 1 hour if not provided
       role: profile.role,
       onboarding: profile.onboarding || false,
+      is_super_admin: profile.is_super_admin || false,
+      multi_org_enabled: profile.multi_org_enabled || false,
+      active_organization_id: profile.active_organization_id || null,
+      organizations,
       user: {
         id: authData.user.id,
         email: authData.user.email!,

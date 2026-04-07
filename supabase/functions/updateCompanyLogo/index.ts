@@ -79,6 +79,15 @@ Deno.serve(async (req) => {
         );
       }
 
+      const maxSize = 25 * 1024 * 1024; // 25MB
+      if (logoFile.size > maxSize) {
+        return errorResponse(
+          "INVALID_INPUT",
+          `File "${logoFile.name}" exceeds 25MB size limit`,
+          400
+        );
+      }
+
       const fileName = `${organizationId}/logo_${Date.now()}_${logoFile.name}`;
       const { error: uploadError } = await supabase.storage
         .from("CompanyLogos")

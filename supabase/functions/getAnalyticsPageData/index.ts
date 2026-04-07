@@ -115,15 +115,14 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Get Linkly credentials from headers
-    const linklyApiKey = req.headers.get("x-linkly-api-key");
-    const linklyWorkspaceId = req.headers.get("x-linkly-workspace-id");
+    const linklyApiKey = Deno.env.get("LINKLY_API_KEY");
+    const linklyWorkspaceId = Deno.env.get("LINKLY_WORKSPACE_ID");
 
     if (!linklyApiKey || !linklyWorkspaceId) {
       return errorResponse(
         "MISSING_CREDENTIALS",
-        "Linkly credentials required in headers: x-linkly-api-key, x-linkly-workspace-id",
-        400
+        "LINKLY_API_KEY or LINKLY_WORKSPACE_ID environment variables are not set",
+        500
       );
     }
 
@@ -777,7 +776,10 @@ async function computeCampaignPerformanceAnalytics(
 }
 
 /**
- * Calculate Template Performance
+ * Calculate Template Bundle Performance
+ * Groups campaigns by their template bundle (front+back pair) instead of
+ * individual templates, so each entry in template_performance represents
+ * one bundle. The `template` field contains the bundle object.
  */
 async function calculateTemplatePerformance(
   supabase: any,
@@ -786,98 +788,164 @@ async function calculateTemplatePerformance(
   linklyDataMap: Map<string, Array<{y: number, t: string}>>
 ): Promise<any[]> {
 
-  // Collect all template IDs from campaigns
-  const templateIds = new Set<string>();
-  const postgridTemplateIds = new Set<string>();
+  if (campaigns.length === 0) return [];
 
-  for (const campaign of campaigns) {
-    if (campaign.front_template_id) postgridTemplateIds.add(campaign.front_template_id);
-    if (campaign.back_template_id) postgridTemplateIds.add(campaign.back_template_id);
+  // 1. Collect all postgrid template IDs used by campaigns
+  const postgridIds = new Set<string>();
+  for (const c of campaigns) {
+    if (c.front_template_id) postgridIds.add(c.front_template_id);
+    if (c.back_template_id) postgridIds.add(c.back_template_id);
+  }
+  if (postgridIds.size === 0) return [];
+
+  // 2. Resolve postgrid IDs → internal template UUIDs
+  const { data: templateRows } = await supabase
+    .from("templates")
+    .select("id, postgrid_template_id")
+    .in("postgrid_template_id", [...postgridIds]);
+
+  if (!templateRows || templateRows.length === 0) return [];
+
+  const postgridToUuid = new Map<string, string>();
+  for (const t of templateRows) {
+    postgridToUuid.set(t.postgrid_template_id, t.id);
   }
 
-  // Fetch templates (both organization and universal)
-  const { data: orgTemplates, error: orgTemplatesError } = await supabase
-    .from("templates")
-    .select("*")
+  // 3. Fetch all bundles for org with full front+back template data
+  const { data: bundles, error: bundlesError } = await supabase
+    .from("template_bundles")
+    .select(`
+      id, is_universal, organization_id, template_front_id, template_back_id, created_at, updated_at,
+      front:templates!template_front_id(*),
+      back:templates!template_back_id(*)
+    `)
     .or(`organization_id.eq.${organizationId},is_universal.eq.true`);
 
-  if (orgTemplatesError) {
-    console.error("Error fetching templates:", orgTemplatesError);
+  if (bundlesError || !bundles || bundles.length === 0) {
+    console.error("Error fetching template bundles:", bundlesError);
     return [];
   }
 
-  const allTemplates = orgTemplates || [];
-  const templatePerformanceList: any[] = [];
+  // 4. Build lookup: "frontUuid:backUuid" → bundle
+  const bundleByPair = new Map<string, any>();
+  for (const b of bundles) {
+    bundleByPair.set(`${b.template_front_id}:${b.template_back_id}`, b);
+  }
 
-  // Calculate performance for each template
-  for (const template of allTemplates) {
-    const templatePostgridId = template.postgrid_template_id;
-
-    // Find campaigns using this template
-    const campaignsUsingTemplate = campaigns.filter(c =>
-      c.front_template_id === templatePostgridId || c.back_template_id === templatePostgridId
-    );
-
-    if (campaignsUsingTemplate.length === 0) {
-      continue; // Skip templates not used in any campaign
+  // 5. Group campaigns by bundle
+  const campaignsByBundle = new Map<string, { bundle: any; campaigns: any[] }>();
+  for (const c of campaigns) {
+    const frontUuid = postgridToUuid.get(c.front_template_id);
+    const backUuid  = postgridToUuid.get(c.back_template_id);
+    if (!frontUuid || !backUuid) continue;
+    const bundle = bundleByPair.get(`${frontUuid}:${backUuid}`);
+    if (!bundle) continue;
+    if (!campaignsByBundle.has(bundle.id)) {
+      campaignsByBundle.set(bundle.id, { bundle, campaigns: [] });
     }
+    campaignsByBundle.get(bundle.id)!.campaigns.push(c);
+  }
 
-    // Calculate usage percentage (how many campaigns use this template)
+  // 6. Calculate metrics per bundle
+  const result: any[] = [];
+  const costPerLead   = 3;
+  const revenuePerLead = 1000;
+
+  for (const { bundle, campaigns: bundleCampaigns } of campaignsByBundle.values()) {
     const usagePercentage = campaigns.length > 0
-      ? (campaignsUsingTemplate.length / campaigns.length) * 100
+      ? (bundleCampaigns.length / campaigns.length) * 100
       : 0;
 
-    // Calculate performance metrics for campaigns using this template
     let totalPostcards = 0;
     let totalLeads = 0;
-
-    for (const campaign of campaignsUsingTemplate) {
-      totalPostcards += campaign.postcards_sent || 0;
-
-      // Get leads from Linkly data if available
-      const linklyTraffic = linklyDataMap.get(campaign.id);
+    for (const c of bundleCampaigns) {
+      totalPostcards += c.postcards_sent || 0;
+      const linklyTraffic = linklyDataMap.get(c.id);
       if (linklyTraffic && linklyTraffic.length > 0) {
-        const campaignLeads = linklyTraffic.reduce((sum, traffic) => sum + traffic.y, 0);
-        totalLeads += campaignLeads;
+        totalLeads += linklyTraffic.reduce((sum: number, t: any) => sum + t.y, 0);
       } else {
-        totalLeads += campaign.leads_gen || 0;
+        totalLeads += c.leads_gen || 0;
       }
     }
 
-    // Calculate performance percentage (conversion rate for this template)
     const performancePercentage = totalPostcards > 0
       ? (totalLeads / totalPostcards) * 100
       : 0;
 
-    // Calculate ROI
-    const costPerLead = 3;
-    const revenuePerLead = 1000;
-    const totalCost = totalPostcards * costPerLead;
+    const totalCost    = totalPostcards * costPerLead;
     const totalRevenue = totalLeads * revenuePerLead;
     const roi = totalCost > 0 ? ((totalRevenue - totalCost) / totalCost) * 100 : 0;
 
-    templatePerformanceList.push({
-      template: template,
+    // Bundle object — same shape as getAllTemplatesBundles response
+    const bundleObj = {
+      id:             bundle.id,
+      organization_id: bundle.organization_id,
+      isUniversal:    bundle.is_universal || false,
+      is_universal:   bundle.is_universal || false,
+      // Top-level fields the frontend expects (backward-compatible)
+      campaigns_used: bundleCampaigns.map((c: any) => c.id),
+      description:    (bundle.front?.description || bundle.back?.description || "").replace(/\s*(Front|Back)\s*$/i, "").trim(),
+      postcard_size:  bundle.front?.postcard_size || bundle.back?.postcard_size || "",
+      template_type:  "Bundle",
+      live:           bundle.front?.live ?? true,
+      deleted:        bundle.front?.deleted ?? false,
+      created_by:     bundle.front?.created_by || null,
+      front_template: bundle.front ? {
+        id:                   bundle.front.id,
+        postgrid_template_id: bundle.front.postgrid_template_id,
+        description:          bundle.front.description,
+        html:                 bundle.front.html,
+        templateType:         bundle.front.template_type,
+        postcardSize:         bundle.front.postcard_size,
+        isUniversal:          bundle.front.is_universal   || false,
+        isManualEdit:         bundle.front.is_manual_edit || false,
+        campaigns_used:       bundle.front.campaigns_used || [],
+        createdBy:            bundle.front.created_by,
+        live:                 bundle.front.live,
+        deleted:              bundle.front.deleted,
+        created_at:           bundle.front.created_at,
+        updated_at:           bundle.front.updated_at
+      } : null,
+      back_template: bundle.back ? {
+        id:                   bundle.back.id,
+        postgrid_template_id: bundle.back.postgrid_template_id,
+        description:          bundle.back.description,
+        html:                 bundle.back.html,
+        templateType:         bundle.back.template_type,
+        postcardSize:         bundle.back.postcard_size,
+        isUniversal:          bundle.back.is_universal   || false,
+        isManualEdit:         bundle.back.is_manual_edit || false,
+        campaigns_used:       bundle.back.campaigns_used || [],
+        createdBy:            bundle.back.created_by,
+        live:                 bundle.back.live,
+        deleted:              bundle.back.deleted,
+        created_at:           bundle.back.created_at,
+        updated_at:           bundle.back.updated_at
+      } : null,
+      created_at: bundle.created_at,
+      updated_at: bundle.updated_at
+    };
+
+    result.push({
+      template: bundleObj,
       performance: {
-        usage: Math.round(usagePercentage * 100) / 100,
+        usage:       Math.round(usagePercentage       * 100) / 100,
         performance: Math.round(performancePercentage * 100) / 100
       },
       estimated_roi_breakdown: {
-        total_cost: totalCost,
-        total_revenue: totalRevenue,
-        roi_percentage: Math.round(roi * 100) / 100,
-        total_postcards_sent: totalPostcards,
+        total_cost:            totalCost,
+        total_revenue:         totalRevenue,
+        roi_percentage:        Math.round(roi * 100) / 100,
+        total_postcards_sent:  totalPostcards,
         total_leads_generated: totalLeads,
-        cost_per_lead: costPerLead,
-        revenue_per_lead: revenuePerLead
+        cost_per_lead:         costPerLead,
+        revenue_per_lead:      revenuePerLead
       }
     });
   }
 
-  // Sort by performance (descending)
-  templatePerformanceList.sort((a, b) => b.performance.performance - a.performance.performance);
-
-  return templatePerformanceList;
+  result.sort((a, b) => b.performance.performance - a.performance.performance);
+  return result;
 }
 
 /**

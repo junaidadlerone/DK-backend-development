@@ -15,7 +15,7 @@ BOLD='\033[1m'
 
 # Configuration
 BASE_URL="https://xnflihspegizweqidvow.supabase.co/functions/v1"
-ADMIN_EMAIL="admin@example.com"
+ADMIN_EMAIL="doe@yopmail.com"
 ADMIN_PASSWORD="SecurePass123!"
 
 # Stripe Test Tokens (Stripe requires using tokens, not raw card numbers)
@@ -277,6 +277,91 @@ else
 fi
 
 # ============================================================================
+# STEP 7A: Coupon Code Tests — 10OFF (max 1 redemption)
+# ============================================================================
+log_header "STEP 7A: Coupon Code Tests — 10OFF (1-use limit)"
+log_info "10OFF should succeed on 1st use and fail on 2nd use"
+
+log_step "Attempt 1/2 — Charging \$50.00 with coupon 10OFF (expect: SUCCESS)..."
+COUPON_10OFF_1=$(curl -s -X POST "$BASE_URL/chargePaymentMethod" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d "{\"payment_method_id\":\"$PAYMENT_METHOD_ID\",\"amount\":50,\"currency\":\"usd\",\"description\":\"Coupon test — 10OFF attempt 1\",\"coupon_code\":\"10OFF\",\"isTestMode\":true}")
+
+log_data "Response:"
+pretty_json "$COUPON_10OFF_1"
+echo ""
+
+COUPON_10OFF_1_STATUS=$(echo $COUPON_10OFF_1 | python3 -c "import sys, json; print(json.load(sys.stdin).get('status', ''))" 2>/dev/null)
+if [ "$COUPON_10OFF_1_STATUS" == "success" ]; then
+  DISC=$(echo $COUPON_10OFF_1 | python3 -c "import sys, json; p=json.load(sys.stdin).get('payment',{}); print(f\"\${p.get('discount_amount',0)/100:.2f}\")" 2>/dev/null)
+  log_success "Attempt 1 PASSED — charge succeeded (discount applied: \$$DISC)"
+else
+  ERROR_CODE=$(echo $COUPON_10OFF_1 | python3 -c "import sys, json; print(json.load(sys.stdin).get('error', json.load(sys.stdin).get('code','unknown')))" 2>/dev/null)
+  log_error "Attempt 1 FAILED unexpectedly — error: $ERROR_CODE"
+fi
+
+log_step "Attempt 2/2 — Charging \$50.00 with coupon 10OFF again (expect: FAILURE)..."
+COUPON_10OFF_2=$(curl -s -X POST "$BASE_URL/chargePaymentMethod" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d "{\"payment_method_id\":\"$PAYMENT_METHOD_ID\",\"amount\":50,\"currency\":\"usd\",\"description\":\"Coupon test — 10OFF attempt 2\",\"coupon_code\":\"10OFF\",\"isTestMode\":true}")
+
+log_data "Response:"
+pretty_json "$COUPON_10OFF_2"
+echo ""
+
+COUPON_10OFF_2_STATUS=$(echo $COUPON_10OFF_2 | python3 -c "import sys, json; print(json.load(sys.stdin).get('status', ''))" 2>/dev/null)
+if [ "$COUPON_10OFF_2_STATUS" != "success" ]; then
+  ERROR_CODE=$(echo $COUPON_10OFF_2 | python3 -c "import sys, json; d=json.load(sys.stdin); print(d.get('error', d.get('code','unknown')))" 2>/dev/null)
+  log_success "Attempt 2 correctly REJECTED — error: $ERROR_CODE (redemption limit enforced)"
+else
+  log_error "Attempt 2 should have been rejected but succeeded — coupon limit NOT enforced!"
+fi
+
+# ============================================================================
+# STEP 7B: Coupon Code Tests — 20OFF (max 3 redemptions)
+# ============================================================================
+log_header "STEP 7B: Coupon Code Tests — 20OFF (3-use limit)"
+log_info "20OFF should succeed on attempts 1–3 and fail on attempt 4"
+
+for i in 1 2 3; do
+  log_step "Attempt $i/4 — Charging \$100.00 with coupon 20OFF (expect: SUCCESS)..."
+  COUPON_20OFF=$(curl -s -X POST "$BASE_URL/chargePaymentMethod" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d "{\"payment_method_id\":\"$PAYMENT_METHOD_ID\",\"amount\":100,\"currency\":\"usd\",\"description\":\"Coupon test — 20OFF attempt $i\",\"coupon_code\":\"20OFF\",\"isTestMode\":true}")
+
+  COUPON_20OFF_STATUS=$(echo $COUPON_20OFF | python3 -c "import sys, json; print(json.load(sys.stdin).get('status', ''))" 2>/dev/null)
+  if [ "$COUPON_20OFF_STATUS" == "success" ]; then
+    DISC=$(echo $COUPON_20OFF | python3 -c "import sys, json; p=json.load(sys.stdin).get('payment',{}); print(f\"\${p.get('discount_amount',0)/100:.2f}\")" 2>/dev/null)
+    log_success "Attempt $i PASSED — charge succeeded (discount applied: \$$DISC)"
+  else
+    ERROR_CODE=$(echo $COUPON_20OFF | python3 -c "import sys, json; d=json.load(sys.stdin); print(d.get('error', d.get('code','unknown')))" 2>/dev/null)
+    log_error "Attempt $i FAILED unexpectedly — error: $ERROR_CODE"
+  fi
+  echo ""
+done
+
+log_step "Attempt 4/4 — Charging \$100.00 with coupon 20OFF (expect: FAILURE)..."
+COUPON_20OFF_4=$(curl -s -X POST "$BASE_URL/chargePaymentMethod" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d "{\"payment_method_id\":\"$PAYMENT_METHOD_ID\",\"amount\":100,\"currency\":\"usd\",\"description\":\"Coupon test — 20OFF attempt 4\",\"coupon_code\":\"20OFF\",\"isTestMode\":true}")
+
+log_data "Response:"
+pretty_json "$COUPON_20OFF_4"
+echo ""
+
+COUPON_20OFF_4_STATUS=$(echo $COUPON_20OFF_4 | python3 -c "import sys, json; print(json.load(sys.stdin).get('status', ''))" 2>/dev/null)
+if [ "$COUPON_20OFF_4_STATUS" != "success" ]; then
+  ERROR_CODE=$(echo $COUPON_20OFF_4 | python3 -c "import sys, json; d=json.load(sys.stdin); print(d.get('error', d.get('code','unknown')))" 2>/dev/null)
+  log_success "Attempt 4 correctly REJECTED — error: $ERROR_CODE (redemption limit enforced)"
+else
+  log_error "Attempt 4 should have been rejected but succeeded — coupon limit NOT enforced!"
+fi
+
+# ============================================================================
 # STEP 8: Get Billing History
 # ============================================================================
 log_header "STEP 8: Testing getBillingHistory API"
@@ -384,13 +469,15 @@ log_header "TEST SUITE COMPLETED"
 echo -e "${GREEN}${BOLD}✓ All APIs tested successfully!${NC}\n"
 
 echo -e "${BOLD}Summary of tested APIs:${NC}"
-echo -e "  ${GREEN}✓${NC} addPaymentMethod       - Adds payment methods to organization"
-echo -e "  ${GREEN}✓${NC} getPaymentMethods      - Lists all payment methods"
+echo -e "  ${GREEN}✓${NC} addPaymentMethod        - Adds payment methods to organization"
+echo -e "  ${GREEN}✓${NC} getPaymentMethods       - Lists all payment methods"
 echo -e "  ${GREEN}✓${NC} setDefaultPaymentMethod - Sets default payment method"
-echo -e "  ${GREEN}✓${NC} updatePaymentMethod    - Updates card expiration date"
-echo -e "  ${GREEN}✓${NC} chargePaymentMethod    - Creates charges (NEW!)"
-echo -e "  ${GREEN}✓${NC} getBillingHistory      - Retrieves transaction history"
-echo -e "  ${GREEN}✓${NC} deletePaymentMethod    - Removes payment methods"
+echo -e "  ${GREEN}✓${NC} updatePaymentMethod     - Updates card expiration date"
+echo -e "  ${GREEN}✓${NC} chargePaymentMethod     - Creates charges"
+echo -e "  ${GREEN}✓${NC} chargePaymentMethod     - Coupon 10OFF: 1-use limit (pass + reject)"
+echo -e "  ${GREEN}✓${NC} chargePaymentMethod     - Coupon 20OFF: 3-use limit (3× pass + reject)"
+echo -e "  ${GREEN}✓${NC} getBillingHistory       - Retrieves transaction history"
+echo -e "  ${GREEN}✓${NC} deletePaymentMethod     - Removes payment methods"
 echo ""
 
 echo -e "${BOLD}Stripe Test Tokens Used:${NC}"

@@ -119,25 +119,41 @@ Deno.serve(async (req) => {
 
     const charges = await stripe.charges.list(params);
 
+    // Also fetch paid invoices — coupon-based charges go through Stripe Invoices
+    // and may not appear in charges.list() due to API version differences or
+    // timing delays between invoice payment and charge propagation.
+    // Expanding data.charge gives us the actual amount charged and card details
+    // directly from the charge object, avoiding fields like total/amount_paid
+    // that may be undefined in the invoice list response.
+    const paidInvoices = await stripe.invoices.list({
+      customer: org.stripe_customer_id,
+      status: "paid",
+      limit,
+      expand: ["data.charge"],
+    });
+
     // Fetch user preferences for enrichment
     const preferences = await getUserPreferences(supabase, user.userId);
 
-    // Format charges for response
-    const formattedTransactions = charges.data.map((charge) => ({
+    // Track charge IDs and invoice IDs already covered by the charges list
+    // to avoid showing the same payment twice.
+    const capturedChargeIds = new Set(charges.data.map((c) => c.id));
+    const capturedInvoiceIds = new Set(
+      charges.data
+        .map((c) => (typeof c.invoice === "string" ? c.invoice : null))
+        .filter(Boolean) as string[]
+    );
+
+    // Format direct charges
+    const chargeTransactions = charges.data.map((charge) => ({
       id: charge.id,
       amount: charge.amount / 100,
       currency: charge.currency,
-      
-      // Enriched financial data
       amount_display: enrichCurrency(charge.amount / 100, preferences.currency),
-      
       status: charge.status,
       description: charge.description || "No description",
       created: new Date(charge.created * 1000).toISOString(),
-      
-      // Enriched timezone data
       created_tz: enrichTimestamp(new Date(charge.created * 1000).toISOString(), preferences.timezone),
-      
       receipt_url: charge.receipt_url,
       payment_method: charge.payment_method_details?.card ? {
         brand: charge.payment_method_details.card.brand,
@@ -145,14 +161,90 @@ Deno.serve(async (req) => {
       } : null,
       refunded: charge.refunded,
       amount_refunded: charge.amount_refunded,
+      invoice_id: (charge.invoice as string) || null,
+      discount_applied: (charge.metadata as Record<string, string>)?.coupon_applied || null,
     }));
+
+    // Build a lookup map from charge ID → payment_method details for resolving
+    // the card info on invoice-based transactions.
+    const chargePaymentMethodMap = new Map<string, { brand: string; last4: string }>();
+    for (const charge of charges.data) {
+      if (charge.payment_method_details?.card) {
+        chargePaymentMethodMap.set(charge.id, {
+          brand: charge.payment_method_details.card.brand || "unknown",
+          last4: charge.payment_method_details.card.last4 || "****",
+        });
+      }
+    }
+
+    // Format invoice-based transactions (coupon charges), skipping any whose
+    // underlying charge is already present in the direct charges list.
+    const invoiceTransactions = paidInvoices.data
+      .filter((inv) => {
+        const chargeId = typeof inv.charge === "string" ? inv.charge : null;
+        // Skip if the charge is already in the list, or if the invoice itself is already referenced
+        if (chargeId && capturedChargeIds.has(chargeId)) return false;
+        if (capturedInvoiceIds.has(inv.id)) return false;
+        return true;
+      })
+      .map((inv) => {
+        // inv.charge is now the full expanded Charge object (not just an ID)
+        const expandedCharge = inv.charge && typeof inv.charge === "object" ? inv.charge : null;
+        const chargeId = expandedCharge?.id || (typeof inv.charge === "string" ? inv.charge : null);
+        const meta = (inv.metadata || {}) as Record<string, string>;
+        const couponApplied = meta.coupon_applied || null;
+
+        // Derive description from the first invoice line item, falling back to metadata
+        const firstLine = inv.lines?.data?.[0];
+        const description = firstLine?.description || meta.campaign_name || "Invoice payment";
+
+        // Prefer the Stripe-hosted invoice PDF for receipt (shows coupon discount line)
+        const receiptUrl = inv.invoice_pdf || inv.hosted_invoice_url || null;
+
+        // Prefer amount stored in invoice metadata (written by chargePaymentMethod).
+        // This is the most reliable source — Stripe's total/amount_paid fields
+        // may not be populated on the list response until async settlement completes.
+        const metaAmount = meta.final_amount_cents ? parseInt(meta.final_amount_cents) : null;
+        const amountCents = metaAmount ?? expandedCharge?.amount ?? inv.total ?? inv.amount_paid ?? 0;
+
+        // Resolve payment method: prefer metadata (written by chargePaymentMethod),
+        // then try the expanded charge, then fall back to the charges list map.
+        const expandedCard = expandedCharge?.payment_method_details?.card;
+        const pm = (meta.card_brand && meta.card_last4)
+          ? { brand: meta.card_brand, last4: meta.card_last4 }
+          : expandedCard
+            ? { brand: expandedCard.brand || "unknown", last4: expandedCard.last4 || "****" }
+            : (chargeId ? chargePaymentMethodMap.get(chargeId) || null : null);
+
+        return {
+          id: chargeId || inv.id,
+          amount: amountCents / 100,
+          currency: inv.currency,
+          amount_display: enrichCurrency(amountCents / 100, preferences.currency),
+          status: "succeeded",
+          description,
+          created: new Date(inv.created * 1000).toISOString(),
+          created_tz: enrichTimestamp(new Date(inv.created * 1000).toISOString(), preferences.timezone),
+          receipt_url: receiptUrl,
+          payment_method: pm,
+          refunded: false,
+          amount_refunded: 0,
+          invoice_id: inv.id,
+          discount_applied: couponApplied,
+        };
+      });
+
+    // Merge and sort by created date descending
+    const allTransactions = [...chargeTransactions, ...invoiceTransactions]
+      .sort((a, b) => new Date(b.created).getTime() - new Date(a.created).getTime())
+      .slice(0, limit);
 
     const processingTimeMs = Date.now() - startTime;
 
     return successResponse({
       status: "success",
-      transactions: formattedTransactions,
-      has_more: charges.has_more,
+      transactions: allTransactions,
+      has_more: charges.has_more || paidInvoices.has_more,
       processingTimeMs,
     });
 

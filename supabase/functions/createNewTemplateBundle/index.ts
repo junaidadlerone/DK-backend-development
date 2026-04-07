@@ -10,7 +10,7 @@ import { createNotification, ROLES } from "../_shared/notifications.ts";
  * Creates a pair of PostGrid templates (front and back) and saves them as a bundle
  *
  * Business Rules:
- * - Requires PostGrid API key in request body
+ * - Reads PostGrid API key from POSTGRID_API_KEY environment variable (Supabase secret)
  * - Creates two templates in PostGrid: one Front, one Back
  * - Appends " Front" and " Back" to the description
  * - Saves both templates to templates table
@@ -20,7 +20,6 @@ import { createNotification, ROLES } from "../_shared/notifications.ts";
  *
  * Request body:
  * {
- *   "postgridApiKey": string (required),
  *   "description": string (required) - base description,
  *   "html_front": string (required) - HTML for front template,
  *   "html_back": string (required) - HTML for back template,
@@ -31,7 +30,6 @@ import { createNotification, ROLES } from "../_shared/notifications.ts";
  */
 
 interface RequestBody {
-  postgridApiKey: string;
   description: string;
   html_front: string;
   html_back: string;
@@ -110,16 +108,19 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Validate required fields
-    const { postgridApiKey, description, html_front, html_back, postcardSize, isManualEdit, campaign_id } = requestBody;
-
-    if (!postgridApiKey || typeof postgridApiKey !== 'string') {
+    // Read PostGrid API key from environment
+    const postgridApiKey = Deno.env.get("POSTGRID_POSTCARD_API_KEY");
+    if (!postgridApiKey) {
+      console.error("POSTGRID_POSTCARD_API_KEY environment variable is not set");
       return errorResponse(
-        "INVALID_INPUT",
-        "postgridApiKey is required and must be a string",
-        400
+        "CONFIGURATION_ERROR",
+        "PostGrid postcard API key is not configured",
+        500
       );
     }
+
+    // Validate required fields
+    const { description, html_front, html_back, postcardSize, isManualEdit, campaign_id } = requestBody;
 
     if (!description || typeof description !== 'string') {
       return errorResponse(

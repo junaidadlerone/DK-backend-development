@@ -1,7 +1,7 @@
 import { corsResponse, errorResponse, successResponse } from "../_shared/response.ts";
 import { createSupabaseClient } from "../_shared/client.ts";
 import { getUserFromRequest } from "../_shared/history.ts";
-import { getUserOrganizationId } from "../_shared/organization.ts";
+import { getUserOrganizationId, validateOrganizationAccess } from "../_shared/organization.ts";
 import { decode } from "https://deno.land/std@0.168.0/encoding/base64.ts";
 
 /**
@@ -11,6 +11,7 @@ import { decode } from "https://deno.land/std@0.168.0/encoding/base64.ts";
 
 interface OnboardingRequest {
   step: number;
+  organization_id?: string; // Optional — targets a specific org (multi-org creation flow)
   // Step 1 fields
   business_name?: string;
   industry?: string;
@@ -36,6 +37,9 @@ interface OnboardingRequest {
       body: { name: string };
     };
   };
+  // Step 4 fields
+  team_member_ids?: { id: string; role?: "ADMIN" | "MARKETER" | "TECHNICIAN" }[]; // Existing user IDs to grant access to this org
+  invite_emails?: { email: string; role?: "ADMIN" | "MARKETER" | "TECHNICIAN" }[]; // Email addresses to invite as new users
 }
 
 Deno.serve(async (req) => {
@@ -57,11 +61,6 @@ Deno.serve(async (req) => {
       return errorResponse("UNAUTHORIZED", "Unable to authenticate user", 401);
     }
 
-    const organizationId = await getUserOrganizationId(supabase, user.userId);
-    if (!organizationId) {
-      return errorResponse("NO_ORGANIZATION", "User is not associated with any organization", 403);
-    }
-
     const contentType = req.headers.get("content-type") || "";
     let step: number;
     let body: OnboardingRequest = {} as OnboardingRequest;
@@ -70,11 +69,15 @@ Deno.serve(async (req) => {
       // Handle Multipart Form Data (Step 3 with File Upload)
       const formData = await req.formData();
       const stepStr = formData.get("step");
-      
+
       if (!stepStr) {
          return errorResponse("INVALID_INPUT", "Step is required", 400);
       }
       step = parseInt(stepStr.toString());
+
+      // Extract organization_id from FormData if provided
+      const orgIdFromForm = formData.get("organization_id");
+      if (orgIdFromForm) body.organization_id = orgIdFromForm.toString();
 
       if (step === 3) {
         // Extract Step 3 specific fields from FormData
@@ -115,13 +118,29 @@ Deno.serve(async (req) => {
       }
 
     } else {
-      // Handle JSON (Step 1, 2, and backward compat Step 3)
+      // Handle JSON (Steps 1, 2, 3, and 4)
       try {
         body = await req.json();
         step = body.step;
       } catch {
         return errorResponse("INVALID_INPUT", "Invalid JSON body", 400);
       }
+    }
+
+    // Resolve organization — use provided org_id if given, else fall back to active org
+    let organizationId: string | null = null;
+    if (body.organization_id) {
+      const hasAccess = await validateOrganizationAccess(supabase, body.organization_id, user.userId);
+      if (!hasAccess) {
+        return errorResponse("FORBIDDEN", "You do not have access to this organization", 403);
+      }
+      organizationId = body.organization_id;
+    } else {
+      organizationId = await getUserOrganizationId(supabase, user.userId);
+    }
+
+    if (!organizationId) {
+      return errorResponse("NO_ORGANIZATION", "User is not associated with any organization", 403);
     }
 
     // Check if onboarding entry exists, if not create it
@@ -292,8 +311,140 @@ Deno.serve(async (req) => {
           .eq("id", user.userId);
       }
 
+    } else if (step === 4) {
+      // Step 4: Assign existing team members + invite new users by email
+      const { team_member_ids, invite_emails } = body;
+
+      // Get caller's primary org — invited users are also added there
+      const callerMainOrgId = await getUserOrganizationId(supabase, user.userId);
+
+      const { data: org, error: orgError } = await supabase
+        .from("organizations")
+        .select("organization_members")
+        .eq("id", organizationId)
+        .single();
+
+      if (orgError || !org) {
+        return errorResponse("ORG_NOT_FOUND", "Organization not found", 404);
+      }
+
+      const existingMembers: any[] = org.organization_members || [];
+      const newMembers: any[] = [];
+
+      // Add existing users by ID
+      if (team_member_ids && team_member_ids.length > 0) {
+        const ids = team_member_ids.map(t => t.id);
+        const { data: memberProfiles } = await supabase
+          .from("profiles")
+          .select("id, role")
+          .in("id", ids);
+
+        for (const mp of memberProfiles || []) {
+          const alreadyMember = existingMembers.some((m: any) => m?.member_uid === mp.id);
+          if (!alreadyMember) {
+            // Use caller-specified role if provided, otherwise keep the user's existing role
+            const overrideEntry = team_member_ids.find(t => t.id === mp.id);
+            const assignedRole = overrideEntry?.role || mp.role;
+            newMembers.push({ member_uid: mp.id, member_role: assignedRole });
+          }
+        }
+      }
+
+      const invitedEmails: string[] = [];
+      const failedInvites: { email: string; error: string }[] = [];
+
+      // Invite new users by email
+      if (invite_emails && invite_emails.length > 0) {
+        for (const invite of invite_emails) {
+          const email = invite.email;
+          const role = invite.role || "TECHNICIAN";
+
+          try {
+            // Create user and send invite email via Supabase Auth admin
+            const { data: inviteData, error: inviteError } = await supabase.auth.admin.inviteUserByEmail(
+              email,
+              { data: { role } }
+            );
+
+            if (inviteError || !inviteData?.user) {
+              failedInvites.push({ email, error: inviteError?.message || "Failed to invite user" });
+              continue;
+            }
+
+            const newUserId = inviteData.user.id;
+
+            // Create the profile row for the invited user
+            await supabase.from("profiles").upsert({
+              id: newUserId,
+              role,
+              full_name: null,
+              onboarding: true,
+              is_super_admin: false,
+              multi_org_enabled: false,
+              active_organization_id: callerMainOrgId,
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            });
+
+            // Add to the org being onboarded
+            const alreadyInNewOrg = existingMembers.some((m: any) => m?.member_uid === newUserId);
+            if (!alreadyInNewOrg) {
+              newMembers.push({ member_uid: newUserId, member_role: role });
+            }
+
+            // Also add to caller's main org if it differs from the org being onboarded
+            if (callerMainOrgId && callerMainOrgId !== organizationId) {
+              const { data: mainOrg } = await supabase
+                .from("organizations")
+                .select("organization_members")
+                .eq("id", callerMainOrgId)
+                .single();
+
+              if (mainOrg) {
+                const mainMembers: any[] = mainOrg.organization_members || [];
+                const alreadyInMainOrg = mainMembers.some((m: any) => m?.member_uid === newUserId);
+                if (!alreadyInMainOrg) {
+                  await supabase
+                    .from("organizations")
+                    .update({
+                      organization_members: [...mainMembers, { member_uid: newUserId, member_role: role }],
+                      updated_at: new Date().toISOString(),
+                    })
+                    .eq("id", callerMainOrgId);
+                }
+              }
+            }
+
+            invitedEmails.push(email);
+          } catch (e: any) {
+            failedInvites.push({ email, error: e.message });
+          }
+        }
+      }
+
+      const { error: updateError } = await supabase
+        .from("organizations")
+        .update({
+          organization_members: [...existingMembers, ...newMembers],
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", organizationId);
+
+      if (updateError) {
+        return errorResponse("UPDATE_FAILED", "Failed to update team members", 500);
+      }
+
+      return successResponse({
+        status: "success",
+        message: "Team members assigned to organization",
+        members_added: newMembers.length,
+        invites_sent: invitedEmails.length,
+        invited_emails: invitedEmails,
+        failed_invites: failedInvites,
+      });
+
     } else {
-      return errorResponse("INVALID_INPUT", "Invalid step number", 400);
+      return errorResponse("INVALID_INPUT", "Invalid step number. Must be 1, 2, 3, or 4", 400);
     }
 
     const processingTimeMs = Date.now() - startTime;
