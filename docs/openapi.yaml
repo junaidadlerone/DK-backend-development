@@ -12721,6 +12721,10 @@ paths:
                     step:
                       type: integer
                       enum: [1]
+                    organization_id:
+                      type: string
+                      format: uuid
+                      description: Target organization. If omitted, defaults to the user's active organization.
                     business_name:
                       type: string
                     industry:
@@ -12735,6 +12739,10 @@ paths:
                     step:
                       type: integer
                       enum: [2]
+                    organization_id:
+                      type: string
+                      format: uuid
+                      description: Target organization. If omitted, defaults to the user's active organization.
                     country:
                       type: string
                     street_address:
@@ -12751,6 +12759,10 @@ paths:
                     step:
                       type: integer
                       enum: [3]
+                    organization_id:
+                      type: string
+                      format: uuid
+                      description: Target organization. If omitted, defaults to the user's active organization.
                     company_logo:
                       type: string
                       description: Base64 encoded image or data URL
@@ -12785,6 +12797,10 @@ paths:
                     step:
                       type: integer
                       enum: [4]
+                    organization_id:
+                      type: string
+                      format: uuid
+                      description: Target organization. If omitted, defaults to the user's active organization.
                     team_member_ids:
                       type: array
                       items:
@@ -12866,6 +12882,10 @@ paths:
                 step:
                   type: integer
                   enum: [3]
+                organization_id:
+                  type: string
+                  format: uuid
+                  description: Target organization. If omitted, defaults to the user's active organization.
                 company_logo:
                   type: string
                   format: binary
