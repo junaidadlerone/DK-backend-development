@@ -94,11 +94,12 @@ Deno.serve(async (req) => {
     // Fetch user preferences
     const preferences = await getPreferences(supabase, user.id);
 
-    // Enrich organization with timezone info and agency flag
+    // Enrich organization with timezone info and agency flag; drop raw is_agency
+    const { is_agency, ...orgFields } = organization;
     const enrichedOrganization = {
-      ...organization,
+      ...orgFields,
       created_at_tz: enrichTimestamp(organization.created_at, preferences.timezone),
-      isAgencyAccount: organization.is_agency ?? true,
+      isAgencyAccount: is_agency ?? false,
     };
 
     // Return success response

@@ -142,12 +142,13 @@ export async function getUserOrganizations(
   is_active: boolean;
   deletion_scheduled_at: string | null;
   onboarding_step: number;
+  isAgencyAccount: boolean;
 }>> {
   try {
     const [{ data: orgs, error }, { data: onboardingRows }] = await Promise.all([
       supabase
         .from("organizations")
-        .select("id, business_name, business_email, owner_id, organization_members, deletion_scheduled_at"),
+        .select("id, business_name, business_email, owner_id, organization_members, deletion_scheduled_at, is_agency"),
       supabase
         .from("onboarding")
         .select("organization_id, business_name, street_address, company_logo"),
@@ -200,6 +201,7 @@ export async function getUserOrganizations(
         is_active: org.id === activeOrgId,
         deletion_scheduled_at: org.deletion_scheduled_at ?? null,
         onboarding_step,
+        isAgencyAccount: org.is_agency ?? false,
       });
     }
 
