@@ -12683,8 +12683,14 @@ paths:
         ```json
         {
           "step": 4,
-          "team_member_ids": ["uuid-1", "uuid-2"],
-          "invite_emails": ["alice@example.com", "bob@example.com"]
+          "team_member_ids": [
+            { "id": "uuid-1", "role": "ADMIN" },
+            { "id": "uuid-2" }
+          ],
+          "invite_emails": [
+            "alice@example.com",
+            { "email": "bob@example.com", "role": "ADMIN" }
+          ]
         }
         ```
 
@@ -12693,7 +12699,7 @@ paths:
 
         **Optional Fields:**
         - `team_member_ids`: Array of objects with `id` (profile UUID) and optional `role` (`ADMIN`, `MARKETER`, `TECHNICIAN`). If `role` is omitted the user's existing role is used.
-        - `invite_emails`: Array of objects with `email` and optional `role` (`ADMIN`, `MARKETER`, or `TECHNICIAN`, defaults to `TECHNICIAN`). Each invite gets:
+        - `invite_emails`: Array of email strings or objects with `email` and optional `role` (`ADMIN`, `MARKETER`, or `TECHNICIAN`, defaults to `TECHNICIAN`). Each invite gets:
           - A new Supabase Auth account created
           - An invite email sent with a magic link to set their password
           - A profile row created with role `TECHNICIAN`
@@ -12821,17 +12827,21 @@ paths:
                     invite_emails:
                       type: array
                       items:
-                        type: object
-                        required: [email]
-                        properties:
-                          email:
-                            type: string
+                        oneOf:
+                          - type: string
                             format: email
-                          role:
-                            type: string
-                            enum: [ADMIN, MARKETER, TECHNICIAN]
-                            default: TECHNICIAN
-                      description: Users to invite by email. Each gets an account created and an invite email sent. Role defaults to TECHNICIAN.
+                            description: Email address (role defaults to TECHNICIAN)
+                          - type: object
+                            required: [email]
+                            properties:
+                              email:
+                                type: string
+                                format: email
+                              role:
+                                type: string
+                                enum: [ADMIN, MARKETER, TECHNICIAN]
+                                default: TECHNICIAN
+                      description: Users to invite by email. Each item can be a plain email string or an object with `email` and optional `role`. Role defaults to TECHNICIAN.
             examples:
               step1_business:
                 summary: Step 1 - Business Information
@@ -12879,6 +12889,7 @@ paths:
                       role: "MARKETER"
                     - id: "b2c3d4e5-f6a7-8901-bcde-f12345678901"
                   invite_emails:
+                    - "charlie@example.com"
                     - email: "alice@example.com"
                       role: "ADMIN"
                     - email: "bob@example.com"

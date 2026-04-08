@@ -361,8 +361,8 @@ Deno.serve(async (req) => {
       // Invite new users by email
       if (invite_emails && invite_emails.length > 0) {
         for (const invite of invite_emails) {
-          const email = invite.email;
-          const role = invite.role || "TECHNICIAN";
+          const email = typeof invite === "string" ? invite : invite.email;
+          const role = (typeof invite === "object" && invite.role) ? invite.role : "TECHNICIAN";
 
           try {
             // Create user and send invite email via Supabase Auth admin
