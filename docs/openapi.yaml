@@ -12729,6 +12729,10 @@ paths:
                       type: string
                     industry:
                       type: string
+                    business_email:
+                      type: string
+                      format: email
+                      description: Business email. Auto-filled from the user's account email for agency accounts; required for sub-organizations.
                     business_phone_number:
                       type: string
                     website_url:
@@ -12836,6 +12840,7 @@ paths:
                   organization_id: "550e8400-e29b-41d4-a716-446655440001"
                   business_name: "Acme Corp"
                   industry: "Technology"
+                  business_email: "contact@acmecorp.com"
                   business_phone_number: "+1-555-0123"
                   website_url: "https://acmecorp.com"
               step2_address:
