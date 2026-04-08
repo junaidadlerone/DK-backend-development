@@ -3,16 +3,13 @@ import { createSupabaseClient } from "../_shared/client.ts";
 import { getUserFromRequest } from "../_shared/history.ts";
 import { getUserOrganizationId, validateOrganizationAccess } from "../_shared/organization.ts";
 import { logCampaignHistory } from "../_shared/campaignHistory.ts";
+import { createPostGridTracker } from "../_shared/postgrid.ts";
 
-/**
+ /**
  * Link QR Code to Campaign
  * 
- * Optional endpoint to add QR code tracking to a campaign via Linkly API.
- * Creates a shortened URL and saves it to the campaign's business_data.
- * 
- * Required Headers:
- * - x-linkly-api-key: Linkly API key
- * - x-linkly-workspace-id: Linkly workspace ID
+ * Optional endpoint to add QR code tracking to a campaign via PostGrid Tracker API.
+ * Creates a tracker and saves it to the campaign's business_data.
  * 
  * Request Body:
  * - campaign_id: UUID of campaign
@@ -111,73 +108,34 @@ Deno.serve(async (req) => {
       );
     }
 
-    const linklyApiKey = Deno.env.get("LINKLY_API_KEY");
-    const linklyWorkspaceId = Deno.env.get("LINKLY_WORKSPACE_ID");
-
-    if (!linklyApiKey) {
-      return errorResponse(
-        "MISSING_LINKLY_API_KEY",
-        "LINKLY_API_KEY environment variable is not set",
-        500
-      );
-    }
-
-    if (!linklyWorkspaceId) {
-      return errorResponse(
-        "MISSING_LINKLY_WORKSPACE_ID",
-        "LINKLY_WORKSPACE_ID environment variable is not set",
-        500
-      );
-    }
-
-    // Call Linkly API to create short link
-    let shortenedUrl: string;
-    let trackerId: number;
+    // Call Postgrid API to create short link
+    let trackerId: string;
 
     try {
-      const linklyResponse = await fetch(
-        `https://app.linklyhq.com/api/v1/link?api_key=${encodeURIComponent(linklyApiKey)}`,
-        {
-          method: "POST",
-          headers: {
-            "accept": "application/json",
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            url: qr_url,
-            workspace_id: parseInt(linklyWorkspaceId),
-          }),
-        }
-      );
+      const tracker = await createPostGridTracker(qr_url);
+      trackerId = tracker.id;
+      
+      // PostGrid PURLs are generated per-order, but we can store the tracker ID
+      // The systems will use this tracker ID to resolve the QR in templates.
+      // For digital emails, we'll use the pattern we verified: https://pgtrack.com/t/<tracker_id>/<order_id>
+      // For now, we'll store the tracker ID. 
+      // Linkly provided a static shortened URL, but PostGrid's is dynamic.
+      // We'll set qr_url to a placeholder or the tracker ID to signify it's a PostGrid tracker.
 
-      if (!linklyResponse.ok) {
-        const errorText = await linklyResponse.text();
-        console.error("Linkly API error:", errorText);
-        return errorResponse(
-          "LINKLY_API_ERROR",
-          `Failed to create short link: ${errorText}`,
-          500
-        );
-      }
-
-      const linklyData = await linklyResponse.json();
-      shortenedUrl = linklyData.full_url;
-      trackerId = linklyData.id;
-
-      console.log(`Created Linkly short link: ${shortenedUrl} (tracker ID: ${trackerId}) for QR URL: ${qr_url}`);
+      console.log(`Created PostGrid tracker: ${trackerId} for QR URL template: ${qr_url}`);
     } catch (error: unknown) {
-      console.error("Error calling Linkly API:", error);
+      console.error("Error calling PostGrid API:", error);
       const errorMessage = error instanceof Error ? error.message : "Unknown error";
       return errorResponse(
-        "LINKLY_API_ERROR",
-        `Failed to create short link: ${errorMessage}`,
+        "POSTGRID_API_ERROR",
+        `Failed to create tracker: ${errorMessage}`,
         500
       );
     }
 
     // Update campaign's business_data with shortened QR URL
     const businessData = existingCampaign.business_data || {};
-    businessData.qr_url = shortenedUrl;
+    businessData.qr_url = `${trackerId}.qrcode`;
 
     const { data: updatedCampaign, error: updateError } = await supabase
       .from("campaigns")
@@ -205,7 +163,7 @@ Deno.serve(async (req) => {
       campaign_id,
       user.userId,
       user.userName,
-      `linked QR code (shortened: ${shortenedUrl})`
+      `linked QR code (tracker: ${trackerId})`
     );
 
     return successResponse(
@@ -216,7 +174,6 @@ Deno.serve(async (req) => {
           campaign_id: updatedCampaign.id,
           campaign_name: updatedCampaign.campaign_name,
           original_url: qr_url,
-          shortened_url: shortenedUrl,
           tracker_id: trackerId,
           business_data: updatedCampaign.business_data
         },

@@ -60,20 +60,23 @@ Deno.serve(async (req) => {
     }
 
     // Get user's organization
-    const organizationId = await getUserOrganizationId(supabase, user.userId);
-    if (!organizationId) {
-      return errorResponse(
-        "NO_ORGANIZATION",
-        "User is not associated with any organization",
-        403
-      );
+    let organizationId: string | null = null;
+    if (!user.isServiceRole) {
+      organizationId = await getUserOrganizationId(supabase, user.userId);
+      if (!organizationId) {
+        return errorResponse(
+          "NO_ORGANIZATION",
+          "User is not associated with any organization",
+          403
+        );
+      }
     }
 
     // Parse request body
     let requestBody: RequestBody;
     try {
       requestBody = await req.json();
-    } catch (parseError) {
+    } catch (_parseError) {
       return errorResponse(
         "INVALID_INPUT",
         "Invalid JSON in request body",
@@ -95,11 +98,13 @@ Deno.serve(async (req) => {
     // Determine if templateId is a UUID (database ID) or PostGrid template ID
     const isDbId = isUUID(templateId);
 
-    // Build query to get organization templates OR universal templates
-    let query = supabase
-      .from("templates")
-      .select("*")
-      .or(`organization_id.eq.${organizationId},is_universal.eq.true`);
+    // Build query to get templates
+    let query = supabase.from("templates").select("*");
+
+    // Apply organization filter only if NOT a service role
+    if (!user.isServiceRole) {
+      query = query.or(`organization_id.eq.${organizationId},is_universal.eq.true`);
+    }
 
     // Query by appropriate field
     if (isDbId) {
@@ -130,8 +135,10 @@ Deno.serve(async (req) => {
 
     const processingTimeMs = Date.now() - startTime;
 
-    // Fetch user preferences
-    const preferences = await getPreferences(supabase, user.userId);
+    // Fetch user preferences (skip for service role)
+    const preferences = !user.isServiceRole 
+      ? await getPreferences(supabase, user.userId)
+      : { timezone: "UTC" };
 
     // Transform template to response format
     const transformedTemplate = {
@@ -166,7 +173,7 @@ Deno.serve(async (req) => {
     console.error("Unexpected error in getTemplateById:", error);
     return errorResponse(
       "INTERNAL_ERROR",
-      `An unexpected error occurred: ${error.message}`,
+      `An unexpected error occurred: ${(error as Error).message}`,
       500
     );
   }

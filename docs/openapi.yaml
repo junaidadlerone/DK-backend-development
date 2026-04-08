@@ -15650,7 +15650,7 @@ components:
         leads_gen:
           type: integer
           default: 0
-          description: Number of leads generated
+          description: Number of leads generated (tracked via Linkly or PostGrid trackers)
         total_spent:
           type: number
           format: decimal
@@ -15660,7 +15660,7 @@ components:
           type: number
           format: decimal
           default: 0.00
-          description: "Estimated return on investment percentage. Calculated as ((revenue - cost) / cost) × 100, where cost = postcards_sent × $3 and revenue = leads_gen × $1000 (assumed). Updated automatically by syncLinklyAnalytics cron job."
+          description: "Estimated return on investment percentage. Calculated as ((revenue - cost) / cost) × 100, where cost = postcards_sent × $3 and revenue = leads_gen × $1000 (assumed). Updated automatically by analytics sync cron job (supports both Linkly and PostGrid Trackers)."
         created_at:
           type: string
           format: date-time
