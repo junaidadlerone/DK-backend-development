@@ -12721,10 +12721,18 @@ paths:
                     step:
                       type: integer
                       enum: [1]
+                    organization_id:
+                      type: string
+                      format: uuid
+                      description: Target organization. If omitted, defaults to the user's active organization.
                     business_name:
                       type: string
                     industry:
                       type: string
+                    business_email:
+                      type: string
+                      format: email
+                      description: Business email. Auto-filled from the user's account email for agency accounts; required for sub-organizations.
                     business_phone_number:
                       type: string
                     website_url:
@@ -12735,6 +12743,10 @@ paths:
                     step:
                       type: integer
                       enum: [2]
+                    organization_id:
+                      type: string
+                      format: uuid
+                      description: Target organization. If omitted, defaults to the user's active organization.
                     country:
                       type: string
                     street_address:
@@ -12751,6 +12763,10 @@ paths:
                     step:
                       type: integer
                       enum: [3]
+                    organization_id:
+                      type: string
+                      format: uuid
+                      description: Target organization. If omitted, defaults to the user's active organization.
                     company_logo:
                       type: string
                       description: Base64 encoded image or data URL
@@ -12785,6 +12801,10 @@ paths:
                     step:
                       type: integer
                       enum: [4]
+                    organization_id:
+                      type: string
+                      format: uuid
+                      description: Target organization. If omitted, defaults to the user's active organization.
                     team_member_ids:
                       type: array
                       items:
@@ -12817,14 +12837,17 @@ paths:
                 summary: Step 1 - Business Information
                 value:
                   step: 1
+                  organization_id: "550e8400-e29b-41d4-a716-446655440001"
                   business_name: "Acme Corp"
                   industry: "Technology"
+                  business_email: "contact@acmecorp.com"
                   business_phone_number: "+1-555-0123"
                   website_url: "https://acmecorp.com"
               step2_address:
                 summary: Step 2 - Address Information
                 value:
                   step: 2
+                  organization_id: "550e8400-e29b-41d4-a716-446655440001"
                   country: "United States"
                   street_address: "123 Main Street"
                   city: "San Francisco"
@@ -12834,6 +12857,7 @@ paths:
                 summary: Step 3 - Logo & Branding
                 value:
                   step: 3
+                  organization_id: "550e8400-e29b-41d4-a716-446655440001"
                   company_logo: "data:image/png;base64,iVBORw0KGgoAAAANSREEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
                   theme:
                     colors:
@@ -12849,6 +12873,7 @@ paths:
                 summary: Step 4 - Existing members + email invites
                 value:
                   step: 4
+                  organization_id: "550e8400-e29b-41d4-a716-446655440001"
                   team_member_ids:
                     - id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
                       role: "MARKETER"
@@ -12866,6 +12891,10 @@ paths:
                 step:
                   type: integer
                   enum: [3]
+                organization_id:
+                  type: string
+                  format: uuid
+                  description: Target organization. If omitted, defaults to the user's active organization.
                 company_logo:
                   type: string
                   format: binary

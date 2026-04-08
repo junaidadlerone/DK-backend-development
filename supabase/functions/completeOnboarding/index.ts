@@ -2,7 +2,12 @@ import { corsResponse, errorResponse, successResponse } from "../_shared/respons
 import { createSupabaseClient } from "../_shared/client.ts";
 import { getUserFromRequest } from "../_shared/history.ts";
 import { getUserOrganizationId, validateOrganizationAccess } from "../_shared/organization.ts";
-import { decode } from "https://deno.land/std@0.168.0/encoding/base64.ts";
+function decode(b64: string): Uint8Array {
+  const binary = atob(b64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
 
 /**
  * Complete Onboarding Edge Function

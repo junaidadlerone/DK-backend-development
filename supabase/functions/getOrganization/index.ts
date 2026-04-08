@@ -3,6 +3,7 @@ import { createSupabaseClient, getUserRole } from "../_shared/client.ts";
 import { type GetOrganizationResponse } from "../_shared/types.ts";
 import { enrichTimestamp } from "../_shared/timezone.ts";
 import { getPreferences } from "../_shared/preferences.ts";
+import { getUserOrganizationId } from "../_shared/organization.ts";
 
 /**
  * Get Organization Edge Function
@@ -64,12 +65,24 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Fetch all organizations - check owner_id first, then organization_members
-    const { data: allOrgs, error: fetchError } = await supabase
-      .from("organizations")
-      .select("*");
+    // Resolve the user's active organization (respects active_organization_id and all roles)
+    const organizationId = await getUserOrganizationId(supabase, user.id);
 
-    if (fetchError) {
+    if (!organizationId) {
+      return errorResponse(
+        "ORGANIZATION_NOT_FOUND",
+        "You are not associated with any organization",
+        404
+      );
+    }
+
+    const { data: organization, error: fetchError } = await supabase
+      .from("organizations")
+      .select("*")
+      .eq("id", organizationId)
+      .single();
+
+    if (fetchError || !organization) {
       console.error("Organization fetch error:", fetchError);
       return errorResponse(
         "FETCH_FAILED",
@@ -78,50 +91,21 @@ Deno.serve(async (req) => {
       );
     }
 
-    if (!allOrgs || allOrgs.length === 0) {
-      return errorResponse(
-        "ORGANIZATION_NOT_FOUND",
-        "Organization not found",
-        404
-      );
-    }
-
-    // First try: user is the org owner
-    let organization = allOrgs.find((org) => org.owner_id === user.id) || null;
-
-    // Second try: user is a member (covers ADMIN, MARKETER, TECHNICIAN members)
-    if (!organization) {
-      organization = allOrgs.find((org) => {
-        const members = org.organization_members || [];
-        return Array.isArray(members) && members.some((member: any) =>
-          member && typeof member === "object" && member.member_uid === user.id
-        );
-      }) || null;
-    }
-
-    if (!organization) {
-      return errorResponse(
-        "ORGANIZATION_NOT_FOUND",
-        "You are not associated with any organization",
-        404
-      );
-    }
-
     // Fetch user preferences
     const preferences = await getPreferences(supabase, user.id);
 
-    // Enrich organization with timezone info
-    if (organization) {
-      organization = {
-        ...organization,
-        created_at_tz: enrichTimestamp(organization.created_at, preferences.timezone),
-      };
-    }
+    // Enrich organization with timezone info and agency flag; drop raw is_agency
+    const { is_agency, ...orgFields } = organization;
+    const enrichedOrganization = {
+      ...orgFields,
+      created_at_tz: enrichTimestamp(organization.created_at, preferences.timezone),
+      isAgencyAccount: is_agency ?? false,
+    };
 
     // Return success response
     const response: GetOrganizationResponse = {
       status: "success",
-      data: organization,
+      data: enrichedOrganization,
     };
 
     return successResponse(response, 200);
