@@ -12833,6 +12833,7 @@ paths:
                 summary: Step 1 - Business Information
                 value:
                   step: 1
+                  organization_id: "550e8400-e29b-41d4-a716-446655440001"
                   business_name: "Acme Corp"
                   industry: "Technology"
                   business_phone_number: "+1-555-0123"
@@ -12841,6 +12842,7 @@ paths:
                 summary: Step 2 - Address Information
                 value:
                   step: 2
+                  organization_id: "550e8400-e29b-41d4-a716-446655440001"
                   country: "United States"
                   street_address: "123 Main Street"
                   city: "San Francisco"
@@ -12850,6 +12852,7 @@ paths:
                 summary: Step 3 - Logo & Branding
                 value:
                   step: 3
+                  organization_id: "550e8400-e29b-41d4-a716-446655440001"
                   company_logo: "data:image/png;base64,iVBORw0KGgoAAAANSREEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
                   theme:
                     colors:
@@ -12865,6 +12868,7 @@ paths:
                 summary: Step 4 - Existing members + email invites
                 value:
                   step: 4
+                  organization_id: "550e8400-e29b-41d4-a716-446655440001"
                   team_member_ids:
                     - id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
                       role: "MARKETER"
