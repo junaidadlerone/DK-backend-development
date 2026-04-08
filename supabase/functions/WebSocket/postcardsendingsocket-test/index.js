@@ -100,50 +100,77 @@ async function processCampaign(ws, campaignId, postgridApiKey)
     {
         // 1. Change Campaign Status
         console.log(`Changing status for campaign: ${campaignId}`);
-        const changeStatusResponse = await fetch(`${SUPABASE_URL}/changeCampaignStatus`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'apikey': SUPABASE_ANON_KEY,
-                'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
-            },
-            body: JSON.stringify({ campaign_id: campaignId })
-        });
-
-        if (!changeStatusResponse.ok)
-        {
-            console.error(`Failed to change campaign status: ${changeStatusResponse.statusText}`);
-            // Continue processing even if status change fails
-        } else
-        {
-            console.log('Campaign status changed successfully');
-        }
+        await changeCampaignStatus(campaignId);
 
         // 2. Fetch Campaign Launch Data
         console.log(`Fetching data for campaign: ${campaignId}`);
-        const launchDataResponse = await fetch(`${SUPABASE_URL}/getCampaignLaunchData`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'apikey': SUPABASE_ANON_KEY,
-                'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
-            },
-            body: JSON.stringify({ campaign_id: campaignId })
-        });
-
-        if (!launchDataResponse.ok)
-        {
-            throw new Error(`Failed to fetch campaign data: ${launchDataResponse.statusText}`);
-        }
-
-        const campaignData = await launchDataResponse.json();
-
-        if (campaignData.status !== 'success' || !campaignData.launch_data)
-        {
-            throw new Error('Invalid campaign data structure received from Supabase');
-        }
+        const campaignData = await getCampaignLaunchData(campaignId);
 
         const { launch_data, campaign_templates, business_data, offer_data } = campaignData;
+        const { 
+            template_bundle_id, 
+            front_template_id, 
+            back_template_id, 
+            postgrid_tracker_id 
+        } = campaign_templates;
+
+        // Extract tracker ID from database OR fallback to qr_url in business_data
+        let resolvedTrackerId = postgrid_tracker_id;
+        if (!resolvedTrackerId && business_data.qr_url && typeof business_data.qr_url === 'string') {
+            const parts = business_data.qr_url.split('.');
+            if (parts[0].startsWith('tracker_')) {
+                resolvedTrackerId = parts[0];
+                console.log(`[QR-DEBUG] Root Fallback: Extracted trackerId from businessData.qr_url: ${resolvedTrackerId}`);
+            }
+        }
+
+        // 2b. Fetch Template HTML separately and Update (Pre-mailing)
+        let originalFrontHtml = null;
+        let originalBackHtml = null;
+        let finalFrontHtml = null;
+        let finalBackHtml = null;
+        let originalFrontQrUrl = null;
+        let originalBackQrUrl = null;
+
+        if (template_bundle_id && resolvedTrackerId) {
+            const [frontTemplate, backTemplate] = await Promise.all([
+                getTemplateById(front_template_id),
+                getTemplateById(back_template_id)
+            ]);
+
+            originalFrontHtml = frontTemplate.html;
+            originalBackHtml = backTemplate.html;
+
+            const qrRegex = /<img[^>]*src=\\?["']https:\/\/api\.qrserver\.com\/v1\/create-qr-code\/[^"']+data=[^"& \s]+[^"']*\\?["'][^>]*>/gi;
+            
+            const replaceQrSrc = (html, label, trackerId, urlSetter) => {
+                if (!html) return html;
+                
+                const newHtml = html.replace(qrRegex, (match) => {
+                    // Extract original URL before replacing
+                    const urlMatch = match.match(/src=\\?["']([^"']+)["']/);
+                    if (urlMatch && urlMatch[1]) {
+                        urlSetter(urlMatch[1]);
+                    }
+
+                    const replaced = match.replace(/src=\\?["'][^"']+\\?["']/, (srcMatch) => {
+                        const quote = srcMatch.startsWith('src=\\"') ? '\\"' : '"';
+                        return `src=${quote}{{${trackerId}.qrcode}}${quote}`;
+                    });
+                    return replaced;
+                });
+                
+                return newHtml;
+            };
+
+            finalFrontHtml = replaceQrSrc(originalFrontHtml, "Front", resolvedTrackerId, (url) => originalFrontQrUrl = url);
+            finalBackHtml = replaceQrSrc(originalBackHtml, "Back", resolvedTrackerId, (url) => originalBackQrUrl = url);
+
+            if (finalFrontHtml !== originalFrontHtml || finalBackHtml !== originalBackHtml) {
+                console.log("Updating bundle with native placeholders...");
+                await updateTemplateBundle(template_bundle_id, finalFrontHtml, finalBackHtml);
+            }
+        }
 
         // Filter out addresses with status "Opt-out"
         const allAddresses = launch_data.verified_addresses || [];
@@ -164,7 +191,7 @@ async function processCampaign(ws, campaignId, postgridApiKey)
             const addr = addresses[i];
             try
             {
-                const success = await sendPostcard(addr, campaign_templates, business_data, offer_data, postgridApiKey);
+                const success = await sendPostcard(addr, campaign_templates, business_data, offer_data, postgridApiKey, resolvedTrackerId);
                 if (success)
                 {
                     count++;
@@ -200,6 +227,35 @@ async function processCampaign(ws, campaignId, postgridApiKey)
             total_addresses: addresses.length
         }));
 
+        // 5. Revert Templates (Test environment specific cleanup)
+        if (template_bundle_id && resolvedTrackerId && (originalFrontQrUrl || originalBackQrUrl)) {
+            try {
+                console.log("Starting template reversion...");
+                const trackerData = await getTracker(resolvedTrackerId, postgridApiKey);
+                const redirectUrl = trackerData.redirectURLTemplate;
+
+                if (redirectUrl) {
+                    console.log(`Reverting trackers to redirect URL`);
+                    
+                    const revertTemplate = (html, originalUrl) => {
+                        if (!html || !originalUrl) return html;
+                        // Replace {{tracker_XYZ.qrcode}} placeholders with the original URL, 
+                        // but swapping the data parameter for the real redirect URL.
+                        const restoredUrl = originalUrl.replace(/(data=)[^"& \s]+/, `$1${encodeURIComponent(redirectUrl)}`);
+                        return html.replace(/{{[^}]+.qrcode}}/g, restoredUrl);
+                    };
+
+                    const revertedFront = revertTemplate(finalFrontHtml || originalFrontHtml, originalFrontQrUrl);
+                    const revertedBack = revertTemplate(finalBackHtml || originalBackHtml, originalBackQrUrl);
+
+                    await updateTemplateBundle(template_bundle_id, revertedFront, revertedBack);
+                    console.log("Template bundle reverted to baseline.");
+                }
+            } catch (revertError) {
+                console.error("Failed to revert templates:", revertError.message);
+            }
+        }
+
     } catch (error)
     {
         console.error('Campaign processing failed:', error);
@@ -210,7 +266,7 @@ async function processCampaign(ws, campaignId, postgridApiKey)
 // =============================================================================
 // POSTGRID INTEGRATION
 // =============================================================================
-async function sendPostcard(addressObj, templates, businessData, offerData, postgridApiKey)
+async function sendPostcard(addressObj, templates, businessData, offerData, postgridApiKey, trackerId)
 {
     // Map sizes according to PostGrid requirements
     const rawSize = templates.front_template_size || "4x6";
@@ -221,37 +277,44 @@ async function sendPostcard(addressObj, templates, businessData, offerData, post
     };
     const size = sizeMap[rawSize] || "6x4";
 
-const payload = {
-    to: {
-        addressLine1: addressObj.address,
-        firstName: "Current Resident",
-        countryCode: 'US'
-    },
-    size: size,
-    frontTemplate: templates.front_template_id,
-    backTemplate: templates.back_template_id,
-    description: offerData.offer_headline || "Campaign Postcard",
-    mergeVariables: {},
-    color: true,
-    //mailingClass: "first_class",        // "first_class" (default) or "standard_class" (slower, cheaper)
-    express: true             // ⚠️ Use this instead if you want 2-3 day express — NOT together with standard_class
-};
-
     // Construct mergeVariables explicitly
     // specific fields from businessData (excluding generic merge_variable object if present)
     const { merge_variable, ...restBusinessData } = businessData;
     
+    console.log(`[QR-DEBUG] sendPostcard: Received trackerId from parent: ${trackerId}`);
+    
     const mergedVars = {
         ...offerData,
         ...restBusinessData,
-        ...(merge_variable || {})
+        ...(merge_variable || {}),
+        tracker_id: trackerId // Use the pre-resolved trackerId
     };
 
+    // Special handling for PostGrid QR codes: ensure they are wrapped in braces for resolution
+    if (mergedVars.qr_url && typeof mergedVars.qr_url === 'string' && mergedVars.qr_url.includes('.qrcode')) {
+        console.log(`[QR-DEBUG] Formatting legacy qr_url for merge: ${mergedVars.qr_url}`);
+        mergedVars.qr_url = `{{${mergedVars.qr_url}}}`;
+    }
 
-
-    payload.mergeVariables = mergedVars;
+    const payload = {
+        to: {
+            addressLine1: addressObj.address,
+            firstName: "Current Resident",
+            countryCode: 'US'
+        },
+        size: size,
+        frontTemplate: templates.front_template_id,
+        backTemplate: templates.back_template_id,
+        description: offerData.offer_headline || "Campaign Postcard",
+        trackers: trackerId ? [trackerId] : [], // Use resolved trackerId
+        mergeVariables: mergedVars,
+        color: true,
+        //mailingClass: "first_class",        // "first_class" (default) or "standard_class" (slower, cheaper)
+        express: true             // ⚠️ Use this instead if you want 2-3 day express — NOT together with standard_class
+    };
 
     console.log(`Sending PostGrid Payload for ${addressObj.address}:`, JSON.stringify(payload, null, 2));
+
 
     const response = await fetch(POSTGRID_URL, {
         method: 'POST',
@@ -266,7 +329,6 @@ const payload = {
     {
         const json = await response.json();
         console.log(`PostGrid Success Response for ${addressObj.address}:`, JSON.stringify(json, null, 2));
-        console.log(`Postcard sent to ${addressObj.address}. ID: ${json.id}`);
         return true;
     } else
     {
@@ -277,30 +339,78 @@ const payload = {
 }
 
 // =============================================================================
-// SUPABASE UPDATE
+// API HELPERS
 // =============================================================================
-async function updateSentCount(campaignId, count)
-{
-    const response = await fetch(`${SUPABASE_URL}/updatePostCardsSentCount`, {
-        method: 'POST',
+async function callEdgeFunction(name, method, body = null) {
+    const url = `${SUPABASE_URL}/${name}`;
+    const options = {
+        method: method,
         headers: {
             'Content-Type': 'application/json',
             'apikey': SUPABASE_ANON_KEY,
             'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
-        },
-        body: JSON.stringify({
-            campaign_id: campaignId,
-            count: count
-        })
+        }
+    };
+    
+    if (body) {
+        options.body = JSON.stringify(body);
+    }
+    
+    const response = await fetch(url, options);
+    if (!response.ok) {
+        const error = await response.text();
+        throw new Error(`${name} failed (${response.status}): ${error}`);
+    }
+    return await response.json();
+}
+
+async function changeCampaignStatus(campaignId) {
+    return await callEdgeFunction('changeCampaignStatus', 'POST', { campaign_id: campaignId });
+}
+
+async function getCampaignLaunchData(campaignId) {
+    const res = await callEdgeFunction('getCampaignLaunchData', 'POST', { campaign_id: campaignId });
+    if (res.status !== 'success') throw new Error('Failed to fetch launch data');
+    return res;
+}
+
+async function getTemplateById(templateId) {
+    const res = await callEdgeFunction('getTemplateById', 'POST', { templateId: templateId });
+    if (res.status !== 'success' || !res.template) {
+        throw new Error(`getTemplateById failed: ${res.message || 'Template not found'}`);
+    }
+    return res.template;
+}
+
+async function updateTemplateBundle(bundleId, htmlFront, htmlBack) {
+    return await callEdgeFunction('updateTemplateBundle', 'POST', {
+        template_bundle_id: bundleId,
+        html_front: htmlFront,
+        html_back: htmlBack
+    });
+}
+
+async function getTracker(trackerId, apiKey) {
+    const url = `https://api.postgrid.com/print-mail/v1/trackers/${trackerId}`;
+    const response = await fetch(url, {
+        headers: {
+            'x-api-key': apiKey
+        }
     });
 
-    if (!response.ok)
-    {
-        console.error(`Failed to update sent count in Supabase: ${response.statusText}`);
-    } else
-    {
-        console.log(`Updated Supabase count to ${count}`);
+    if (!response.ok) {
+        const err = await response.text();
+        throw new Error(`getTracker failed (${response.status}): ${err}`);
     }
+
+    return await response.json();
+}
+
+async function updateSentCount(campaignId, count) {
+    return await callEdgeFunction('updatePostCardsSentCount', 'POST', {
+        campaign_id: campaignId,
+        count: count
+    });
 }
 
 // =============================================================================

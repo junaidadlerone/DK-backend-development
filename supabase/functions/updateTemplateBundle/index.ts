@@ -61,21 +61,24 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Get user's organization
-    const organizationId = await getUserOrganizationId(supabase, user.userId);
-    if (!organizationId) {
-      return errorResponse(
-        "NO_ORGANIZATION",
-        "User is not associated with any organization",
-        403
-      );
+    // Get user's organization (skip for service role)
+    let organizationId: string | null = null;
+    if (!user.isServiceRole) {
+      organizationId = await getUserOrganizationId(supabase, user.userId);
+      if (!organizationId) {
+        return errorResponse(
+          "NO_ORGANIZATION",
+          "User is not associated with any organization",
+          403
+        );
+      }
     }
 
     // Parse request body
     let requestBody: RequestBody;
     try {
       requestBody = await req.json();
-    } catch (parseError) {
+    } catch (_parseError) {
       return errorResponse(
         "INVALID_INPUT",
         "Invalid JSON in request body",
@@ -143,21 +146,24 @@ Deno.serve(async (req) => {
     }
 
     // Check ownership - must be user's org or universal (and user is ADMIN)
-    if (bundle.is_universal) {
-      const isUserAdmin = await isAdmin(user.userId);
-      if (!isUserAdmin) {
+    // Internal services using service role key bypass these checks
+    if (!user.isServiceRole) {
+      if (bundle.is_universal) {
+        const isUserAdmin = await isAdmin(user.userId);
+        if (!isUserAdmin) {
+          return errorResponse(
+            "FORBIDDEN",
+            "Only ADMIN users can update universal template bundles",
+            403
+          );
+        }
+      } else if (bundle.organization_id !== organizationId) {
         return errorResponse(
           "FORBIDDEN",
-          "Only ADMIN users can update universal template bundles",
+          "Bundle doesn't belong to your organization",
           403
         );
       }
-    } else if (bundle.organization_id !== organizationId) {
-      return errorResponse(
-        "FORBIDDEN",
-        "Bundle doesn't belong to your organization",
-        403
-      );
     }
 
     const frontTemplate = bundle.front;
@@ -409,7 +415,7 @@ Deno.serve(async (req) => {
     console.error("Unexpected error in updateTemplateBundle:", error);
     return errorResponse(
       "INTERNAL_ERROR",
-      `An unexpected error occurred: ${error.message}`,
+      `An unexpected error occurred: ${error instanceof Error ? error.message : String(error)}`,
       500
     );
   }

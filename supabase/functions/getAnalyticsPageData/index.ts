@@ -4,6 +4,21 @@ import { getUserFromRequest } from "../_shared/history.ts";
 import { getUserOrganizationId } from "../_shared/organization.ts";
 import { getUserPreferences, UserPreferences } from "../_shared/preferences.ts";
 import { enrichCurrency } from "../_shared/currency.ts";
+import { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
+
+interface CampaignData {
+  id: string;
+  postgrid_tracker_id?: string;
+  postcards_sent?: number;
+  leads_gen?: number;
+  scan_rate?: number;
+  referral_id?: string;
+  zone_id?: string;
+  front_template_id?: string;
+  back_template_id?: string;
+  created_at: string;
+  updated_at: string;
+}
 
 /**
  * Get Analytics Page Data Edge Function
@@ -13,7 +28,7 @@ import { enrichCurrency } from "../_shared/currency.ts";
  * - Organization-based (user must be in organization)
  * - Supports optional campaign filtering and date range filtering
  * - Computes fresh data on every call but caches for fallback
- * - Uses Linkly API for QR scan tracking data
+ * - Uses PostGrid Tracker API for QR scan tracking data (aggregated totals)
  *
  * Request body:
  * {
@@ -29,13 +44,6 @@ interface AnalyticsPageRequest {
   selected_campaign_id?: string;
   selected_start_date?: string;
   selected_end_date?: string;
-}
-
-interface LinklyTrafficData {
-  traffic: Array<{
-    y: number;
-    t: string;
-  }>;
 }
 
 Deno.serve(async (req) => {
@@ -115,22 +123,11 @@ Deno.serve(async (req) => {
       );
     }
 
-    const linklyApiKey = Deno.env.get("LINKLY_API_KEY");
-    const linklyWorkspaceId = Deno.env.get("LINKLY_WORKSPACE_ID");
-
-    if (!linklyApiKey || !linklyWorkspaceId) {
-      return errorResponse(
-        "MISSING_CREDENTIALS",
-        "LINKLY_API_KEY or LINKLY_WORKSPACE_ID environment variables are not set",
-        500
-      );
-    }
-
     // Fetch user preferences for enrichment
     const preferences = await getUserPreferences(supabase, user.userId);
 
     // Try to compute fresh analytics
-    let analyticsData: any;
+    let analyticsData: Record<string, unknown> = {};
 
     try {
       if (analyticsType === "OVERVIEW") {
@@ -140,9 +137,7 @@ Deno.serve(async (req) => {
           preferences,
           selected_campaign_id,
           selected_start_date,
-          selected_end_date,
-          linklyApiKey,
-          linklyWorkspaceId
+          selected_end_date
         );
       } else if (analyticsType === "CAMPAIGN_PERFORMANCE") {
         analyticsData = await computeCampaignPerformanceAnalytics(
@@ -151,9 +146,7 @@ Deno.serve(async (req) => {
           preferences,
           selected_campaign_id,
           selected_start_date,
-          selected_end_date,
-          linklyApiKey,
-          linklyWorkspaceId
+          selected_end_date
         );
       } else if (analyticsType === "ROI") {
         analyticsData = await computeROIAnalytics(
@@ -162,9 +155,7 @@ Deno.serve(async (req) => {
           preferences,
           selected_campaign_id,
           selected_start_date,
-          selected_end_date,
-          linklyApiKey,
-          linklyWorkspaceId
+          selected_end_date
         );
       }
 
@@ -217,11 +208,11 @@ Deno.serve(async (req) => {
       }
     }, 200);
 
-  } catch (error) {
+  } catch (error: unknown) {
     console.error("Unexpected error in getAnalyticsPageData:", error);
     return errorResponse(
       "INTERNAL_ERROR",
-      `An unexpected error occurred: ${error.message}`,
+      `An unexpected error occurred: ${(error as Error)?.message || "Unknown error"}`,
       500
     );
   }
@@ -231,15 +222,13 @@ Deno.serve(async (req) => {
  * Compute Overview Analytics
  */
 async function computeOverviewAnalytics(
-  supabase: any,
+  supabase: SupabaseClient,
   organizationId: string,
-  preferences: UserPreferences,
+  _preferences: UserPreferences,
   campaignId?: string,
   startDate?: string,
-  endDate?: string,
-  linklyApiKey?: string,
-  linklyWorkspaceId?: string
-): Promise<any> {
+  endDate?: string
+): Promise<Record<string, unknown>> {
 
   // Build campaign query
   let campaignQuery = supabase
@@ -258,7 +247,7 @@ async function computeOverviewAnalytics(
     throw new Error(`Failed to fetch campaigns: ${campaignsError.message}`);
   }
 
-  const allCampaigns = campaigns || [];
+  const allCampaigns = (campaigns as unknown as CampaignData[]) || [];
   const totalCampaigns = allCampaigns.length;
 
   // Calculate date boundaries
@@ -267,35 +256,9 @@ async function computeOverviewAnalytics(
   const weekStart = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
   const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
 
-  let filterStartDate = startDate ? new Date(startDate) : null;
-  let filterEndDate = endDate ? new Date(endDate) : null;
+  const _filterStartDate = startDate ? new Date(startDate) : null;
+  const _filterEndDate = endDate ? new Date(endDate) : null;
 
-  // Sync Linkly data for campaigns with tracker_id
-  let linklyDataMap = new Map<string, Array<{y: number, t: string}>>();
-
-  for (const campaign of allCampaigns) {
-    if (campaign.postgrid_tracker_id && linklyApiKey && linklyWorkspaceId) {
-      try {
-        const linklyUrl = `https://app.linklyhq.com/api/v1/workspace/${linklyWorkspaceId}/clicks?link_id=${campaign.postgrid_tracker_id}&bots=false&unique=false&format=json&timezone=America%2FNew_York&frequency=day&api_key=${encodeURIComponent(linklyApiKey)}`;
-
-        const linklyResponse = await fetch(linklyUrl, {
-          method: "GET",
-          headers: {
-            "accept": "application/json",
-          },
-        });
-
-        if (linklyResponse.ok) {
-          const linklyData: LinklyTrafficData = await linklyResponse.json();
-          linklyDataMap.set(campaign.id, linklyData.traffic);
-        }
-      } catch (error) {
-        console.error(`Error fetching Linkly data for campaign ${campaign.id}:`, error);
-      }
-    }
-  }
-
-  // Calculate metrics
   let totalPostcardsSent = 0;
   let totalQrScans = 0;
   let totalQrScansToday = 0;
@@ -304,56 +267,36 @@ async function computeOverviewAnalytics(
   let totalQrScansInRange = 0;
 
   // Track campaigns with leads for top performers
-  const campaignsWithLeads: Array<{campaign: any, leads: number, roi: number}> = [];
+  const campaignsWithLeads: Array<{campaign: CampaignData, leads: number, roi: number}> = [];
 
   for (const campaign of allCampaigns) {
     totalPostcardsSent += campaign.postcards_sent || 0;
 
-    // Get Linkly data if available
-    const linklyTraffic = linklyDataMap.get(campaign.id);
-    let campaignLeads = 0;
+    // Use leads_gen from database (synced via syncPostGridAnalytics)
+    const campaignLeads = campaign.leads_gen || 0;
     let leadsToday = 0;
     let leadsThisWeek = 0;
     let leadsThisMonth = 0;
     let leadsInRange = 0;
 
-    if (linklyTraffic && linklyTraffic.length > 0) {
-      for (const traffic of linklyTraffic) {
-        const trafficDate = new Date(traffic.t);
-        campaignLeads += traffic.y;
+    // For historical breakdowns without real-time time-series, 
+    // we use updated_at as a proxy for recent activity.
+    const updatedAt = new Date(campaign.updated_at);
+    
+    if (updatedAt >= todayStart) {
+      leadsToday = campaignLeads;
+    }
 
-        // Daily
-        if (trafficDate >= todayStart) {
-          leadsToday += traffic.y;
-        }
+    if (updatedAt >= weekStart) {
+      leadsThisWeek = campaignLeads;
+    }
 
-        // Weekly
-        if (trafficDate >= weekStart) {
-          leadsThisWeek += traffic.y;
-        }
+    if (updatedAt >= monthStart) {
+      leadsThisMonth = campaignLeads;
+    }
 
-        // Monthly
-        if (trafficDate >= monthStart) {
-          leadsThisMonth += traffic.y;
-        }
-
-        // Custom range
-        if (filterStartDate && filterEndDate && trafficDate >= filterStartDate && trafficDate <= filterEndDate) {
-          leadsInRange += traffic.y;
-        }
-      }
-    } else {
-      // Fallback to leads_gen from database
-      campaignLeads = campaign.leads_gen || 0;
-
-      // For date filtering, use updated_at as proxy
-      const updatedAt = new Date(campaign.updated_at);
-      if (updatedAt >= todayStart) leadsToday = campaignLeads;
-      if (updatedAt >= weekStart) leadsThisWeek = campaignLeads;
-      if (updatedAt >= monthStart) leadsThisMonth = campaignLeads;
-      if (filterStartDate && filterEndDate && updatedAt >= filterStartDate && updatedAt <= filterEndDate) {
-        leadsInRange = campaignLeads;
-      }
+    if (_filterStartDate && _filterEndDate && updatedAt >= _filterStartDate && updatedAt <= _filterEndDate) {
+      leadsInRange = campaignLeads;
     }
 
     totalQrScans += campaignLeads;
@@ -394,7 +337,7 @@ async function computeOverviewAnalytics(
     .map(item => item.campaign);
 
   // Get top referrals by leads (only for organization view, not single campaign)
-  let topReferralsByLeads: any[] = [];
+  let topReferralsByLeads: Record<string, unknown>[] = [];
 
   if (!campaignId && topPerformingCampaigns.length > 0) {
     const topCampaignIds = topPerformingCampaigns
@@ -409,7 +352,7 @@ async function computeOverviewAnalytics(
         .limit(10);
 
       if (!referralsError && referrals) {
-        topReferralsByLeads = referrals;
+        topReferralsByLeads = referrals as Record<string, unknown>[];
       }
     }
   }
@@ -420,14 +363,14 @@ async function computeOverviewAnalytics(
     .select("id, addresses, campaign_id")
     .eq("organization_id", organizationId);
 
-  let reachAddresses: any[] = [];
+  const reachAddresses: Record<string, unknown>[] = [];
 
   if (!zonesError && locationZones) {
-    for (const zone of locationZones) {
-      if (!campaignId || zone.campaign_id === campaignId) {
-        if (Array.isArray(zone.addresses)) {
+    for (const _zone of (locationZones as unknown as Array<{campaign_id: string, addresses: unknown}>)) {
+      if (!campaignId || _zone.campaign_id === campaignId) {
+        if (Array.isArray(_zone.addresses)) {
           // Filter addresses with verified/Valid status
-          const validAddresses = zone.addresses.filter((addr: any) =>
+          const validAddresses = (_zone.addresses as unknown[]).filter((addr: any) =>
             addr && typeof addr === 'object' &&
             (addr.status === 'verified' || addr.status === 'Valid')
           );
@@ -441,8 +384,7 @@ async function computeOverviewAnalytics(
   const analyticsData: any = {
     total_campaigns: totalCampaigns,
     total_postcards_sent: totalPostcardsSent,
-    total_qr_scans: totalQrScans,
-    total_qr_scans: totalQrScans,
+    total_qr_scans_all_time: totalQrScans,
     total_estimated_leads_generated: totalQrScans, // Assuming 100% conversion
     total_estimated_average_roi: Math.round(totalEstimatedAverageROI * 100) / 100,
     geographic_distribution: {
@@ -469,7 +411,7 @@ async function computeOverviewAnalytics(
   };
 
   // Add custom date range if provided
-  if (filterStartDate && filterEndDate) {
+  if (_filterStartDate && _filterEndDate) {
     analyticsData.campaign_activity_overtime.custom_range = {
       total: totalQrScansInRange,
       overview: `${totalQrScansInRange} in selected range`,
@@ -491,13 +433,13 @@ async function computeOverviewAnalytics(
  * Cache analytics data
  */
 async function cacheAnalytics(
-  supabase: any,
+  supabase: SupabaseClient,
   organizationId: string,
   analyticsType: string,
   campaignId?: string,
   startDate?: string,
   endDate?: string,
-  data?: any
+  data?: unknown
 ): Promise<void> {
   try {
     const { error: upsertError } = await supabase
@@ -526,13 +468,13 @@ async function cacheAnalytics(
  * Get cached analytics data
  */
 async function getCachedAnalytics(
-  supabase: any,
+  supabase: SupabaseClient,
   organizationId: string,
   analyticsType: string,
   campaignId?: string,
   startDate?: string,
   endDate?: string
-): Promise<any | null> {
+): Promise<unknown | null> {
   try {
     let query = supabase
       .from("detailed_analytics")
@@ -561,7 +503,7 @@ async function getCachedAnalytics(
       return null;
     }
 
-    return data.data;
+  return (data as { data: any }).data;
   } catch (error) {
     console.error("Error getting cached analytics:", error);
     return null;
@@ -572,15 +514,13 @@ async function getCachedAnalytics(
  * Compute Campaign Performance Analytics
  */
 async function computeCampaignPerformanceAnalytics(
-  supabase: any,
+  supabase: SupabaseClient,
   organizationId: string,
-  preferences: UserPreferences,
+  _preferences: UserPreferences,
   campaignId?: string,
   startDate?: string,
-  endDate?: string,
-  linklyApiKey?: string,
-  linklyWorkspaceId?: string
-): Promise<any> {
+  endDate?: string
+): Promise<Record<string, unknown>> {
 
   // Build campaign query
   let campaignQuery = supabase
@@ -607,33 +547,8 @@ async function computeCampaignPerformanceAnalytics(
   const weekStart = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
   const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
 
-  let filterStartDate = startDate ? new Date(startDate) : null;
-  let filterEndDate = endDate ? new Date(endDate) : null;
-
-  // Sync Linkly data for campaigns with tracker_id
-  let linklyDataMap = new Map<string, Array<{y: number, t: string}>>();
-
-  for (const campaign of allCampaigns) {
-    if (campaign.postgrid_tracker_id && linklyApiKey && linklyWorkspaceId) {
-      try {
-        const linklyUrl = `https://app.linklyhq.com/api/v1/workspace/${linklyWorkspaceId}/clicks?link_id=${campaign.postgrid_tracker_id}&bots=false&unique=false&format=json&timezone=America%2FNew_York&frequency=day&api_key=${encodeURIComponent(linklyApiKey)}`;
-
-        const linklyResponse = await fetch(linklyUrl, {
-          method: "GET",
-          headers: {
-            "accept": "application/json",
-          },
-        });
-
-        if (linklyResponse.ok) {
-          const linklyData: LinklyTrafficData = await linklyResponse.json();
-          linklyDataMap.set(campaign.id, linklyData.traffic);
-        }
-      } catch (error) {
-        console.error(`Error fetching Linkly data for campaign ${campaign.id}:`, error);
-      }
-    }
-  }
+  const _filterStartDate = startDate ? new Date(startDate) : null;
+  const _filterEndDate = endDate ? new Date(endDate) : null;
 
   // Calculate overall metrics
   let totalPostcardsSent = 0;
@@ -656,32 +571,17 @@ async function computeCampaignPerformanceAnalytics(
       zoneIds.push(campaign.zone_id);
     }
 
-    // Get Linkly data if available
-    const linklyTraffic = linklyDataMap.get(campaign.id);
-    let campaignLeads = 0;
+    // Use leads_gen from database
+    const campaignLeads = campaign.leads_gen || 0;
     let leadsToday = 0;
     let leadsWeek = 0;
     let leadsMonth = 0;
 
-    if (linklyTraffic && linklyTraffic.length > 0) {
-      for (const traffic of linklyTraffic) {
-        const trafficDate = new Date(traffic.t);
-        campaignLeads += traffic.y;
-
-        if (trafficDate >= todayStart) leadsToday += traffic.y;
-        if (trafficDate >= weekStart) leadsWeek += traffic.y;
-        if (trafficDate >= monthStart) leadsMonth += traffic.y;
-      }
-    } else {
-      // Fallback to leads_gen from database
-      campaignLeads = campaign.leads_gen || 0;
-
-      // Use updated_at as proxy for date filtering
-      const updatedAt = new Date(campaign.updated_at);
-      if (updatedAt >= todayStart) leadsToday = campaignLeads;
-      if (updatedAt >= weekStart) leadsWeek = campaignLeads;
-      if (updatedAt >= monthStart) leadsMonth = campaignLeads;
-    }
+    // Use updated_at as proxy for recent activity
+    const updatedAt = new Date(campaign.updated_at);
+    if (updatedAt >= todayStart) leadsToday = campaignLeads;
+    if (updatedAt >= weekStart) leadsWeek = campaignLeads;
+    if (updatedAt >= monthStart) leadsMonth = campaignLeads;
 
     totalQrScans += campaignLeads;
     totalQrScansToday += leadsToday;
@@ -732,16 +632,15 @@ async function computeCampaignPerformanceAnalytics(
   const templatePerformance = await calculateTemplatePerformance(
     supabase,
     organizationId,
-    allCampaigns,
-    linklyDataMap
+    allCampaigns
   );
 
-  const analyticsData: any = {
+  const analyticsData: Record<string, unknown> = {
     total_postcards_sent: totalPostcardsSent,
     total_qr_scans: totalQrScans,
     total_conversion_rate: Math.round(totalConversionRate * 100) / 100,
     cost_per_lead: 3,
-    cost_per_lead_display: enrichCurrency(3, preferences.currency),
+    cost_per_lead_display: enrichCurrency(3, _preferences.currency),
     total_average_distance: Math.round(totalAverageDistance * 100) / 100,
     overview: {
       unit: "miles",
@@ -782,11 +681,10 @@ async function computeCampaignPerformanceAnalytics(
  * one bundle. The `template` field contains the bundle object.
  */
 async function calculateTemplatePerformance(
-  supabase: any,
+  supabase: SupabaseClient,
   organizationId: string,
-  campaigns: any[],
-  linklyDataMap: Map<string, Array<{y: number, t: string}>>
-): Promise<any[]> {
+  campaigns: CampaignData[]
+): Promise<Record<string, unknown>[]> {
 
   if (campaigns.length === 0) return [];
 
@@ -833,21 +731,21 @@ async function calculateTemplatePerformance(
   }
 
   // 5. Group campaigns by bundle
-  const campaignsByBundle = new Map<string, { bundle: any; campaigns: any[] }>();
+  const campaignsByBundle = new Map<string, { bundle: Record<string, any>; campaigns: CampaignData[] }>();
   for (const c of campaigns) {
-    const frontUuid = postgridToUuid.get(c.front_template_id);
-    const backUuid  = postgridToUuid.get(c.back_template_id);
+    const frontUuid = postgridToUuid.get(c.front_template_id || "");
+    const backUuid  = postgridToUuid.get(c.back_template_id || "");
     if (!frontUuid || !backUuid) continue;
     const bundle = bundleByPair.get(`${frontUuid}:${backUuid}`);
     if (!bundle) continue;
-    if (!campaignsByBundle.has(bundle.id)) {
-      campaignsByBundle.set(bundle.id, { bundle, campaigns: [] });
+    if (!campaignsByBundle.has(bundle.id as string)) {
+      campaignsByBundle.set(bundle.id as string, { bundle, campaigns: [] });
     }
-    campaignsByBundle.get(bundle.id)!.campaigns.push(c);
+    campaignsByBundle.get(bundle.id as string)!.campaigns.push(c);
   }
 
   // 6. Calculate metrics per bundle
-  const result: any[] = [];
+  const result: Record<string, unknown>[] = [];
   const costPerLead   = 3;
   const revenuePerLead = 1000;
 
@@ -856,24 +754,20 @@ async function calculateTemplatePerformance(
       ? (bundleCampaigns.length / campaigns.length) * 100
       : 0;
 
-    let totalPostcards = 0;
-    let totalLeads = 0;
+    let bundlePostcardsSent = 0;
+    let bundleLeads          = 0;
+
     for (const c of bundleCampaigns) {
-      totalPostcards += c.postcards_sent || 0;
-      const linklyTraffic = linklyDataMap.get(c.id);
-      if (linklyTraffic && linklyTraffic.length > 0) {
-        totalLeads += linklyTraffic.reduce((sum: number, t: any) => sum + t.y, 0);
-      } else {
-        totalLeads += c.leads_gen || 0;
-      }
+      bundlePostcardsSent += (c.postcards_sent || 0);
+      bundleLeads          += (c.leads_gen || 0);
     }
 
-    const performancePercentage = totalPostcards > 0
-      ? (totalLeads / totalPostcards) * 100
+    const performancePercentage = bundlePostcardsSent > 0
+      ? (bundleLeads / bundlePostcardsSent) * 100
       : 0;
 
-    const totalCost    = totalPostcards * costPerLead;
-    const totalRevenue = totalLeads * revenuePerLead;
+    const totalCost    = bundlePostcardsSent * costPerLead;
+    const totalRevenue = bundleLeads * revenuePerLead;
     const roi = totalCost > 0 ? ((totalRevenue - totalCost) / totalCost) * 100 : 0;
 
     // Bundle object — same shape as getAllTemplatesBundles response
@@ -883,7 +777,7 @@ async function calculateTemplatePerformance(
       isUniversal:    bundle.is_universal || false,
       is_universal:   bundle.is_universal || false,
       // Top-level fields the frontend expects (backward-compatible)
-      campaigns_used: bundleCampaigns.map((c: any) => c.id),
+      campaigns_used: bundleCampaigns.map((c: CampaignData) => c.id || ""),
       description:    (bundle.front?.description || bundle.back?.description || "").replace(/\s*(Front|Back)\s*$/i, "").trim(),
       postcard_size:  bundle.front?.postcard_size || bundle.back?.postcard_size || "",
       template_type:  "Bundle",
@@ -936,15 +830,15 @@ async function calculateTemplatePerformance(
         total_cost:            totalCost,
         total_revenue:         totalRevenue,
         roi_percentage:        Math.round(roi * 100) / 100,
-        total_postcards_sent:  totalPostcards,
-        total_leads_generated: totalLeads,
+        total_postcards_sent:  bundlePostcardsSent,
+        total_leads_generated: bundleLeads,
         cost_per_lead:         costPerLead,
         revenue_per_lead:      revenuePerLead
       }
     });
   }
 
-  result.sort((a, b) => b.performance.performance - a.performance.performance);
+  result.sort((a: any, b: any) => b.performance.performance - a.performance.performance);
   return result;
 }
 
@@ -952,15 +846,13 @@ async function calculateTemplatePerformance(
  * Compute ROI Analytics
  */
 async function computeROIAnalytics(
-  supabase: any,
+  supabase: SupabaseClient,
   organizationId: string,
-  preferences: UserPreferences,
+  _preferences: UserPreferences,
   campaignId?: string,
-  startDate?: string,
-  endDate?: string,
-  linklyApiKey?: string,
-  linklyWorkspaceId?: string
-): Promise<any> {
+  _startDate?: string,
+  _endDate?: string
+): Promise<Record<string, unknown>> {
 
   // Build campaign query
   let campaignQuery = supabase
@@ -981,30 +873,7 @@ async function computeROIAnalytics(
 
   const allCampaigns = campaigns || [];
 
-  // Sync Linkly data for campaigns with tracker_id
-  let linklyDataMap = new Map<string, Array<{y: number, t: string}>>();
-
-  for (const campaign of allCampaigns) {
-    if (campaign.postgrid_tracker_id && linklyApiKey && linklyWorkspaceId) {
-      try {
-        const linklyUrl = `https://app.linklyhq.com/api/v1/workspace/${linklyWorkspaceId}/clicks?link_id=${campaign.postgrid_tracker_id}&bots=false&unique=false&format=json&timezone=America%2FNew_York&frequency=day&api_key=${encodeURIComponent(linklyApiKey)}`;
-
-        const linklyResponse = await fetch(linklyUrl, {
-          method: "GET",
-          headers: {
-            "accept": "application/json",
-          },
-        });
-
-        if (linklyResponse.ok) {
-          const linklyData: LinklyTrafficData = await linklyResponse.json();
-          linklyDataMap.set(campaign.id, linklyData.traffic);
-        }
-      } catch (error) {
-        console.error(`Error fetching Linkly data for campaign ${campaign.id}:`, error);
-      }
-    }
-  }
+  // Calculate total spent and total leads
 
   // Calculate total spent and total leads
   let totalPostcardsSent = 0;
@@ -1028,15 +897,8 @@ async function computeROIAnalytics(
     const postcardsSent = campaign.postcards_sent || 0;
     totalPostcardsSent += postcardsSent;
 
-    // Get leads from Linkly data if available
-    const linklyTraffic = linklyDataMap.get(campaign.id);
-    let campaignLeads = 0;
-
-    if (linklyTraffic && linklyTraffic.length > 0) {
-      campaignLeads = linklyTraffic.reduce((sum, traffic) => sum + traffic.y, 0);
-    } else {
-      campaignLeads = campaign.leads_gen || 0;
-    }
+    // Get leads from database
+    const campaignLeads = campaign.leads_gen || 0;
 
     totalLeadsGen += campaignLeads;
 
@@ -1067,10 +929,10 @@ async function computeROIAnalytics(
 
   // Fetch referrals to get job_details.value for profit calculation
   const referralIds = allCampaigns
-    .map(c => c.referral_id)
-    .filter(id => id !== null && id !== undefined);
+    .map((c: CampaignData) => c.referral_id)
+    .filter((id: string | null | undefined): id is string => id !== null && id !== undefined);
 
-  let referralRevenueMap = new Map<string, number>();
+  const referralRevenueMap = new Map<string, number>();
 
   if (referralIds.length > 0) {
     const { data: referrals, error: referralsError } = await supabase
@@ -1080,8 +942,8 @@ async function computeROIAnalytics(
 
     if (!referralsError && referrals) {
       for (const referral of referrals) {
-        if (referral.job_details && typeof referral.job_details.value === 'number') {
-          referralRevenueMap.set(referral.campaign_id, referral.job_details.value);
+        if (referral.job_details && typeof (referral.job_details as any).value === 'number') {
+          referralRevenueMap.set(referral.campaign_id as string, (referral.job_details as any).value);
         }
       }
     }
@@ -1117,15 +979,8 @@ async function computeROIAnalytics(
     const postcardsSent = campaign.postcards_sent || 0;
     const expense = postcardsSent * costPerPostcard;
 
-    // Get leads from Linkly data if available
-    const linklyTraffic = linklyDataMap.get(campaign.id);
-    let campaignLeads = 0;
-
-    if (linklyTraffic && linklyTraffic.length > 0) {
-      campaignLeads = linklyTraffic.reduce((sum, traffic) => sum + traffic.y, 0);
-    } else {
-      campaignLeads = campaign.leads_gen || 0;
-    }
+    // Get leads from database
+    const campaignLeads = campaign.leads_gen || 0;
 
     const revenueAssumed = campaignLeads * assumedRevenuePerLead;
     const revenueActual = referralRevenueMap.get(campaign.id) || 0;
@@ -1186,32 +1041,32 @@ async function computeROIAnalytics(
 
   const analyticsData: any = {
     total_spent: totalSpent,
-    total_spent_display: enrichCurrency(totalSpent, preferences.currency),
+    total_spent_display: enrichCurrency(totalSpent, _preferences.currency),
     total_leads_gen: totalLeadsGen,
     avg_estimated_roi: Math.round(avgEstimatedROI * 100) / 100,
     estimated_revenue_generated: estimatedRevenueGenerated,
-    estimated_revenue_generated_display: enrichCurrency(estimatedRevenueGenerated, preferences.currency),
+    estimated_revenue_generated_display: enrichCurrency(estimatedRevenueGenerated, _preferences.currency),
     estimated_cost_recovery_ratio: Math.round(estimatedCostRecoveryRatio * 100) / 100,
     estimated_profit_vs_expense_breakdown: estimatedProfitVsExpenseBreakdown.map(item => ({
         ...item,
-        total_expense_display: enrichCurrency(item.total_expense, preferences.currency),
-        total_revenue_assumed_display: enrichCurrency(item.total_revenue_assumed, preferences.currency),
-        total_revenue_actual_display: enrichCurrency(item.total_revenue_actual, preferences.currency),
-        profit_assumed_display: enrichCurrency(item.profit_assumed, preferences.currency),
-        profit_actual_display: enrichCurrency(item.profit_actual, preferences.currency)
+        total_expense_display: enrichCurrency(item.total_expense, _preferences.currency),
+        total_revenue_assumed_display: enrichCurrency(item.total_revenue_assumed, _preferences.currency),
+        total_revenue_actual_display: enrichCurrency(item.total_revenue_actual, _preferences.currency),
+        profit_assumed_display: enrichCurrency(item.profit_assumed, _preferences.currency),
+        profit_actual_display: enrichCurrency(item.profit_actual, _preferences.currency)
     })),
     cost_breakdown: costBreakdown.map(item => ({
         ...item,
-        cost_per_postcard_display: enrichCurrency(item.cost_per_postcard, preferences.currency),
-        total_campaign_cost_display: enrichCurrency(item.total_campaign_cost, preferences.currency)
+        cost_per_postcard_display: enrichCurrency(item.cost_per_postcard, _preferences.currency),
+        total_campaign_cost_display: enrichCurrency(item.total_campaign_cost, _preferences.currency)
     })),
     estimated_roi_timeline_per_campaign: estimatedROITimelinePerCampaign.map(item => ({
         ...item,
-        cost_display: enrichCurrency(item.cost, preferences.currency),
-        revenue_display: enrichCurrency(item.revenue, preferences.currency),
-        profit_display: enrichCurrency(item.profit, preferences.currency),
-        cumulative_cost_display: enrichCurrency(item.cumulative_cost, preferences.currency),
-        cumulative_revenue_display: enrichCurrency(item.cumulative_revenue, preferences.currency)
+        cost_display: enrichCurrency(item.cost, _preferences.currency),
+        revenue_display: enrichCurrency(item.revenue, _preferences.currency),
+        profit_display: enrichCurrency(item.profit, _preferences.currency),
+        cumulative_cost_display: enrichCurrency(item.cumulative_cost, _preferences.currency),
+        cumulative_revenue_display: enrichCurrency(item.cumulative_revenue, _preferences.currency)
     }))
   };
 
