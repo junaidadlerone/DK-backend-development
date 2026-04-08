@@ -151,7 +151,7 @@ export async function getUserOrganizations(
         .select("id, business_name, business_email, owner_id, organization_members, deletion_scheduled_at, is_agency"),
       supabase
         .from("onboarding")
-        .select("organization_id, business_name, street_address, company_logo"),
+        .select("organization_id, business_name, street_address, company_logo, team_onboarding_completed"),
     ]);
 
     if (error || !orgs) return [];
@@ -188,7 +188,8 @@ export async function getUserOrganizations(
       const ob = onboardingMap.get(org.id);
       let onboarding_step = 0;
       if (ob) {
-        if (ob.company_logo) onboarding_step = 3;
+        if (ob.team_onboarding_completed) onboarding_step = 4;
+        else if (ob.company_logo) onboarding_step = 3;
         else if (ob.street_address) onboarding_step = 2;
         else if (ob.business_name) onboarding_step = 1;
       }

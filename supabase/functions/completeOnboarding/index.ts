@@ -439,6 +439,17 @@ Deno.serve(async (req) => {
         return errorResponse("UPDATE_FAILED", "Failed to update team members", 500);
       }
 
+      // Mark step 4 as completed in the onboarding table
+      const { error: onboardingUpdateError } = await supabase
+        .from("onboarding")
+        .update({ team_onboarding_completed: true, updated_at: new Date().toISOString() })
+        .eq("organization_id", organizationId);
+
+      if (onboardingUpdateError) {
+        console.error("[completeOnboarding] step 4 onboarding update error:", onboardingUpdateError);
+        return errorResponse("UPDATE_FAILED", "Failed to mark onboarding step 4 as complete", 500);
+      }
+
       return successResponse({
         status: "success",
         message: "Team members assigned to organization",
