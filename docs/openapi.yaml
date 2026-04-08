@@ -119,7 +119,8 @@ tags:
       multiple organizations under one account, with full tenant isolation.
 
       **New endpoints:** enableMultiOrg, disableMultiOrg, createOrganization, switchOrganization,
-      getUserOrganizations, deleteOrganization, recoverOrganization, transferOrganizationOwnership
+      getUserOrganizations, deleteOrganization, recoverOrganization, transferOrganizationOwnership,
+      getAgencyAccountOrganizationMembers
 
       **Modified endpoints:** login (org list in response), signUp (sets Super Admin flag),
       completeOnboarding (org_id param + step 4), createUser (org_id param), getUser (org column for Super Admins)
@@ -14965,6 +14966,89 @@ paths:
               example:
                 error: FORBIDDEN
                 message: Only the current owner can transfer ownership
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /getAgencyAccountOrganizationMembers:
+    get:
+      tags:
+        - Multi-Tenant Organization Management
+      summary: Get all members of the agency owner's primary organization
+      description: |
+        Returns all members added to the organization the authenticated user originally signed up with (their owned org).
+
+        Only accessible by the org owner. Each member includes their `id`, `role`, `full_name`, and `email`.
+      operationId: getAgencyAccountOrganizationMembers
+      security:
+        - BearerAuth: []
+        - SupabaseAuth: []
+      responses:
+        "200":
+          description: Members retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: success
+                  organization_id:
+                    type: string
+                    format: uuid
+                  organization_name:
+                    type: string
+                    example: Acme Corp
+                  members:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                          format: uuid
+                        role:
+                          type: string
+                          enum: [ADMIN, MARKETER, TECHNICIAN]
+                        full_name:
+                          type: string
+                          nullable: true
+                        email:
+                          type: string
+                          format: email
+                          nullable: true
+              example:
+                status: success
+                organization_id: "4faa2eb4-ff07-4881-9fc3-3fdd3797e33f"
+                organization_name: "Acme Corp"
+                members:
+                  - id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+                    role: ADMIN
+                    full_name: "Alice Smith"
+                    email: "alice@example.com"
+                  - id: "b2c3d4e5-f6a7-8901-bcde-f12345678901"
+                    role: TECHNICIAN
+                    full_name: null
+                    email: "bob@example.com"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: No owned organization found for this user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: NOT_FOUND
+                message: No owned organization found for this user
         "500":
           description: Internal server error
           content:

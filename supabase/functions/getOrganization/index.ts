@@ -94,10 +94,41 @@ Deno.serve(async (req) => {
     // Fetch user preferences
     const preferences = await getPreferences(supabase, user.id);
 
+    // Enrich organization_members with profile data
+    const rawMembers: { member_uid: string; member_role: string }[] = Array.isArray(organization.organization_members)
+      ? organization.organization_members
+      : [];
+
+    let enrichedMembers: any[] = rawMembers;
+    if (rawMembers.length > 0) {
+      const memberIds = rawMembers.map((m) => m.member_uid);
+      const { data: profiles } = await supabase
+        .from("profiles")
+        .select("id, full_name")
+        .in("id", memberIds);
+
+      const { data: authUsers } = await supabase.auth.admin.listUsers();
+      const emailMap = new Map<string, string>();
+      for (const u of authUsers?.users ?? []) {
+        if (u.email) emailMap.set(u.id, u.email);
+      }
+
+      const profileMap = new Map<string, any>();
+      for (const p of profiles ?? []) profileMap.set(p.id, p);
+
+      enrichedMembers = rawMembers.map((m) => ({
+        member_uid: m.member_uid,
+        member_role: m.member_role,
+        full_name: profileMap.get(m.member_uid)?.full_name ?? null,
+        email: emailMap.get(m.member_uid) ?? null,
+      }));
+    }
+
     // Enrich organization with timezone info and agency flag; drop raw is_agency
     const { is_agency, ...orgFields } = organization;
     const enrichedOrganization = {
       ...orgFields,
+      organization_members: enrichedMembers,
       created_at_tz: enrichTimestamp(organization.created_at, preferences.timezone),
       isAgencyAccount: is_agency ?? false,
     };

@@ -110,6 +110,8 @@ export interface RefreshTokenResponse {
 export interface OrganizationMember {
   member_uid: string;
   member_role: UserRole;
+  full_name: string | null;
+  email: string | null;
 }
 
 // Organization from database
