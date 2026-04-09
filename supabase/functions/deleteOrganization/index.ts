@@ -66,7 +66,7 @@ Deno.serve(async (req) => {
     }
 
     // Type-to-confirm check
-    if (confirm_name !== org.business_name) {
+    if (org.business_name !== null && confirm_name !== org.business_name) {
       return errorResponse(
         "NAME_MISMATCH",
         "Confirmation name does not match the organization name",
