@@ -38,12 +38,14 @@ Deno.serve(async (req) => {
       return successResponse({ status: "success", message: "Multi-org mode already disabled", multi_org_enabled: false });
     }
 
-    // Count active orgs owned by this user
+    // Count active orgs owned by this user which have not been deleted yet.
+    const now = new Date().toISOString();
+
     const { data: ownedOrgs, error: orgsError } = await supabase
       .from("organizations")
       .select("id, business_name")
       .eq("owner_id", user.userId)
-      .is("deletion_scheduled_at", null);
+      .or(`deletion_scheduled_at.is.null,deletion_scheduled_at.gt.${now}`);
 
     if (orgsError) {
       console.error("disableMultiOrg orgs fetch error:", orgsError);

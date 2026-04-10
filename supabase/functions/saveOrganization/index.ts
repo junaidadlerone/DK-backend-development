@@ -4,6 +4,7 @@ import {
   isValidEmail,
 } from "../_shared/client.ts";
 import type { SaveOrganizationRequest } from "../_shared/types.ts";
+import { getUserOrganizationId } from "../_shared/organization.ts";
 
 /**
  * Save Organization Edge Function
@@ -89,21 +90,22 @@ Deno.serve(async (req) => {
     const { data: existingOrg, error: fetchError } = await supabase
       .from("organizations")
       .select("id")
-      .eq("owner_id", user.id)
-      .single();
+      .eq("owner_id", user.id);
 
     if (fetchError || !existingOrg) {
       return errorResponse(
-        "ORGANIZATION_NOT_FOUND",
-        "Organization not found. Please contact support.",
+        "NO_ORGANIZATION_FOUND",
+        "User has no organization. Create an organization first.",
         404
       );
     }
 
+    const organization_id = await getUserOrganizationId(supabase, user.id); 
+
     // Update the organization
     const { data: updatedOrg, error: updateError } = await supabase
       .from("organizations")
-      .update({
+      .update({ 
         business_name,
         registration_number: registration_number || null,
         industry: industry || null,
@@ -112,7 +114,7 @@ Deno.serve(async (req) => {
         phone_number: phone_number || null,
         website_url: website_url || null,
       })
-      .eq("owner_id", user.id)
+      .eq("id", organization_id)
       .select()
       .single();
 
