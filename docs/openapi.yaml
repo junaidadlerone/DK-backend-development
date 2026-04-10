@@ -2444,6 +2444,277 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
+  /importAddressList:
+    post:
+      tags:
+        - Address Discovery
+      summary: Import and verify CSV address list
+      description: |
+        Ingests a CSV file, parses it, identifies duplicates, and verifies unique addresses via internal field validation.
+
+        **CSV Format Requirements:**
+        The CSV must include the following headers:
+        - `Address Line 1`
+        - `Address Line 2` (optional)
+        - `City`
+        - `State`
+        - `Zip Code`
+
+        **Processing Logic:**
+        1. **Parsing**: Validates headers and extracts rows.
+        2. **Deduplication**: Identifies records with identical Line1, Line2, and Zip.
+        3. **Validation**: Marks records as invalid if any required field is missing.
+        4. **Persistence**: Saves the resulting list to the database.
+      operationId: importAddressList
+      security:
+        - SupabaseAuth: []
+          BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - list_name
+                - csv_data
+                - campaign_id
+              properties:
+                list_name:
+                  type: string
+                  description: Human-readable name for the address list
+                csv_data:
+                  type: string
+                  format: byte
+                  description: Base64 encoded CSV content. Prefixed with data:text/csv;base64 for best results.
+                filename:
+                  type: string
+                campaign_id:
+                  type: string
+                  format: uuid
+                column_mapping:
+                  type: object
+                  additionalProperties:
+                    type: string
+                  description: |
+                    Optional mapping from target fields to CSV headers.
+                    Fields: Address Line 1, Address Line 2, City, State, Zip Code, Country.
+            example:
+              list_name: "Spring Marketing Campaign"
+              csv_data: "data:text/csv;base64,..."
+              column_mapping:
+                "Address Line 1": "street_addr"
+                "Zip Code": "postal_code"
+      responses:
+        "200":
+          description: List processed and verified successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  total_addresses:
+                    type: integer
+                  valid_addresses:
+                    type: integer
+                  invalid_addresses:
+                    type: integer
+                  duplicate_addresses:
+                    type: integer
+                  results:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        address_line1:
+                          type: string
+                        address_line2:
+                          type: string
+                        city:
+                          type: string
+                        state:
+                          type: string
+                        zip:
+                          type: string
+                        id:
+                          type: string
+                          format: uuid
+                        country:
+                          type: string
+                        is_valid:
+                          type: boolean
+                        is_duplicate:
+                          type: boolean
+                        is_included:
+                          type: boolean
+                        status:
+                          type: string
+                          enum: [valid, invalid, duplicate]
+                        error_message:
+                          type: string
+        "422":
+          description: Automatic column detection failed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: UNABLE_TO_AUTOMATICALLY_PICK_DATA_COLUMNS
+                  message:
+                    type: string
+                  located_headers:
+                    type: array
+                    items:
+                      type: string
+                  missing_headers:
+                    type: array
+                    items:
+                      type: string
+                  required_headers:
+                    type: array
+                    items:
+                      type: string
+                example:
+                  error: UNABLE_TO_AUTOMATICALLY_PICK_DATA_COLUMNS
+                  message: "Could not find or map mandatory columns: Address Line 1, Zip Code"
+                  located_headers: ["street_addr", "city_name", "state_code", "post_code", "tel"]
+                  missing_headers: ["Address Line 1", "Zip Code"]
+                  required_headers: ["Address Line 1", "City", "State", "Zip Code"]
+
+  /functions/v1/removeAllDuplicates:
+    post:
+      summary: Remove all duplicate addresses from a list
+      tags:
+        - Campaigns
+      security:
+        - SupabaseAuth: []
+          BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - list_id
+              properties:
+                list_id:
+                  type: string
+                  format: uuid
+      responses:
+        "200":
+          description: Duplicates removed successfully. Operation logged in history.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  removed_count:
+                    type: integer
+                  remaining_count:
+                    type: integer
+
+  /functions/v1/editAddress:
+    post:
+      summary: Edit a specific address row in a list
+      tags:
+        - Campaigns
+      security:
+        - SupabaseAuth: []
+          BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - list_id
+                - address_id
+                - updates
+              properties:
+                list_id:
+                  type: string
+                  format: uuid
+                address_id:
+                  type: string
+                  format: uuid
+                updates:
+                  type: object
+                  description: 'Map of fields to update (e.g. {"city": "Toronto", "is_included": false})'
+      responses:
+        "200":
+          description: Address updated successfully. Operation logged in history.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  updated_address:
+                    type: object
+
+  /functions/v1/validateAddress:
+    post:
+      summary: Validate address(es) via Google Geocoding
+      tags:
+        - Campaigns
+      security:
+        - SupabaseAuth: []
+          BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - list_id
+              properties:
+                list_id:
+                  type: string
+                  format: uuid
+                address_id:
+                  type: string
+                  format: uuid
+                  description: Optional. If omitted, validates all included and unvalidated addresses.
+      responses:
+        "200":
+          description: Validation completed. Operation logged in history.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  updated_count:
+                    type: integer
+              example:
+                - address_line1: "123 MAIN ST"
+                  city: "SAN FRANCISCO"
+                  state: "CA"
+                  zip: "94105"
+                  status: "valid"
+                - address_line1: "Invalid Rd"
+                  status: "invalid"
+                  error_message: "line1: Missing Value | zip: Invalid Format"
+        "400":
+          description: Invalid input or empty CSV
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Unauthorized
+        "500":
+          description: Internal server error
+
   /verifyAddresses:
     post:
       tags:

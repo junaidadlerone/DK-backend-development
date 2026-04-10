@@ -509,3 +509,21 @@ verify_jwt = false
 
 [functions.setMaintenanceEmailStatus]
 verify_jwt = false
+
+[functions.enableMultiOrg]
+verify_jwt = false
+
+[functions.disableMultiOrg]
+verify_jwt = false
+
+[functions.importAddressList]
+verify_jwt = false
+
+[functions.removeAllDuplicates]
+verify_jwt = false
+
+[functions.editAddress]
+verify_jwt = false
+
+[functions.validateAddress]
+verify_jwt = false
