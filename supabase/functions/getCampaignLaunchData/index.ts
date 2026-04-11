@@ -46,7 +46,7 @@ Deno.serve(async (req) => {
     const supabase = createSupabaseClient();
 
     // Parse request body
-    let body: any;
+    let body: { campaign_id: string };
     try {
       body = await req.json();
     } catch (parseError) {
@@ -88,6 +88,7 @@ Deno.serve(async (req) => {
         id,
         campaign_id,
         zone_id,
+        csv_address_list_id,
         validated_addresses,
         final_cost,
         amount_per_postcard,
@@ -199,7 +200,9 @@ Deno.serve(async (req) => {
       launch_data: {
         id: launchData.id,
         campaign_id: launchData.campaign_id,
+        campaign_target_type: campaign.campaign_target_type,
         zone_id: launchData.zone_id,
+        csv_address_list_id: launchData.csv_address_list_id,
         validated_addresses: launchData.validated_addresses,
         final_cost: finalCost,
         amount_per_postcard: amountPerPostcard,

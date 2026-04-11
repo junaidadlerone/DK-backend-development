@@ -101,7 +101,7 @@ function parseAddress(formattedAddress: string) {
 /**
  * Verify single address with PostGrid
  */
-async function verifyWithPostGrid(
+async function _verifyWithPostGrid(
   address: AddressInput,
   postgridApiKey: string,
 ): Promise<VerifiedAddress> {
@@ -233,7 +233,7 @@ Deno.serve(async (req) => {
     // const postgridApiKey = req.headers.get("x-postgrid-api-key");
 
     // Parse request body
-    let body: any;
+    let body: { campaign_id: string; amount_per_postcard?: number };
     try {
       body = await req.json();
     } catch (parseError) {
@@ -265,10 +265,9 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Fetch campaign and verify it belongs to user's organization
     const { data: campaign, error: campaignError } = await supabase
       .from("campaigns")
-      .select("id, zone_id, organization_id, campaign_name, business_data")
+      .select("id, zone_id, csv_address_list_id, organization_id, campaign_name, business_data")
       .eq("id", campaign_id)
       .eq("organization_id", organizationId)
       .single();
@@ -282,33 +281,48 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Check if campaign has zone_id
-    if (!campaign.zone_id) {
+    // Check if campaign has zone_id or csv_address_list_id
+    if (!campaign.zone_id && !campaign.csv_address_list_id) {
       return errorResponse(
         "INVALID_CAMPAIGN",
-        "Campaign does not have a zone_id set. Please link a location zone first.",
+        "Campaign does not have a location zone or address list set.",
         400,
       );
     }
 
-    // Fetch zone
-    const { data: zone, error: zoneError } = await supabase
-      .from("location_zones")
-      .select("id, addresses")
-      .eq("id", campaign.zone_id)
-      .single();
+    let allAddresses: any[] = [];
+    let sourceId: string | null = null;
+    let sourceType: "zone" | "list" = "zone";
 
-    if (zoneError || !zone) {
-      console.error("Error fetching zone:", zoneError);
-      return errorResponse(
-        "ZONE_NOT_FOUND",
-        "Zone not found",
-        404,
-      );
+    if (campaign.csv_address_list_id) {
+      // Fetch from CSV Address List
+      const { data: list, error: listError } = await supabase
+        .from("campaign_csv_address_lists")
+        .select("id, addresses")
+        .eq("id", campaign.csv_address_list_id)
+        .single();
+      
+      if (listError || !list) {
+        return errorResponse("NOT_FOUND", "CSV Address List not found", 404);
+      }
+      allAddresses = list.addresses || [];
+      sourceId = list.id;
+      sourceType = "list";
+    } else {
+      // Fetch from traditional location Zone
+      const { data: zone, error: zoneError } = await supabase
+        .from("location_zones")
+        .select("id, addresses")
+        .eq("id", campaign.zone_id)
+        .single();
+
+      if (zoneError || !zone) {
+        return errorResponse("ZONE_NOT_FOUND", "Zone not found", 404);
+      }
+      allAddresses = zone.addresses || [];
+      sourceId = zone.id;
+      sourceType = "zone";
     }
-
-    // Get addresses from zone
-    const allAddresses = zone.addresses || [];
 
     if (allAddresses.length === 0) {
       return errorResponse(
@@ -327,7 +341,7 @@ Deno.serve(async (req) => {
     }
 
     console.log(
-      `Processing ${allAddresses.length} addresses in zone ${zone.id} for campaign ${campaign_id}`,
+      `Processing ${allAddresses.length} addresses in ${sourceType} ${sourceId} for campaign ${campaign_id}`,
     );
 
     // Filter addresses: Skip Opt-out, Keep only already verified
@@ -361,7 +375,8 @@ Deno.serve(async (req) => {
       .from("launch_ready_campaign_data")
       .upsert({
         campaign_id: campaign_id,
-        zone_id: zone.id,
+        zone_id: sourceType === "zone" ? sourceId : null,
+        csv_address_list_id: sourceType === "list" ? sourceId : null,
         validated_addresses: validatedCount,
         final_cost: finalCost,
         amount_per_postcard: amount_per_postcard,
