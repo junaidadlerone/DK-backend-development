@@ -533,3 +533,6 @@ verify_jwt = false
 
 [functions.deleteCSVAddresses]
 verify_jwt = false
+
+[functions.getCoordinates]
+verify_jwt = false

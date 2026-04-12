@@ -5,8 +5,9 @@ import { getUserOrganizationId } from "../_shared/organization.ts";
 import { AddressRow, AddressListMetadata as _AddressListMetadata, ValidatedAddress } from "../_shared/addressLists.ts";
 
 /**
- * Validate Address Edge Function
+ * getCoordinates Edge Function
  * Performs geocoding via Google Maps API for rows in a CSV address list.
+ * Only targets addresses where is_valid === true.
  */
 
 const GOOGLE_MAPS_API_KEY = Deno.env.get("GOOGLE_MAPS_API_KEY");
@@ -73,13 +74,18 @@ Deno.serve(async (req) => {
       console.error("Profile fetch error:", profileError);
     }
 
-    // 2. Validate
+    // 2. Geocode Valid Addresses
     for (let i = 0; i < addresses.length; i++) {
         const row = addresses[i];
 
+        // Only process addresses that are marked as valid from import/purge
+        if (!row.is_valid) {
+            continue;
+        }
+
         const addressStr = `${row.address_line1 || ""}, ${row.city || ""}, ${row.state || ""} ${row.zip || ""}`.trim();
         if (addressStr === "," || addressStr === "") {
-            console.warn(`Skipping row ${i} due to empty address fields`);
+            console.warn(`Skipping row ${i} due to empty address fields despite being marked valid`);
             continue;
         }
         try {
@@ -90,6 +96,7 @@ Deno.serve(async (req) => {
                     lat: geo.lat,
                     long: geo.long,
                     is_valid: true,
+                    is_included: true, // Mark as included once coordinates are found
                     status: "valid"
                 };
 
@@ -172,11 +179,11 @@ Deno.serve(async (req) => {
             zone_name,
             metadata: {
                 ...(list.metadata || {}),
-                last_operation: "validateAddresses",
+                last_operation: "getCoordinates",
                 last_validation_batch_size: updatedCount
             },
             operation_history: [...(list.operation_history || []), {
-                operation: "validate_addresses",
+                operation: "get_coordinates",
                 timestamp: new Date().toISOString(),
                 status: "Completed",
                 details: {
@@ -210,7 +217,7 @@ Deno.serve(async (req) => {
     });
 
   } catch (error) {
-    console.error("error in validateAddresses:", error);
+    console.error("error in getCoordinates:", error);
     return errorResponse("INTERNAL_ERROR", "An unexpected error occurred", 500);
   }
 });

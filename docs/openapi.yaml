@@ -2684,12 +2684,12 @@ paths:
                   updated_address:
                     type: object
 
-  /validateAddresses:
+  /getCoordinates:
     post:
-      summary: Validate all addresses via Google Geocoding
+      summary: Get coordinates for valid addresses
       description: |
-        Iterates through all addresses in a list and performs geocoding via Google Maps API.
-        Updates lat/long and marks as valid/invalid based on results.
+        Iterates through addresses marked as valid in a list and performs geocoding via Google Maps API.
+        Updates lat/long and marks them as included.
       tags:
         - Address Discovery
       security:
@@ -2832,6 +2832,39 @@ paths:
       responses:
         "200":
           description: Addresses marked as deleted successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  updated_count:
+                    type: integer
+
+  /deleteInvalidAddresses:
+    post:
+      summary: Mark all invalid addresses in a list as deleted
+      tags:
+        - Address Discovery
+      security:
+        - SupabaseAuth: []
+          BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - list_id
+              properties:
+                list_id:
+                  type: string
+                  format: uuid
+      responses:
+        "200":
+          description: All invalid addresses marked as deleted successfully
           content:
             application/json:
               schema:
