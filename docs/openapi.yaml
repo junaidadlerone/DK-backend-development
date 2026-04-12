@@ -122,8 +122,9 @@ tags:
       getUserOrganizations, deleteOrganization, recoverOrganization, transferOrganizationOwnership,
       getAgencyAccountOrganizationMembers
 
-      **Modified endpoints:** login (org list in response), signUp (sets Super Admin flag),
-      completeOnboarding (org_id param + step 4), createUser (org_id param), getUser (org column for Super Admins)
+      **Modified endpoints:** login (org list in response), signUp (sets Super Admin flag), completeOnboarding (org_id param + step 4), createUser (org_id param), getUser (org column for Super Admins)
+  - name: Address List Management
+    description: CSV-based address list operations including duplicates removal, geocoding, and bulk deletion.
 
 paths:
   /signUp:
@@ -15592,6 +15593,272 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+  /removeAllDuplicateAddresses:
+    post:
+      tags:
+        - Address List Management
+      summary: Exclude all duplicate addresses from list
+      description: |
+        Marks rows as `is_deleted: true` and `is_included: false` if they are tagged as `is_duplicate` within a CSV address list.
+        Updates list metadata and adds an entry to the operation history.
+      operationId: removeAllDuplicateAddresses
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - list_id
+              properties:
+                list_id:
+                  type: string
+                  format: uuid
+                  description: UUID of the CSV address list
+      responses:
+        "200":
+          description: Successfully excluded duplicates
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  message:
+                    type: string
+                  excluded_count:
+                    type: integer
+                  total_count:
+                    type: integer
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not Found
+        "500":
+          description: Internal Server Error
+
+  /editAddress:
+    post:
+      tags:
+        - Address List Management
+      summary: Update a specific address in a CSV list
+      description: |
+        Updates a specific row within a CSV address list and re-validates the address fields.
+      operationId: editAddress
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - list_id
+                - address_id
+                - updates
+              properties:
+                list_id:
+                  type: string
+                  format: uuid
+                address_id:
+                  type: string
+                  format: uuid
+                updates:
+                  $ref: "#/components/schemas/AddressUpdate"
+      responses:
+        "200":
+          description: Address updated successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  message:
+                    type: string
+                  updated_address:
+                    $ref: "#/components/schemas/AddressRow"
+        "400":
+          description: Bad Request
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not Found
+        "500":
+          description: Internal Server Error
+
+  /getCSVAddressListDetails:
+    post:
+      tags:
+        - Address List Management
+      summary: Get details of a CSV address list
+      description: |
+        Returns metadata and groups addresses into 'included' and 'excluded' categories for a given CSV address list.
+      operationId: getCSVAddressListDetails
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - csv_address_list_id
+              properties:
+                csv_address_list_id:
+                  type: string
+                  format: uuid
+      responses:
+        "200":
+          description: Address list details retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CSVAddressListDetailsResponse"
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not Found
+        "500":
+          description: Internal Server Error
+
+  /deleteCSVAddresses:
+    post:
+      tags:
+        - Address List Management
+      summary: Bulk delete addresses from a CSV list
+      description: |
+        Marks specific address IDs in a campaign_csv_address_list as deleted.
+      operationId: deleteCSVAddresses
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - list_id
+                - address_ids
+              properties:
+                list_id:
+                  type: string
+                  format: uuid
+                address_ids:
+                  type: array
+                  items:
+                    type: string
+                    format: uuid
+      responses:
+        "200":
+          description: Addresses deleted successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  message:
+                    type: string
+                  updated_count:
+                    type: integer
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not Found
+        "500":
+          description: Internal Server Error
+
+  /getCoordinates:
+    post:
+      tags:
+        - Address List Management
+      summary: Geocode addresses in a CSV list
+      description: |
+        Performs geocoding via Google Maps API for valid rows in a CSV address list and updates their coordinates.
+      operationId: getCoordinates
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - list_id
+              properties:
+                list_id:
+                  type: string
+                  format: uuid
+      responses:
+        "200":
+          description: Geocoding completed successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GetCoordinatesResponse"
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not Found
+        "422":
+          description: Geocoding could not locate any addresses
+        "500":
+          description: Internal Server Error
+
+  /removeAllInvalidAddresses:
+    post:
+      tags:
+        - Address List Management
+      summary: Bulk delete all invalid addresses
+      description: |
+        Marks all addresses with `is_valid: false` or missing required fields as `is_deleted: true` (and `is_included: false`) in a campaign_csv_address_list.
+      operationId: removeAllInvalidAddresses
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - list_id
+              properties:
+                list_id:
+                  type: string
+                  format: uuid
+      responses:
+        "200":
+          description: Invalid addresses deleted successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  message:
+                    type: string
+                  updated_count:
+                    type: integer
+                  metadata:
+                    $ref: "#/components/schemas/AddressListMetadata"
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not Found
+        "500":
+          description: Internal Server Error
 
 components:
   schemas:
@@ -17468,6 +17735,179 @@ components:
           type: boolean
         has_previous_page:
           type: boolean
+
+    AddressUpdate:
+      type: object
+      properties:
+        address_line1:
+          type: string
+        address_line2:
+          type: string
+        city:
+          type: string
+        state:
+          type: string
+        zip:
+          type: string
+
+    AddressRow:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        address_line1:
+          type: string
+        address_line2:
+          type: string
+        city:
+          type: string
+        state:
+          type: string
+        zip:
+          type: string
+        lat:
+          type: number
+        long:
+          type: number
+        is_valid:
+          type: boolean
+        is_included:
+          type: boolean
+        is_deleted:
+          type: boolean
+        is_duplicate:
+          type: boolean
+        status:
+          type: string
+          enum: [valid, invalid, duplicate]
+        error_message:
+          type: string
+
+    AddressListMetadata:
+      type: object
+      properties:
+        valid_count:
+          type: integer
+        invalid_count:
+          type: integer
+        duplicate_count:
+          type: integer
+        deleted_count:
+          type: integer
+        excluded_duplicates_count:
+          type: integer
+        last_operation:
+          type: string
+        last_validation_batch_size:
+          type: integer
+
+    HistoryEntry:
+      type: object
+      properties:
+        operation:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        status:
+          type: string
+        details:
+          type: object
+
+    CSVAddressListDetailsResponse:
+      type: object
+      properties:
+        status:
+          type: string
+        id:
+          type: string
+          format: uuid
+        list_name:
+          type: string
+        total_count:
+          type: integer
+        included_count:
+          type: integer
+        excluded_count:
+          type: integer
+        included:
+          type: array
+          items:
+            $ref: "#/components/schemas/AddressRow"
+        excluded:
+          type: array
+          items:
+            $ref: "#/components/schemas/AddressRow"
+
+    ValidatedAddress:
+      type: object
+      properties:
+        lat:
+          type: number
+        long:
+          type: number
+        osm_id:
+          type: string
+          nullable: true
+        status:
+          type: string
+        address:
+          type: string
+        verified:
+          type: boolean
+        zoneType:
+          type: string
+        residential:
+          type: boolean
+        propertyType:
+          type: string
+        targeting_zone_name:
+          type: string
+        distanceFromCenter:
+          type: number
+
+    GetCoordinatesResponse:
+      type: object
+      properties:
+        status:
+          type: string
+        message:
+          type: string
+        center:
+          type: object
+          properties:
+            lat:
+              type: number
+            long:
+              type: number
+            radius:
+              type: number
+        mode:
+          type: string
+        searchType:
+          type: string
+        metadata:
+          type: object
+          properties:
+            totalBuildingsFound:
+              type: integer
+            addressesReturned:
+              type: integer
+            residentialCount:
+              type: integer
+            otherCount:
+              type: integer
+            verified_count:
+              type: integer
+            unverified_count:
+              type: integer
+            processingTimeMs:
+              type: number
+        addresses:
+          type: array
+          items:
+            $ref: "#/components/schemas/ValidatedAddress"
 
   securitySchemes:
     SupabaseAuth:

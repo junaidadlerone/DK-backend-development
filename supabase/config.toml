@@ -519,13 +519,10 @@ verify_jwt = false
 [functions.importAddressList]
 verify_jwt = false
 
-[functions.removeAllDuplicates]
+[functions.removeAllDuplicateAddresses]
 verify_jwt = false
 
 [functions.editAddress]
-verify_jwt = false
-
-[functions.validateAddresses]
 verify_jwt = false
 
 [functions.getCSVAddressListDetails]
@@ -535,4 +532,7 @@ verify_jwt = false
 verify_jwt = false
 
 [functions.getCoordinates]
+verify_jwt = false
+
+[functions.removeAllInvalidAddresses]
 verify_jwt = false

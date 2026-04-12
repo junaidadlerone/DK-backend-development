@@ -52,9 +52,9 @@ Deno.serve(async (req) => {
     let updatedCount = 0;
 
     const updatedAddresses = originalAddresses.map((addr: AddressRow) => {
-      if (addr.is_duplicate && addr.is_included) {
+      if (addr.is_duplicate && addr.is_included && !addr.is_deleted) {
         updatedCount++;
-        return { ...addr, is_included: false };
+        return { ...addr, is_deleted: true, is_included: false };
       }
       return addr;
     });
