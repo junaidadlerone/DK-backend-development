@@ -2448,7 +2448,7 @@ paths:
   /importAddressList:
     post:
       tags:
-        - Address Discovery
+        - Address List Management
       summary: Import and verify CSV address list
       description: |
         Ingests a CSV file, parses it, identifies duplicates, and verifies unique addresses via internal field validation.
@@ -2643,7 +2643,6 @@ paths:
                     type: integer
                   remaining_count:
                     type: integer
-
 
   /verifyAddresses:
     post:
@@ -15407,9 +15406,9 @@ paths:
     post:
       tags:
         - Address List Management
-      summary: Get details of a CSV address list
+      summary: Get details of a CSV address list by campaign ID
       description: |
-        Returns metadata and groups addresses into 'included' and 'excluded' categories for a given CSV address list.
+        Returns metadata and groups addresses into 'included' and 'excluded' categories for a given campaign's CSV address list.
       operationId: getCSVAddressListDetails
       security:
         - BearerAuth: []
@@ -15420,9 +15419,9 @@ paths:
             schema:
               type: object
               required:
-                - csv_address_list_id
+                - campaign_id
               properties:
-                csv_address_list_id:
+                campaign_id:
                   type: string
                   format: uuid
       responses:

@@ -10,7 +10,7 @@ import { AddressRow } from "../_shared/addressLists.ts";
  * 
  * Request Body:
  * {
- *   "csv_address_list_id": "uuid"
+ *   "campaign_id": "uuid"
  * }
  */
 
@@ -34,19 +34,19 @@ Deno.serve(async (req) => {
       return errorResponse("NO_ORGANIZATION", "User is not associated with any organization", 403);
     }
 
-    const { csv_address_list_id: list_id } = await req.json();
-
-    if (!list_id) {
-      return errorResponse("INVALID_INPUT", "csv_address_list_id is required", 400);
+    const { campaign_id } = await req.json();
+ 
+    if (!campaign_id) {
+      return errorResponse("INVALID_INPUT", "campaign_id is required", 400);
     }
 
     // 1. Fetch the list
     const { data: list, error: fetchError } = await supabase
-      .from("campaign_csv_address_lists")
-      .select("*")
-      .eq("id", list_id)
-      .eq("organization_id", organizationId)
-      .single();
+       .from("campaign_csv_address_lists")
+       .select("*")
+       .eq("campaign_id", campaign_id)
+       .eq("organization_id", organizationId)
+       .single();
 
     if (fetchError || !list) {
       return errorResponse("NOT_FOUND", "Address list not found", 404);
