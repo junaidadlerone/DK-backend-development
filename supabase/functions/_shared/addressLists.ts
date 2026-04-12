@@ -10,6 +10,7 @@ export interface AddressRow {
     is_valid: boolean;
     is_duplicate: boolean;
     is_included: boolean;
+    is_deleted: boolean;
     lat?: number;
     long?: number;
     error_message?: string;

@@ -527,3 +527,9 @@ verify_jwt = false
 
 [functions.validateAddress]
 verify_jwt = false
+
+[functions.getCSVAddressListDetails]
+verify_jwt = false
+
+[functions.deleteCSVAddresses]
+verify_jwt = false

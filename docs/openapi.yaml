@@ -2480,6 +2480,9 @@ paths:
                 - csv_data
                 - campaign_id
               properties:
+                campaign_id:
+                  type: uuid
+                  description: ID of the campaign to which the address list belongs
                 list_name:
                   type: string
                   description: Human-readable name for the address list
@@ -2489,9 +2492,6 @@ paths:
                   description: Base64 encoded CSV content. Prefixed with data:text/csv;base64 for best results.
                 filename:
                   type: string
-                campaign_id:
-                  type: string
-                  format: uuid
                 column_mapping:
                   type: object
                   additionalProperties:
@@ -2500,6 +2500,7 @@ paths:
                     Optional mapping from target fields to CSV headers.
                     Fields: Address Line 1, Address Line 2, City, State, Zip Code, Country.
             example:
+              campaign_id: "123e4567-e89b-12d3-a456-426614174000"
               list_name: "Spring Marketing Campaign"
               csv_data: "data:text/csv;base64,..."
               column_mapping:
@@ -3183,6 +3184,14 @@ paths:
                       zone_id:
                         type: string
                         format: uuid
+                        nullable: true
+                      campaign_target_type:
+                        type: string
+                        enum: [Referrals, Location Zone, Address List]
+                      csv_address_list_id:
+                        type: string
+                        format: uuid
+                        nullable: true
                       validated_addresses:
                         type: integer
                         description: Number of addresses that were successfully validated
@@ -8374,9 +8383,23 @@ paths:
                           name:
                             type: string
                             example: Draft
+                      campaign_target_type:
+                        type: string
+                        enum: [Referrals, Location Zone, Address List]
                       referral_id:
                         type: string
                         format: uuid
+                        nullable: true
+                      zone_id:
+                        type: string
+                        format: uuid
+                        nullable: true
+                      csv_address_list_id:
+                        type: string
+                        format: uuid
+                        nullable: true
+                      campaign_name:
+                        type: string
                       template_id:
                         type: string
                       offer_data:
@@ -13239,9 +13262,9 @@ paths:
         **Simplified 4-step campaign creation process using template bundles**
 
         This is a streamlined version of the original 6-step `/createCampaign` workflow:
-        - Step 1: Create campaign with name, optional referral, and optional disclaimer
+        - Step 1: Create campaign with name, optional target_type, optional referral, and optional disclaimer
         - Step 2: Assign template bundle (automatically sets front and back templates)
-        - Step 3: Link location zone
+        - Step 3: Link location zone OR uploaded Address List
         - Step 4: Campaign consents and disclaimers
 
         **Key Differences from V1:**
@@ -13259,13 +13282,14 @@ paths:
 
         ## Step 1: Create Campaign
 
-        Create a new campaign with name and optionally link a referral.
+        Create a new campaign with name and optionally link a referral or specify a target type.
 
         **Request:**
         ```json
         {
           "step": 1,
           "campaign_name": "Summer Promotion 2025",
+          "target_type": "Address List",
           "referral_id": "550e8400-e29b-41d4-a716-446655440000",
           "disclaimer_text": "Offer valid for new customers only"
         }
@@ -13276,7 +13300,8 @@ paths:
         - `campaign_name`: Campaign name (string, not empty)
 
         **Optional Fields:**
-        - `referral_id`: UUID of referral to link (can be omitted for campaigns without referrals)
+        - `target_type`: Explicit targeting type ('Referrals', 'Location Zone', 'Address List'). Inferred from referral_id if missing.
+        - `referral_id`: UUID of referral to link (required if target_type is 'Referrals', or used for inference)
         - `disclaimer_text`: Disclaimer text to save in offer_data
 
         **What Happens:**
@@ -13320,9 +13345,9 @@ paths:
 
         ## Step 3: Link Location Zone
 
-        Associate a location zone with verified addresses to the campaign.
+        Associate a location zone or an uploaded CSV address list to the campaign.
 
-        **Request:**
+        **Request (Zone):**
         ```json
         {
           "step": 3,
@@ -13331,15 +13356,24 @@ paths:
         }
         ```
 
+        **Request (Address List):**
+        ```json
+        {
+          "step": 3,
+          "campaign_id": "660e8400-e29b-41d4-a716-446655440001",
+          "csv_address_list_id": "990e8400-e29b-41d4-a716-446655440009"
+        }
+        ```
+
         **Required Fields:**
         - `step`: Must be 3
         - `campaign_id`: UUID of campaign
-        - `zone_id`: UUID of location zone
+        - `zone_id`: Required if `target_type` is 'Location Zone'
+        - `csv_address_list_id`: Required if `target_type` is 'Address List'
 
         **What Happens:**
-        - Verifies zone exists and belongs to organization
-        - **Smart duplication**: If zone already used by another campaign, creates a duplicate
-        - Updates campaign with zone_id
+        - Verifies zone or address list exists and belongs to organization
+        - Updates campaign with zone_id or csv_address_list_id
         - Sets current_step: 3
         - Logs history
 
@@ -17102,6 +17136,10 @@ components:
           type: string
           format: date-time
           description: Optional start date for the campaign
+        target_type:
+          type: string
+          enum: [Referrals, Location Zone, Address List]
+          description: Chosen targeting method for the campaign. Inferred if omitted (defaults to Location Zone, or Referrals if referral_id provided).
 
     CampaignV2Step2:
       type: object
@@ -17128,7 +17166,6 @@ components:
       required:
         - step
         - campaign_id
-        - zone_id
       properties:
         step:
           type: integer
@@ -17141,7 +17178,11 @@ components:
         zone_id:
           type: string
           format: uuid
-          description: UUID of location zone
+          description: UUID of location zone (required for Location Zone campaigns)
+        csv_address_list_id:
+          type: string
+          format: uuid
+          description: UUID of uploaded address list (required for Address List campaigns)
 
     CampaignV2Step4:
       type: object
