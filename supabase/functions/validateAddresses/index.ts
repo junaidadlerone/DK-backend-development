@@ -12,7 +12,10 @@ import { AddressRow, AddressListMetadata as _AddressListMetadata, ValidatedAddre
 const GOOGLE_MAPS_API_KEY = Deno.env.get("GOOGLE_MAPS_API_KEY");
 
 async function geocode(addressStr: string) {
-  if (!GOOGLE_MAPS_API_KEY) throw new Error("GOOGLE_MAPS_API_KEY is not set");
+  if (!GOOGLE_MAPS_API_KEY) {
+    console.error("GOOGLE_MAPS_API_KEY is not set");
+    return { lat: 0, long: 0, success: false, status: "MISSING_API_KEY" };
+  }
   const url = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(addressStr)}&key=${GOOGLE_MAPS_API_KEY}`;
   const res = await fetch(url);
   const data = await res.json();
@@ -31,6 +34,7 @@ Deno.serve(async (req) => {
   }
 
   try {
+    const startTime = Date.now();
     const supabase = createSupabaseClient();
     const user = getUserFromRequest(req);
 
@@ -73,7 +77,11 @@ Deno.serve(async (req) => {
     for (let i = 0; i < addresses.length; i++) {
         const row = addresses[i];
 
-        const addressStr = `${row.address_line1}, ${row.city}, ${row.state} ${row.zip}`;
+        const addressStr = `${row.address_line1 || ""}, ${row.city || ""}, ${row.state || ""} ${row.zip || ""}`.trim();
+        if (addressStr === "," || addressStr === "") {
+            console.warn(`Skipping row ${i} due to empty address fields`);
+            continue;
+        }
         try {
             const geo = await geocode(addressStr);
             if (geo.success) {
@@ -109,12 +117,12 @@ Deno.serve(async (req) => {
                     distanceFromCenter: 0,
                     targeting_zone_name: `Zone at ${geo.lat.toFixed(4)}, ${geo.long.toFixed(4)}`,
                     verification_details: {
-                        city: row.city.toUpperCase(),
-                        line1: row.address_line1.toUpperCase(),
+                        city: (row.city || "").toUpperCase(),
+                        line1: (row.address_line1 || "").toUpperCase(),
                         status: "verified",
                         details: {},
-                        postalOrZip: row.zip,
-                        provinceOrState: row.state.toUpperCase()
+                        postalOrZip: row.zip || "",
+                        provinceOrState: (row.state || "").toUpperCase()
                     },
                     first_post_card_sent_date: null
                 };
@@ -150,7 +158,7 @@ Deno.serve(async (req) => {
         });
         const avgLat = sumLat / updatedCount;
         const avgLong = sumLong / updatedCount;
-        center = { lat: avgLat, long: avgLong };
+        center = { lat: avgLat, long: avgLong, radius: 500 }; // Default 500m radius for CSV lists
         zone_name = `Zone at ${avgLat.toFixed(4)}, ${avgLong.toFixed(4)}`;
     }
 
@@ -181,9 +189,24 @@ Deno.serve(async (req) => {
 
     if (updateError) return errorResponse("DB_ERROR", "Failed to update address list", 500);
 
+    const processingTimeMs = Date.now() - startTime;
+
     return successResponse({
-        message: `Successfully validated ${updatedCount} addresses`,
-        updated_count: updatedCount
+        status: "success",
+        message: `Verified ${updatedCount} of ${addresses.length} addresses`,
+        center,
+        mode: "address-list",
+        searchType: "RESIDENTIAL",
+        metadata: {
+            totalBuildingsFound: addresses.length,
+            addressesReturned: addresses.length,
+            residentialCount: addresses.length,
+            otherCount: 0,
+            verified_count: updatedCount,
+            unverified_count: addresses.length - updatedCount,
+            processingTimeMs
+        },
+        addresses: validatedAddressList
     });
 
   } catch (error) {

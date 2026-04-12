@@ -296,9 +296,27 @@ async function sendPostcard(addressObj, templates, businessData, offerData, post
         mergedVars.qr_url = `{{${mergedVars.qr_url}}}`;
     }
 
+    // Robust address mapping for both traditional and CSV-based addresses
+    const addressLine1 = addressObj.address || addressObj.address_line1 || "";
+    const city = addressObj.city || "";
+    const state = addressObj.state || addressObj.provinceOrState || "";
+    const zip = addressObj.zip || addressObj.postalOrZip || "";
+
+    if (!addressLine1) {
+        console.error(`[ERROR] Missing addressLine1 for recipient. Data:`, JSON.stringify(addressObj));
+    }
+
+    // Validate templates before sending
+    if (!templates.front_template_id || !templates.back_template_id) {
+        throw new Error(`Missing template IDs for campaign. Front: ${templates.front_template_id}, Back: ${templates.back_template_id}`);
+    }
+
     const payload = {
         to: {
-            addressLine1: addressObj.address,
+            addressLine1: addressLine1,
+            city: city,
+            provinceOrState: state,
+            postalOrZip: zip,
             firstName: addressObj.full_name || addressObj.first_name || "Current Resident",
             lastName: addressObj.last_name || "",
             countryCode: 'US'

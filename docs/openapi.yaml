@@ -2498,7 +2498,7 @@ paths:
                     type: string
                   description: |
                     Optional mapping from target fields to CSV headers.
-                    Fields: Address Line 1, Address Line 2, City, State, Zip Code, Country.
+                     Fields: Address Line 1, Address Line 2, City, State, Zip Code, Country, First Name, Last Name, Full Name.
             example:
               campaign_id: "123e4567-e89b-12d3-a456-426614174000"
               list_name: "Spring Marketing Campaign"
@@ -2709,10 +2709,93 @@ paths:
               schema:
                 type: object
                 properties:
+                  status:
+                    type: string
+                    example: success
                   message:
                     type: string
-                  updated_count:
-                    type: integer
+                    example: Verified 5 of 7 addresses
+                  center:
+                    type: object
+                    nullable: true
+                    properties:
+                      lat:
+                        type: number
+                      long:
+                        type: number
+                      radius:
+                        type: number
+                  mode:
+                    type: string
+                    example: radius
+                  searchType:
+                    type: string
+                    example: RESIDENTIAL
+                  metadata:
+                    type: object
+                    properties:
+                      totalBuildingsFound:
+                        type: integer
+                      addressesReturned:
+                        type: integer
+                      residentialCount:
+                        type: integer
+                      otherCount:
+                        type: integer
+                      verified_count:
+                        type: integer
+                      unverified_count:
+                        type: integer
+                      processingTimeMs:
+                        type: integer
+                  addresses:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        lat:
+                          type: number
+                        long:
+                          type: number
+                        address:
+                          type: string
+                        residential:
+                          type: boolean
+                        building_type:
+                          type: string
+                        osm_id:
+                          type: string
+                        verified:
+                          type: boolean
+                        verification_details:
+                          type: object
+                        propertyType:
+                          type: string
+                        distanceFromCenter:
+                          type: number
+                        targeting_zone_name:
+                          type: string
+                        campaigns_used_in:
+                          type: array
+                          items:
+                            type: string
+                        zoneType:
+                          type: string
+                        postcards_sent:
+                          type: integer
+                        first_post_card_sent_date:
+                          type: string
+                        id:
+                          type: string
+                          format: uuid
+                        first_name:
+                          type: string
+                        last_name:
+                          type: string
+                        full_name:
+                          type: string
+                        processingTimeMs:
+                          type: integer
 
   /deleteCSVAddresses:
     post:
@@ -8286,6 +8369,21 @@ paths:
                       organization_id:
                         type: string
                         format: uuid
+                      target_type:
+                        type: string
+                        enum: [Referrals, Location Zones, Address Lists]
+                        description: Formal targeting type for the campaign
+                      link_referral:
+                        type: boolean
+                      location_zone_id:
+                        type: string
+                        format: uuid
+                      csv_address_list_id:
+                        type: string
+                        format: uuid
+                        description: ID of the CSV address list if target_type is Address Lists
+                      step:
+                        type: integer
                       referral_id:
                         type: string
                         format: uuid
