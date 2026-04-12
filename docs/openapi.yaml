@@ -2541,6 +2541,12 @@ paths:
                           type: string
                         zip:
                           type: string
+                        first_name:
+                          type: string
+                        last_name:
+                          type: string
+                        full_name:
+                          type: string
                         id:
                           type: string
                           format: uuid
@@ -3354,7 +3360,7 @@ paths:
                         nullable: true
                       campaign_target_type:
                         type: string
-                        enum: [Referrals, Location Zone, Address List]
+                        enum: [Referrals, Location Zones, Address Lists]
                       csv_address_list_id:
                         type: string
                         format: uuid
@@ -17320,7 +17326,7 @@ components:
           description: Optional start date for the campaign
         target_type:
           type: string
-          enum: [Referrals, Location Zone, Address List]
+          enum: [Referrals, Location Zones, Address Lists]
           description: Chosen targeting method for the campaign. Inferred if omitted (defaults to Location Zone, or Referrals if referral_id provided).
 
     CampaignV2Step2:
