@@ -299,7 +299,8 @@ async function sendPostcard(addressObj, templates, businessData, offerData, post
     const payload = {
         to: {
             addressLine1: addressObj.address,
-            firstName: "Current Resident",
+            firstName: addressObj.full_name || addressObj.first_name || "Current Resident",
+            lastName: addressObj.last_name || "",
             countryCode: 'US'
         },
         size: size,

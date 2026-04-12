@@ -102,25 +102,12 @@ wss.on('connection', (ws) => {
             const data = JSON.parse(message);
             console.log('Received:', data);
 
-            // Validate required fields
-            if (!data.zone_id) {
-                ws.send(JSON.stringify({ status: 'error', message: 'Missing zone_id' }));
-                return;
-            }
-
-            if (!POSTGRID_API_KEY) {
-                ws.send(JSON.stringify({ status: 'error', message: 'Server misconfiguration: POSTGRID_API_KEY not set.' }));
-                return;
-            }
-
-            if (!SUPABASE_SERVICE_ROLE_KEY) {
-                ws.send(JSON.stringify({ status: 'error', message: 'Server misconfiguration: SUPABASE_SERVICE_ROLE_KEY not set.' }));
-                return;
-            }
-
             const showOnlyVerified = data.showOnlyVerified !== undefined ? data.showOnlyVerified : false;
 
-            await verifyAddresses(ws, data.zone_id, POSTGRID_API_KEY, SUPABASE_SERVICE_ROLE_KEY, showOnlyVerified);
+            await verifyAddresses(ws, {
+                zone_id: data.zone_id,
+                csv_address_list_id: data.csv_address_list_id
+            }, POSTGRID_API_KEY, SUPABASE_SERVICE_ROLE_KEY, showOnlyVerified);
         } catch (error) {
             console.error('Error processing message:', error);
             ws.send(JSON.stringify({ status: 'error', message: 'Invalid JSON or server error' }));
@@ -197,8 +184,11 @@ function parseAddress(formattedAddress) {
 
 async function verifyAddress(address, apiKey) {
     try {
-        const addressComponents = parseAddress(address.address);
-        console.log(`Verifying address: ${address.address}`);
+        const addressText = address.address || 
+            `${address.address_line1 || ''}, ${address.city || ''}, ${address.state || ''} ${address.zip || ''}`.trim().replace(/^,|,$/g, '');
+        
+        const addressComponents = parseAddress(addressText);
+        console.log(`Verifying address: ${addressText}`);
 
         const response = await fetch(VERIFICATION_API_URL, {
             method: 'POST',
@@ -236,8 +226,15 @@ async function verifyAddress(address, apiKey) {
 
         return {
             ...address,
-            original_address: address.address, // Keep original for reference
+            original_address: address.address || addressText, // Keep original for reference
             address: verifiedAddress,
+            // Update CSV specific fields if they exist
+            ...(address.address_line1 !== undefined && {
+                address_line1: data.line1,
+                city: data.city,
+                state: data.provinceOrState,
+                zip: data.postalOrZip
+            }),
             verified,
             status: verified ? 'Valid' : 'Unverified',
             verification_details: {
@@ -263,13 +260,32 @@ async function verifyAddress(address, apiKey) {
     }
 }
 
-async function verifyAddresses(ws, zoneId, apiKey, supabaseAnonKey, showOnlyVerified) {
+async function verifyAddresses(ws, sources, apiKey, supabaseAnonKey, showOnlyVerified) {
     const startTime = Date.now();
+    const { zone_id, csv_address_list_id } = sources;
 
     try {
-        ws.send(JSON.stringify({ status: 'started', message: 'Fetching zone data...', zone_id: zoneId }));
+        if (!zone_id && !csv_address_list_id) {
+            throw new Error('Neither zone_id nor csv_address_list_id provided');
+        }
 
-        const response = await fetch(`${SUPABASE_URL}/rest/v1/location_zones?id=eq.${zoneId}&select=*`, {
+        let table, id, fetchUrl, updateUrl;
+        
+        if (csv_address_list_id) {
+            table = 'campaign_csv_address_lists';
+            id = csv_address_list_id;
+            fetchUrl = `${SUPABASE_URL}/rest/v1/${table}?id=eq.${id}&select=*`;
+            updateUrl = fetchUrl;
+            ws.send(JSON.stringify({ status: 'started', message: 'Fetching CSV address list...', csv_address_list_id: id }));
+        } else {
+            table = 'location_zones';
+            id = zone_id;
+            fetchUrl = `${SUPABASE_URL}/rest/v1/${table}?id=eq.${id}&select=*`;
+            updateUrl = fetchUrl;
+            ws.send(JSON.stringify({ status: 'started', message: 'Fetching zone data...', zone_id: id }));
+        }
+
+        const response = await fetch(fetchUrl, {
             method: 'GET',
             headers: {
                 'apikey': supabaseAnonKey,
@@ -278,13 +294,13 @@ async function verifyAddresses(ws, zoneId, apiKey, supabaseAnonKey, showOnlyVeri
             }
         });
 
-        if (!response.ok) throw new Error(`Failed to fetch zone: ${response.statusText}`);
+        if (!response.ok) throw new Error(`Failed to fetch data: ${response.statusText}`);
 
-        const zones = await response.json();
-        if (!zones || zones.length === 0) throw new Error('Zone not found');
+        const results = await response.json();
+        if (!results || results.length === 0) throw new Error(`Record not found in ${table}`);
 
-        const zone = zones[0];
-        const addresses = zone.addresses || [];
+        const record = results[0];
+        const addresses = record.addresses || [];
 
         const verifiedAddresses = [];
         let verifiedCount = 0;
@@ -314,7 +330,7 @@ async function verifyAddresses(ws, zoneId, apiKey, supabaseAnonKey, showOnlyVeri
                 return;
             }
 
-            console.log(`Starting processing for ${addresses.length} addresses in zone ${zoneId}`);
+            console.log(`Starting processing for ${addresses.length} addresses in ${table} ${id}`);
             ws.send(JSON.stringify({
                 status: 'processing',
                 message: `Found ${addresses.length} addresses to process`,
@@ -355,9 +371,9 @@ async function verifyAddresses(ws, zoneId, apiKey, supabaseAnonKey, showOnlyVeri
         const processingTimeMs = Date.now() - startTime;
 
         console.log(`Processing complete: ${verifiedCount} verified, ${unverifiedCount} unverified`);
-        ws.send(JSON.stringify({ status: 'processing', message: 'Updating zone with processed addresses...' }));
+        ws.send(JSON.stringify({ status: 'processing', message: `Updating ${table} with processed addresses...` }));
 
-        const updateResponse = await fetch(`${SUPABASE_URL}/rest/v1/location_zones?id=eq.${zoneId}`, {
+        const updateResponse = await fetch(updateUrl, {
             method: 'PATCH',
             headers: {
                 'apikey': supabaseAnonKey,
@@ -379,11 +395,11 @@ async function verifyAddresses(ws, zoneId, apiKey, supabaseAnonKey, showOnlyVeri
             message: showOnlyVerified
                 ? `Returning ${addressesToReturn.length} verified addresses`
                 : `Verified ${verifiedCount} of ${addresses.length} addresses`,
-            center: zone.center,
-            mode: zone.mode,
-            searchType: zone.search_type,
+            center: record.center || null,
+            mode: record.mode || null,
+            searchType: record.search_type || null,
             metadata: {
-                ...zone.metadata,
+                ...(record.metadata || {}),
                 verified_count: verifiedCount,
                 unverified_count: unverifiedCount,
                 total_addresses: addresses.length,

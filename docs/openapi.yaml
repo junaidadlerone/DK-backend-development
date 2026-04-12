@@ -2514,6 +2514,10 @@ paths:
               schema:
                 type: object
                 properties:
+                  list_id:
+                    type: string
+                    format: uuid
+                    description: ID of the created address list
                   total_addresses:
                     type: integer
                   valid_addresses:
@@ -2597,7 +2601,10 @@ paths:
 
   /removeAllDuplicates:
     post:
-      summary: Remove all duplicate addresses from a list
+      summary: Exclude all duplicate addresses from a list
+      description: |
+        Marks all rows having 'is_duplicate' as true as 'is_included: false'.
+        Rows are not removed from the database but are excluded from campaign logic.
       tags:
         - Address Discovery
       security:
@@ -2671,9 +2678,12 @@ paths:
                   updated_address:
                     type: object
 
-  /validateAddress:
+  /validateAddresses:
     post:
-      summary: Validate address(es) via Google Geocoding
+      summary: Validate all addresses via Google Geocoding
+      description: |
+        Iterates through all addresses in a list and performs geocoding via Google Maps API.
+        Updates lat/long and marks as valid/invalid based on results.
       tags:
         - Address Discovery
       security:
@@ -2691,13 +2701,9 @@ paths:
                 list_id:
                   type: string
                   format: uuid
-                address_id:
-                  type: string
-                  format: uuid
-                  description: Optional. If omitted, validates all included and unvalidated addresses.
       responses:
         "200":
-          description: Validation completed. Operation logged in history.
+          description: Validation completed for all addresses.
           content:
             application/json:
               schema:
@@ -2707,15 +2713,93 @@ paths:
                     type: string
                   updated_count:
                     type: integer
-              example:
-                - address_line1: "123 MAIN ST"
-                  city: "SAN FRANCISCO"
-                  state: "CA"
-                  zip: "94105"
-                  status: "valid"
-                - address_line1: "Invalid Rd"
-                  status: "invalid"
-                  error_message: "line1: Missing Value | zip: Invalid Format"
+
+  /deleteCSVAddresses:
+    post:
+      summary: Mark specific addresses as deleted
+      tags:
+        - Address Discovery
+      security:
+        - SupabaseAuth: []
+          BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - list_id
+                - address_ids
+              properties:
+                list_id:
+                  type: string
+                  format: uuid
+                address_ids:
+                  type: array
+                  items:
+                    type: string
+                    format: uuid
+      responses:
+        "200":
+          description: Addresses marked as deleted successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  updated_count:
+                    type: integer
+
+  /getCSVAddressListDetails:
+    post:
+      summary: Get categorized address list details
+      tags:
+        - Address Discovery
+      security:
+        - SupabaseAuth: []
+          BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - csv_address_list_id
+              properties:
+                csv_address_list_id:
+                  type: string
+                  format: uuid
+      responses:
+        "200":
+          description: Grouped address list retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: string
+                    format: uuid
+                  list_name:
+                    type: string
+                  total_count:
+                    type: integer
+                  included_count:
+                    type: integer
+                  excluded_count:
+                    type: integer
+                  included:
+                    type: array
+                    items:
+                      type: object
+                  excluded:
+                    type: array
+                    items:
+                      type: object
         "400":
           description: Invalid input or empty CSV
           content:

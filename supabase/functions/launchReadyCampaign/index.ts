@@ -9,6 +9,7 @@ import {
   getUserOrganizationId,
   validateOrganizationAccess,
 } from "../_shared/organization.ts";
+import { AddressRow } from "../_shared/addressLists.ts";
 
 /**
  * Launch Ready Campaign Edge Function
@@ -33,20 +34,9 @@ import {
  * - x-postgrid-api-key (REQUIRED) - PostGrid API key for address verification
  */
 
-interface AddressInput {
-  lat: number;
-  long: number;
-  address: string;
-  residential: boolean;
-  building_type?: string;
-  osm_id?: string;
-  verified?: boolean;
-  verification_details?: any;
-}
-
-interface VerifiedAddress extends AddressInput {
+// Use AddressRow from shared types
+interface VerifiedAddress extends AddressRow {
   verified: boolean;
-  verification_details?: any;
 }
 
 /**
@@ -102,11 +92,12 @@ function parseAddress(formattedAddress: string) {
  * Verify single address with PostGrid
  */
 async function _verifyWithPostGrid(
-  address: AddressInput,
+  address: AddressRow,
   postgridApiKey: string,
 ): Promise<VerifiedAddress> {
   try {
-    const addressComponents = parseAddress(address.address);
+    const addressStr = address.address || "";
+    const addressComponents = parseAddress(addressStr);
 
     const response = await fetch(
       "https://api.postgrid.com/v1/addver/verifications",
@@ -290,7 +281,7 @@ Deno.serve(async (req) => {
       );
     }
 
-    let allAddresses: any[] = [];
+    let allAddresses: AddressRow[] = [];
     let sourceId: string | null = null;
     let sourceType: "zone" | "list" = "zone";
 
@@ -354,8 +345,16 @@ Deno.serve(async (req) => {
         continue;
       }
 
+      // Respect exclusion/deletion flags for CSV lists
+      if (sourceType === "list") {
+        if (addr.is_included === false || addr.is_deleted === true) {
+          continue;
+        }
+      }
+
       // Check if address is already verified (from socket3 or verifyAddresses)
-      if (addr.verified === true) {
+      // For CSV lists, if they were geocoded successfully, they have verified: true
+      if (addr.verified === true || addr.is_valid === true) {
         onlyVerifiedAddresses.push(addr as VerifiedAddress);
       }
     }

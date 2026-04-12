@@ -531,6 +531,7 @@ async function handleStep3(supabase: any, body: any, campaign_id: string, organi
 
   // Verify campaign exists and belongs to organization
   const { data: existingCampaign, error: fetchError } = await supabase
+    .from("campaigns")
     .select("id, campaign_target_type")
     .eq("id", campaign_id)
     .eq("organization_id", organizationId)

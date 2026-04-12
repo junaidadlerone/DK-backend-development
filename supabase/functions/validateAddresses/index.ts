@@ -2,7 +2,7 @@ import { corsResponse, errorResponse, successResponse } from "../_shared/respons
 import { createSupabaseClient } from "../_shared/client.ts";
 import { getUserFromRequest } from "../_shared/history.ts";
 import { getUserOrganizationId } from "../_shared/organization.ts";
-import { AddressRow, AddressListMetadata as _AddressListMetadata } from "../_shared/addressLists.ts";
+import { AddressRow, AddressListMetadata as _AddressListMetadata, ValidatedAddress } from "../_shared/addressLists.ts";
 
 /**
  * Validate Address Edge Function
@@ -40,7 +40,7 @@ Deno.serve(async (req) => {
     if (!organizationId) return errorResponse("NO_ORGANIZATION", "User not in organization", 403);
 
     const body = await req.json();
-    const { list_id, address_id } = body;
+    const { list_id } = body;
 
     if (!list_id) return errorResponse("INVALID_INPUT", "list_id is required", 400);
 
@@ -55,14 +55,23 @@ Deno.serve(async (req) => {
     if (fetchError || !list) return errorResponse("NOT_FOUND", "Address list not found", 404);
 
     const addresses: AddressRow[] = list.addresses || [];
+    const validatedAddressList: ValidatedAddress[] = list.validated_address_list || [];
     let updatedCount = 0;
+
+    // Fetch user profile for createdBy
+    const { data: profile, error: profileError } = await supabase
+      .from("profiles")
+      .select("id, full_name, user_role, created_at, updated_at")
+      .eq("id", user.userId)
+      .single();
+
+    if (profileError || !profile) {
+      console.error("Profile fetch error:", profileError);
+    }
 
     // 2. Validate
     for (let i = 0; i < addresses.length; i++) {
         const row = addresses[i];
-        // If address_id is provided, only validate that one. Otherwise validate all included.
-        if (address_id && row.id !== address_id) continue;
-        if (!address_id && (!row.is_included || row.lat)) continue;
 
         const addressStr = `${row.address_line1}, ${row.city}, ${row.state} ${row.zip}`;
         try {
@@ -75,6 +84,42 @@ Deno.serve(async (req) => {
                     is_valid: true,
                     status: "valid"
                 };
+
+                const validatedItem = {
+                    lat: geo.lat,
+                    long: geo.long,
+                    osm_id: null,
+                    status: "Valid",
+                    address: addressStr.toUpperCase(),
+                    verified: true,
+                    zoneType: "radius(0.3km)",
+                    createdBy: profile ? {
+                        id: profile.id,
+                        full_name: profile.full_name,
+                        user_role: profile.user_role,
+                        created_at: profile.created_at,
+                        updated_at: profile.updated_at
+                    } : null,
+                    residential: true,
+                    propertyType: "Single Family Home",
+                    building_type: null,
+                    postcards_sent: 0,
+                    original_address: addressStr.toUpperCase(),
+                    campaigns_used_in: [],
+                    distanceFromCenter: 0,
+                    targeting_zone_name: `Zone at ${geo.lat.toFixed(4)}, ${geo.long.toFixed(4)}`,
+                    verification_details: {
+                        city: row.city.toUpperCase(),
+                        line1: row.address_line1.toUpperCase(),
+                        status: "verified",
+                        details: {},
+                        postalOrZip: row.zip,
+                        provinceOrState: row.state.toUpperCase()
+                    },
+                    first_post_card_sent_date: null
+                };
+
+                validatedAddressList.push(validatedItem);
                 updatedCount++;
             } else {
                 addresses[i] = {
@@ -87,13 +132,26 @@ Deno.serve(async (req) => {
         } catch (e) {
             console.error(`Geocoding error for ${addressStr}:`, e);
         }
-
-        // Limit batch processing to avoid timeouts if validate_all
-        if (!address_id && updatedCount >= 50) break; 
     }
 
-    if (updatedCount === 0 && address_id) {
-        return errorResponse("VALIDATION_FAILED", "Geocoding could not locate the address", 422);
+    if (updatedCount === 0) {
+        return errorResponse("VALIDATION_FAILED", "Geocoding could not locate any addresses", 422);
+    }
+
+    // 2.3 Calculate center and zone_name
+    let center = null;
+    let zone_name = null;
+    if (updatedCount > 0) {
+        let sumLat = 0;
+        let sumLong = 0;
+        validatedAddressList.forEach(item => {
+            sumLat += item.lat;
+            sumLong += item.long;
+        });
+        const avgLat = sumLat / updatedCount;
+        const avgLong = sumLong / updatedCount;
+        center = { lat: avgLat, long: avgLong };
+        zone_name = `Zone at ${avgLat.toFixed(4)}, ${avgLong.toFixed(4)}`;
     }
 
     // 3. Save
@@ -101,17 +159,19 @@ Deno.serve(async (req) => {
         .from("campaign_csv_address_lists")
         .update({
             addresses,
+            validated_address_list: validatedAddressList,
+            center,
+            zone_name,
             metadata: {
                 ...(list.metadata || {}),
-                last_operation: "validateAddress",
+                last_operation: "validateAddresses",
                 last_validation_batch_size: updatedCount
             },
             operation_history: [...(list.operation_history || []), {
-                operation: "validate_address",
+                operation: "validate_addresses",
                 timestamp: new Date().toISOString(),
                 status: "Completed",
                 details: {
-                    target_id: address_id || "all",
                     updated_count: updatedCount
                 }
             }],
@@ -127,7 +187,7 @@ Deno.serve(async (req) => {
     });
 
   } catch (error) {
-    console.error("error in validateAddress:", error);
+    console.error("error in validateAddresses:", error);
     return errorResponse("INTERNAL_ERROR", "An unexpected error occurred", 500);
   }
 });
