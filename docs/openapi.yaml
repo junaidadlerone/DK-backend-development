@@ -15303,6 +15303,46 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+  /getCSVAddressListById:
+    post:
+      tags:
+        - Address List Management
+      summary: Get CSV address list by ID
+      description: |
+        Retrieves a specific CSV address list by its ID.
+        Includes all validated addresses and list metadata.
+      operationId: getCSVAddressListById
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - csv_address_list_id
+              properties:
+                csv_address_list_id:
+                  type: string
+                  format: uuid
+                  description: UUID of the CSV address list
+            example:
+              csv_address_list_id: "123e4567-e89b-12d3-a456-426614174000"
+      responses:
+        "200":
+          description: Address list retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GetCSVAddressListResponse"
+        "401":
+          description: Unauthorized
+        "404":
+          description: List not found
+        "500":
+          description: Internal Server Error
+
   /removeAllDuplicateAddresses:
     post:
       tags:
@@ -17618,6 +17658,57 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ValidatedAddress"
+
+    GetCSVAddressListResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          example: success
+        message:
+          type: string
+          example: Address list retrieved successfully
+        data:
+          $ref: "#/components/schemas/CSVAddressList"
+
+    CSVAddressList:
+      type: object
+      properties:
+        csv_address_list_id:
+          type: string
+          format: uuid
+        id:
+          type: string
+          format: uuid
+        organization_id:
+          type: string
+          format: uuid
+        list_name:
+          type: string
+        metadata:
+          $ref: "#/components/schemas/AddressListMetadata"
+        addresses:
+          type: array
+          items:
+            $ref: "#/components/schemas/ValidatedAddress"
+        center:
+          type: object
+          properties:
+            lat:
+              type: number
+            lng:
+              type: number
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        created_at_tz:
+          $ref: "#/components/schemas/TimezoneEnrichment"
+        updated_at_tz:
+          $ref: "#/components/schemas/TimezoneEnrichment"
 
   securitySchemes:
     SupabaseAuth:
