@@ -25,6 +25,9 @@ interface RequestBody {
   referral_id?: string | null;
   disclaimer_text?: string;
   start_date?: string;
+  campaign_target_type?: string;
+  zone_id?: string | null;
+  csv_address_list_id?: string | null;
 }
 
 Deno.serve(async (req) => {
@@ -85,7 +88,7 @@ Deno.serve(async (req) => {
       );
     }
 
-    const { campaign_id, campaign_name, referral_id, disclaimer_text, start_date } = body;
+    const { campaign_id, campaign_name, referral_id, disclaimer_text, start_date, campaign_target_type, zone_id, csv_address_list_id } = body;
 
     // Validate campaign_id
     if (!campaign_id) {
@@ -99,7 +102,7 @@ Deno.serve(async (req) => {
     // Fetch existing campaign to verify ownership and get current state
     const { data: existingCampaign, error: fetchError } = await supabase
       .from("campaigns")
-      .select("id, campaign_name, referral_id, offer_data")
+      .select("id, campaign_name, referral_id, offer_data, campaign_target_type, zone_id, csv_address_list_id")
       .eq("id", campaign_id)
       .eq("organization_id", organizationId)
       .single();
@@ -127,6 +130,33 @@ Deno.serve(async (req) => {
       if (campaign_name !== existingCampaign.campaign_name) {
         updateData.campaign_name = campaign_name.trim();
         historyLogs.push(`changed name to "${campaign_name}"`);
+      }
+    }
+
+    // Handle Campaign Target Type Update
+    if (campaign_target_type !== undefined) {
+      if (!['Referrals', 'Location Zone', 'Address List'].includes(campaign_target_type)) {
+        return errorResponse("INVALID_INPUT", "Invalid campaign_target_type. Must be Referrals, Location Zone, or Address List", 400);
+      }
+      if (campaign_target_type !== existingCampaign.campaign_target_type) {
+        updateData.campaign_target_type = campaign_target_type;
+        historyLogs.push(`changed target type to ${campaign_target_type}`);
+      }
+    }
+
+    // Handle Zone ID Update
+    if (zone_id !== undefined) {
+      if (zone_id !== existingCampaign.zone_id) {
+        updateData.zone_id = zone_id;
+        historyLogs.push(zone_id ? `changed zone to ${zone_id}` : "unlinked zone");
+      }
+    }
+
+    // Handle CSV Address List ID Update
+    if (csv_address_list_id !== undefined) {
+      if (csv_address_list_id !== existingCampaign.csv_address_list_id) {
+        updateData.csv_address_list_id = csv_address_list_id;
+        historyLogs.push(csv_address_list_id ? `changed CSV address list to ${csv_address_list_id}` : "unlinked CSV address list");
       }
     }
 

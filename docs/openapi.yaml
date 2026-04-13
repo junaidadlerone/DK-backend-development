@@ -14368,10 +14368,25 @@ paths:
                   type: string
                   format: date-time
                   description: New start date
+                campaign_target_type:
+                  type: string
+                  enum: [Referrals, Location Zone, Address List]
+                  description: Update the campaign targeting mode
+                zone_id:
+                  type: string
+                  format: uuid
+                  nullable: true
+                  description: New location zone ID (for Location Zone)
+                csv_address_list_id:
+                  type: string
+                  format: uuid
+                  nullable: true
+                  description: New CSV address list ID (for Address List)
             example:
-              step: 1
               campaign_id: "660e8400-e29b-41d4-a716-446655440001"
               campaign_name: "Summer Sale"
+              campaign_target_type: "Location Zone"
+              zone_id: "123e4567-e89b-12d3-a456-426614174000"
               referral_id: "550e8400-e29b-41d4-a716-446655440000"
               disclaimer_text: "Terms apply"
               start_date: "2026-06-01T00:00:00Z"
