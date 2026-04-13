@@ -122,8 +122,9 @@ tags:
       getUserOrganizations, deleteOrganization, recoverOrganization, transferOrganizationOwnership,
       getAgencyAccountOrganizationMembers
 
-      **Modified endpoints:** login (org list in response), signUp (sets Super Admin flag),
-      completeOnboarding (org_id param + step 4), createUser (org_id param), getUser (org column for Super Admins)
+      **Modified endpoints:** login (org list in response), signUp (sets Super Admin flag), completeOnboarding (org_id param + step 4), createUser (org_id param), getUser (org column for Super Admins)
+  - name: Address List Management
+    description: CSV-based address list operations including duplicates removal, geocoding, and bulk deletion.
 
 paths:
   /signUp:
@@ -2447,7 +2448,7 @@ paths:
   /importAddressList:
     post:
       tags:
-        - Address Discovery
+        - Address List Management
       summary: Import and verify CSV address list
       description: |
         Ingests a CSV file, parses it, identifies duplicates, and verifies unique addresses via internal field validation.
@@ -2480,6 +2481,9 @@ paths:
                 - csv_data
                 - campaign_id
               properties:
+                campaign_id:
+                  type: uuid
+                  description: ID of the campaign to which the address list belongs
                 list_name:
                   type: string
                   description: Human-readable name for the address list
@@ -2489,17 +2493,15 @@ paths:
                   description: Base64 encoded CSV content. Prefixed with data:text/csv;base64 for best results.
                 filename:
                   type: string
-                campaign_id:
-                  type: string
-                  format: uuid
                 column_mapping:
                   type: object
                   additionalProperties:
                     type: string
                   description: |
                     Optional mapping from target fields to CSV headers.
-                    Fields: Address Line 1, Address Line 2, City, State, Zip Code, Country.
+                     Fields: Address Line 1, Address Line 2, City, State, Zip Code, Country, First Name, Last Name, Full Name.
             example:
+              campaign_id: "123e4567-e89b-12d3-a456-426614174000"
               list_name: "Spring Marketing Campaign"
               csv_data: "data:text/csv;base64,..."
               column_mapping:
@@ -2513,6 +2515,10 @@ paths:
               schema:
                 type: object
                 properties:
+                  list_id:
+                    type: string
+                    format: uuid
+                    description: ID of the created address list
                   total_addresses:
                     type: integer
                   valid_addresses:
@@ -2535,6 +2541,12 @@ paths:
                         state:
                           type: string
                         zip:
+                          type: string
+                        first_name:
+                          type: string
+                        last_name:
+                          type: string
+                        full_name:
                           type: string
                         id:
                           type: string
@@ -2596,7 +2608,10 @@ paths:
 
   /removeAllDuplicates:
     post:
-      summary: Remove all duplicate addresses from a list
+      summary: Exclude all duplicate addresses from a list
+      description: |
+        Marks all rows having 'is_duplicate' as true as 'is_included: false'.
+        Rows are not removed from the database but are excluded from campaign logic.
       tags:
         - Address Discovery
       security:
@@ -2628,103 +2643,6 @@ paths:
                     type: integer
                   remaining_count:
                     type: integer
-
-  /editAddress:
-    post:
-      summary: Edit a specific address row in a list
-      tags:
-        - Address Discovery
-      security:
-        - SupabaseAuth: []
-          BearerAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required:
-                - list_id
-                - address_id
-                - updates
-              properties:
-                list_id:
-                  type: string
-                  format: uuid
-                address_id:
-                  type: string
-                  format: uuid
-                updates:
-                  type: object
-                  description: 'Map of fields to update (e.g. {"city": "Toronto", "is_included": false})'
-      responses:
-        "200":
-          description: Address updated successfully. Operation logged in history.
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  message:
-                    type: string
-                  updated_address:
-                    type: object
-
-  /validateAddress:
-    post:
-      summary: Validate address(es) via Google Geocoding
-      tags:
-        - Address Discovery
-      security:
-        - SupabaseAuth: []
-          BearerAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required:
-                - list_id
-              properties:
-                list_id:
-                  type: string
-                  format: uuid
-                address_id:
-                  type: string
-                  format: uuid
-                  description: Optional. If omitted, validates all included and unvalidated addresses.
-      responses:
-        "200":
-          description: Validation completed. Operation logged in history.
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  message:
-                    type: string
-                  updated_count:
-                    type: integer
-              example:
-                - address_line1: "123 MAIN ST"
-                  city: "SAN FRANCISCO"
-                  state: "CA"
-                  zip: "94105"
-                  status: "valid"
-                - address_line1: "Invalid Rd"
-                  status: "invalid"
-                  error_message: "line1: Missing Value | zip: Invalid Format"
-        "400":
-          description: Invalid input or empty CSV
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-        "401":
-          description: Unauthorized
-        "500":
-          description: Internal server error
 
   /verifyAddresses:
     post:
@@ -3183,6 +3101,14 @@ paths:
                       zone_id:
                         type: string
                         format: uuid
+                        nullable: true
+                      campaign_target_type:
+                        type: string
+                        enum: [Referrals, Location Zones, Address Lists]
+                      csv_address_list_id:
+                        type: string
+                        format: uuid
+                        nullable: true
                       validated_addresses:
                         type: integer
                         description: Number of addresses that were successfully validated
@@ -8193,6 +8119,21 @@ paths:
                       organization_id:
                         type: string
                         format: uuid
+                      target_type:
+                        type: string
+                        enum: [Referrals, Location Zones, Address Lists]
+                        description: Formal targeting type for the campaign
+                      link_referral:
+                        type: boolean
+                      location_zone_id:
+                        type: string
+                        format: uuid
+                      csv_address_list_id:
+                        type: string
+                        format: uuid
+                        description: ID of the CSV address list if target_type is Address Lists
+                      step:
+                        type: integer
                       referral_id:
                         type: string
                         format: uuid
@@ -8374,9 +8315,23 @@ paths:
                           name:
                             type: string
                             example: Draft
+                      campaign_target_type:
+                        type: string
+                        enum: [Referrals, Location Zone, Address List]
                       referral_id:
                         type: string
                         format: uuid
+                        nullable: true
+                      zone_id:
+                        type: string
+                        format: uuid
+                        nullable: true
+                      csv_address_list_id:
+                        type: string
+                        format: uuid
+                        nullable: true
+                      campaign_name:
+                        type: string
                       template_id:
                         type: string
                       offer_data:
@@ -13239,9 +13194,9 @@ paths:
         **Simplified 4-step campaign creation process using template bundles**
 
         This is a streamlined version of the original 6-step `/createCampaign` workflow:
-        - Step 1: Create campaign with name, optional referral, and optional disclaimer
+        - Step 1: Create campaign with name, optional target_type, optional referral, and optional disclaimer
         - Step 2: Assign template bundle (automatically sets front and back templates)
-        - Step 3: Link location zone
+        - Step 3: Link location zone OR uploaded Address List
         - Step 4: Campaign consents and disclaimers
 
         **Key Differences from V1:**
@@ -13259,13 +13214,14 @@ paths:
 
         ## Step 1: Create Campaign
 
-        Create a new campaign with name and optionally link a referral.
+        Create a new campaign with name and optionally link a referral or specify a target type.
 
         **Request:**
         ```json
         {
           "step": 1,
           "campaign_name": "Summer Promotion 2025",
+          "target_type": "Address List",
           "referral_id": "550e8400-e29b-41d4-a716-446655440000",
           "disclaimer_text": "Offer valid for new customers only"
         }
@@ -13276,7 +13232,8 @@ paths:
         - `campaign_name`: Campaign name (string, not empty)
 
         **Optional Fields:**
-        - `referral_id`: UUID of referral to link (can be omitted for campaigns without referrals)
+        - `target_type`: Explicit targeting type ('Referrals', 'Location Zone', 'Address List'). Inferred from referral_id if missing.
+        - `referral_id`: UUID of referral to link (required if target_type is 'Referrals', or used for inference)
         - `disclaimer_text`: Disclaimer text to save in offer_data
 
         **What Happens:**
@@ -13320,9 +13277,9 @@ paths:
 
         ## Step 3: Link Location Zone
 
-        Associate a location zone with verified addresses to the campaign.
+        Associate a location zone or an uploaded CSV address list to the campaign.
 
-        **Request:**
+        **Request (Zone):**
         ```json
         {
           "step": 3,
@@ -13331,15 +13288,24 @@ paths:
         }
         ```
 
+        **Request (Address List):**
+        ```json
+        {
+          "step": 3,
+          "campaign_id": "660e8400-e29b-41d4-a716-446655440001",
+          "csv_address_list_id": "990e8400-e29b-41d4-a716-446655440009"
+        }
+        ```
+
         **Required Fields:**
         - `step`: Must be 3
         - `campaign_id`: UUID of campaign
-        - `zone_id`: UUID of location zone
+        - `zone_id`: Required if `target_type` is 'Location Zone'
+        - `csv_address_list_id`: Required if `target_type` is 'Address List'
 
         **What Happens:**
-        - Verifies zone exists and belongs to organization
-        - **Smart duplication**: If zone already used by another campaign, creates a duplicate
-        - Updates campaign with zone_id
+        - Verifies zone or address list exists and belongs to organization
+        - Updates campaign with zone_id or csv_address_list_id
         - Sets current_step: 3
         - Logs history
 
@@ -15337,6 +15303,272 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+  /removeAllDuplicateAddresses:
+    post:
+      tags:
+        - Address List Management
+      summary: Exclude all duplicate addresses from list
+      description: |
+        Marks rows as `is_deleted: true` and `is_included: false` if they are tagged as `is_duplicate` within a CSV address list.
+        Updates list metadata and adds an entry to the operation history.
+      operationId: removeAllDuplicateAddresses
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - list_id
+              properties:
+                list_id:
+                  type: string
+                  format: uuid
+                  description: UUID of the CSV address list
+      responses:
+        "200":
+          description: Successfully excluded duplicates
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  message:
+                    type: string
+                  excluded_count:
+                    type: integer
+                  total_count:
+                    type: integer
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not Found
+        "500":
+          description: Internal Server Error
+
+  /editAddress:
+    post:
+      tags:
+        - Address List Management
+      summary: Update a specific address in a CSV list
+      description: |
+        Updates a specific row within a CSV address list and re-validates the address fields.
+      operationId: editAddress
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - list_id
+                - address_id
+                - updates
+              properties:
+                list_id:
+                  type: string
+                  format: uuid
+                address_id:
+                  type: string
+                  format: uuid
+                updates:
+                  $ref: "#/components/schemas/AddressUpdate"
+      responses:
+        "200":
+          description: Address updated successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  message:
+                    type: string
+                  updated_address:
+                    $ref: "#/components/schemas/AddressRow"
+        "400":
+          description: Bad Request
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not Found
+        "500":
+          description: Internal Server Error
+
+  /getCSVAddressListDetails:
+    post:
+      tags:
+        - Address List Management
+      summary: Get details of a CSV address list by campaign ID
+      description: |
+        Returns metadata and groups addresses into 'included' and 'excluded' categories for a given campaign's CSV address list.
+      operationId: getCSVAddressListDetails
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - campaign_id
+              properties:
+                campaign_id:
+                  type: string
+                  format: uuid
+      responses:
+        "200":
+          description: Address list details retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CSVAddressListDetailsResponse"
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not Found
+        "500":
+          description: Internal Server Error
+
+  /deleteCSVAddresses:
+    post:
+      tags:
+        - Address List Management
+      summary: Bulk delete addresses from a CSV list
+      description: |
+        Marks specific address IDs in a campaign_csv_address_list as deleted.
+      operationId: deleteCSVAddresses
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - list_id
+                - address_ids
+              properties:
+                list_id:
+                  type: string
+                  format: uuid
+                address_ids:
+                  type: array
+                  items:
+                    type: string
+                    format: uuid
+      responses:
+        "200":
+          description: Addresses deleted successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  message:
+                    type: string
+                  updated_count:
+                    type: integer
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not Found
+        "500":
+          description: Internal Server Error
+
+  /getCoordinates:
+    post:
+      tags:
+        - Address List Management
+      summary: Geocode addresses in a CSV list
+      description: |
+        Performs geocoding via Google Maps API for valid rows in a CSV address list and updates their coordinates.
+      operationId: getCoordinates
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - list_id
+              properties:
+                list_id:
+                  type: string
+                  format: uuid
+      responses:
+        "200":
+          description: Geocoding completed successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GetCoordinatesResponse"
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not Found
+        "422":
+          description: Geocoding could not locate any addresses
+        "500":
+          description: Internal Server Error
+
+  /removeAllInvalidAddresses:
+    post:
+      tags:
+        - Address List Management
+      summary: Bulk delete all invalid addresses
+      description: |
+        Marks all addresses with `is_valid: false` or missing required fields as `is_deleted: true` (and `is_included: false`) in a campaign_csv_address_list.
+      operationId: removeAllInvalidAddresses
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - list_id
+              properties:
+                list_id:
+                  type: string
+                  format: uuid
+      responses:
+        "200":
+          description: Invalid addresses deleted successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  message:
+                    type: string
+                  updated_count:
+                    type: integer
+                  metadata:
+                    $ref: "#/components/schemas/AddressListMetadata"
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not Found
+        "500":
+          description: Internal Server Error
 
 components:
   schemas:
@@ -17102,6 +17334,10 @@ components:
           type: string
           format: date-time
           description: Optional start date for the campaign
+        target_type:
+          type: string
+          enum: [Referrals, Location Zones, Address Lists]
+          description: Chosen targeting method for the campaign. Inferred if omitted (defaults to Location Zone, or Referrals if referral_id provided).
 
     CampaignV2Step2:
       type: object
@@ -17128,7 +17364,6 @@ components:
       required:
         - step
         - campaign_id
-        - zone_id
       properties:
         step:
           type: integer
@@ -17141,7 +17376,11 @@ components:
         zone_id:
           type: string
           format: uuid
-          description: UUID of location zone
+          description: UUID of location zone (required for Location Zone campaigns)
+        csv_address_list_id:
+          type: string
+          format: uuid
+          description: UUID of uploaded address list (required for Address List campaigns)
 
     CampaignV2Step4:
       type: object
@@ -17206,6 +17445,179 @@ components:
           type: boolean
         has_previous_page:
           type: boolean
+
+    AddressUpdate:
+      type: object
+      properties:
+        address_line1:
+          type: string
+        address_line2:
+          type: string
+        city:
+          type: string
+        state:
+          type: string
+        zip:
+          type: string
+
+    AddressRow:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        address_line1:
+          type: string
+        address_line2:
+          type: string
+        city:
+          type: string
+        state:
+          type: string
+        zip:
+          type: string
+        lat:
+          type: number
+        long:
+          type: number
+        is_valid:
+          type: boolean
+        is_included:
+          type: boolean
+        is_deleted:
+          type: boolean
+        is_duplicate:
+          type: boolean
+        status:
+          type: string
+          enum: [valid, invalid, duplicate]
+        error_message:
+          type: string
+
+    AddressListMetadata:
+      type: object
+      properties:
+        valid_count:
+          type: integer
+        invalid_count:
+          type: integer
+        duplicate_count:
+          type: integer
+        deleted_count:
+          type: integer
+        excluded_duplicates_count:
+          type: integer
+        last_operation:
+          type: string
+        last_validation_batch_size:
+          type: integer
+
+    HistoryEntry:
+      type: object
+      properties:
+        operation:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        status:
+          type: string
+        details:
+          type: object
+
+    CSVAddressListDetailsResponse:
+      type: object
+      properties:
+        status:
+          type: string
+        id:
+          type: string
+          format: uuid
+        list_name:
+          type: string
+        total_count:
+          type: integer
+        included_count:
+          type: integer
+        excluded_count:
+          type: integer
+        included:
+          type: array
+          items:
+            $ref: "#/components/schemas/AddressRow"
+        excluded:
+          type: array
+          items:
+            $ref: "#/components/schemas/AddressRow"
+
+    ValidatedAddress:
+      type: object
+      properties:
+        lat:
+          type: number
+        long:
+          type: number
+        osm_id:
+          type: string
+          nullable: true
+        status:
+          type: string
+        address:
+          type: string
+        verified:
+          type: boolean
+        zoneType:
+          type: string
+        residential:
+          type: boolean
+        propertyType:
+          type: string
+        targeting_zone_name:
+          type: string
+        distanceFromCenter:
+          type: number
+
+    GetCoordinatesResponse:
+      type: object
+      properties:
+        status:
+          type: string
+        message:
+          type: string
+        center:
+          type: object
+          properties:
+            lat:
+              type: number
+            long:
+              type: number
+            radius:
+              type: number
+        mode:
+          type: string
+        searchType:
+          type: string
+        metadata:
+          type: object
+          properties:
+            totalBuildingsFound:
+              type: integer
+            addressesReturned:
+              type: integer
+            residentialCount:
+              type: integer
+            otherCount:
+              type: integer
+            verified_count:
+              type: integer
+            unverified_count:
+              type: integer
+            processingTimeMs:
+              type: number
+        addresses:
+          type: array
+          items:
+            $ref: "#/components/schemas/ValidatedAddress"
 
   securitySchemes:
     SupabaseAuth:

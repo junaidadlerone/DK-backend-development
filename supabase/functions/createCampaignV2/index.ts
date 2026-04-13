@@ -123,7 +123,7 @@ Deno.serve(async (req) => {
  * Step 1: Create campaign with name, optional referral, and optional disclaimer
  */
 async function handleStep1(supabase: any, body: any, organizationId: string, user: any) {
-  const { referral_id, campaign_name, disclaimer_text } = body;
+  const { referral_id, campaign_name, disclaimer_text, target_type } = body;
 
   if (!campaign_name || typeof campaign_name !== 'string' || campaign_name.trim() === '') {
     return errorResponse(
@@ -131,6 +131,27 @@ async function handleStep1(supabase: any, body: any, organizationId: string, use
       "campaign_name is required for step 1",
       400
     );
+  }
+
+  // Validate target_type if provided, or infer it
+  const validTypes = ['Referrals', 'Location Zone', 'Address List'];
+  let finalTargetType = target_type;
+
+  if (target_type && !validTypes.includes(target_type)) {
+    return errorResponse(
+      "INVALID_INPUT",
+      `Invalid target_type. Must be one of: ${validTypes.join(', ')}`,
+      400
+    );
+  }
+
+  // Inference logic if target_type is missing
+  if (!finalTargetType) {
+    if (referral_id) {
+      finalTargetType = 'Referrals';
+    } else {
+      finalTargetType = 'Location Zone'; // Default
+    }
   }
 
   // Only verify referral if referral_id is provided
@@ -190,7 +211,7 @@ async function handleStep1(supabase: any, body: any, organizationId: string, use
       organization_id: organizationId,
       referral_id: referral_id || null,
       campaign_name: campaign_name.trim(),
-      offer_data: Object.keys(offerData).length > 0 ? offerData : null,
+      campaign_target_type: finalTargetType,
       status: {
         id: draftStatus.id,
         name: draftStatus.name
@@ -498,7 +519,7 @@ async function handleStep2(supabase: any, body: any, campaign_id: string, organi
  * Same logic as V1 Step 5
  */
 async function handleStep3(supabase: any, body: any, campaign_id: string, organizationId: string, user: any) {
-  const { zone_id } = body;
+  const { zone_id, csv_address_list_id } = body;
 
   if (!campaign_id) {
     return errorResponse(
@@ -508,18 +529,10 @@ async function handleStep3(supabase: any, body: any, campaign_id: string, organi
     );
   }
 
-  if (!zone_id) {
-    return errorResponse(
-      "INVALID_INPUT",
-      "zone_id is required for step 3",
-      400
-    );
-  }
-
   // Verify campaign exists and belongs to organization
   const { data: existingCampaign, error: fetchError } = await supabase
     .from("campaigns")
-    .select("id")
+    .select("id, campaign_target_type")
     .eq("id", campaign_id)
     .eq("organization_id", organizationId)
     .single();
@@ -532,27 +545,76 @@ async function handleStep3(supabase: any, body: any, campaign_id: string, organi
     );
   }
 
-  // Verify zone exists and belongs to this organization
-  const { data: zone, error: zoneError } = await supabase
-    .from("location_zones")
-    .select("*")
-    .eq("id", zone_id)
-    .eq("organization_id", organizationId)
-    .single();
+  const targetType = existingCampaign.campaign_target_type;
 
-  if (zoneError || !zone) {
+  // Validate based on target type
+  if (targetType === 'Location Zone' && !zone_id) {
     return errorResponse(
-      "ZONE_NOT_FOUND",
-      "Zone not found in your organization",
-      404
+        "INVALID_INPUT",
+        "zone_id is required for Location Zone campaigns",
+        400
     );
   }
 
-  // Update campaign to save zone_id and mark step 3 complete
+  if (targetType === 'Address List' && !csv_address_list_id) {
+    return errorResponse(
+        "INVALID_INPUT",
+        "csv_address_list_id is required for Address List campaigns",
+        400
+    );
+  }
+
+  // If Referrals type, they can set either or both (usually zone), but we'll prioritize zone if provided
+  if (!zone_id && !csv_address_list_id && targetType !== 'Referrals') {
+    return errorResponse(
+      "INVALID_INPUT",
+      "Either zone_id or csv_address_list_id is required for step 3",
+      400
+    );
+  }
+
+  // Verify resources if provided
+  if (zone_id) {
+    const { data: zone, error: zoneError } = await supabase
+        .from("location_zones")
+        .select("*")
+        .eq("id", zone_id)
+        .eq("organization_id", organizationId)
+        .single();
+
+    if (zoneError || !zone) {
+        return errorResponse(
+            "ZONE_NOT_FOUND",
+            "Zone not found in your organization",
+            404
+        );
+    }
+  }
+
+  if (csv_address_list_id) {
+    const { data: list, error: listError } = await supabase
+        .from("campaign_csv_address_lists")
+        .select("id")
+        .eq("id", csv_address_list_id)
+        .eq("organization_id", organizationId)
+        .single();
+
+    if (listError || !list) {
+        return errorResponse(
+            "ADDRESS_LIST_NOT_FOUND",
+            "Address List not found in your organization",
+            404
+        );
+    }
+  }
+
+  // Update campaign to save selection and mark step 3 complete
+  // When setting one, nullify the other to ensure consistency
   const { data: campaign, error: updateError } = await supabase
     .from("campaigns")
     .update({
-      zone_id: zone_id,
+      zone_id: zone_id || null,
+      csv_address_list_id: csv_address_list_id || null,
       current_step: 3,
       updated_at: new Date().toISOString()
     })
@@ -575,7 +637,7 @@ async function handleStep3(supabase: any, body: any, campaign_id: string, organi
     campaign_id,
     user.userId,
     user.userName,
-    "linked location zone to campaign"
+    zone_id ? "linked location zone to campaign" : "linked CSV address list to campaign"
   );
 
   // Fetch image_url from referral's gallery only if campaign has a referral
@@ -593,7 +655,8 @@ async function handleStep3(supabase: any, body: any, campaign_id: string, organi
           ...campaign,
           image_url
         },
-        zone_id: zone_id
+        zone_id: zone_id || null,
+        csv_address_list_id: csv_address_list_id || null
       },
     },
     200

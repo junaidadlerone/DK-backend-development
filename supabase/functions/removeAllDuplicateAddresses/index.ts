@@ -49,38 +49,42 @@ Deno.serve(async (req) => {
     }
 
     const originalAddresses: AddressRow[] = list.addresses || [];
-    const filteredAddresses = originalAddresses.filter((addr: AddressRow) => !addr.is_duplicate);
-    
-    const removedCount = originalAddresses.length - filteredAddresses.length;
+    let updatedCount = 0;
 
-    if (removedCount === 0) {
+    const updatedAddresses = originalAddresses.map((addr: AddressRow) => {
+      if (addr.is_duplicate && addr.is_included && !addr.is_deleted) {
+        updatedCount++;
+        return { ...addr, is_deleted: true, is_included: false };
+      }
+      return addr;
+    });
+
+    if (updatedCount === 0) {
         return successResponse({
-            message: "No duplicates found to remove",
-            removed_count: 0
+            message: "No active duplicates found to exclude",
+            updated_count: 0
         });
     }
 
-    // 2. Recalculate metadata
-    const validCount = filteredAddresses.filter((r: AddressRow) => r.status === "valid").length;
-    const invalidCount = filteredAddresses.filter((r: AddressRow) => r.status === "invalid").length;
+    // 2. Recalculate metadata (total_rows stays the same)
+    const validCount = updatedAddresses.filter((r: AddressRow) => r.status === "valid" && !r.is_deleted).length;
+    const invalidCount = updatedAddresses.filter((r: AddressRow) => r.status === "invalid" || r.is_deleted).length;
 
     const newMetadata: AddressListMetadata = {
         ...(list.metadata || {}),
-        total_rows: filteredAddresses.length,
         valid_count: validCount,
         invalid_count: invalidCount,
-        duplicate_count: 0,
-        last_operation: "removeAllDuplicates",
-        removed_count: (list.metadata?.removed_count || 0) + removedCount
+        last_operation: "excludeAllDuplicates",
+        excluded_duplicates_count: (list.metadata?.excluded_duplicates_count || 0) + updatedCount
     };
 
     const newHistoryEntry = {
-        operation: "remove_duplicates",
+        operation: "exclude_duplicates",
         timestamp: new Date().toISOString(),
         status: "Completed",
         details: {
-            removed_count: removedCount,
-            total_after: filteredAddresses.length
+            excluded_count: updatedCount,
+            total_rows: updatedAddresses.length
         }
     };
 
@@ -90,7 +94,7 @@ Deno.serve(async (req) => {
     const { error: updateError } = await supabase
         .from("campaign_csv_address_lists")
         .update({
-            addresses: filteredAddresses,
+            addresses: updatedAddresses,
             metadata: newMetadata,
             operation_history: updatedHistory,
             updated_at: new Date().toISOString()
@@ -103,9 +107,9 @@ Deno.serve(async (req) => {
     }
 
     return successResponse({
-        message: "Successfully removed all duplicates",
-        removed_count: removedCount,
-        remaining_count: filteredAddresses.length
+        message: "Successfully excluded all duplicates",
+        excluded_count: updatedCount,
+        total_count: updatedAddresses.length
     });
 
   } catch (error) {

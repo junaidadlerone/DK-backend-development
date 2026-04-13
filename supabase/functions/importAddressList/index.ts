@@ -177,6 +177,7 @@ Deno.serve(async (req) => {
                 is_valid: true, // It might be valid but it is a duplicate
                 is_duplicate: true,
                 is_included: false,
+                is_deleted: false,
                 error_message: "Duplicate address found in list"
             });
             continue;
@@ -198,7 +199,8 @@ Deno.serve(async (req) => {
                 status: "valid",
                 is_valid: true,
                 is_duplicate: false,
-                is_included: true
+                is_included: true,
+                is_deleted: false
             });
         } else {
             results.push({
@@ -213,6 +215,7 @@ Deno.serve(async (req) => {
                 is_valid: false,
                 is_duplicate: false,
                 is_included: false,
+                is_deleted: false,
                 error_message: `Missing required fields: ${missingFields.join(", ")}`
             });
         }
@@ -243,7 +246,6 @@ Deno.serve(async (req) => {
                 duplicate_count: duplicate_addresses
             }
         }],
-        status: "Completed",
         metadata: { 
             total_rows: dataRows.length,
             valid_count: valid_addresses,
@@ -257,17 +259,10 @@ Deno.serve(async (req) => {
 
     if (insertError) {
         console.error("Persistence error:", insertError);
-    } else if (newList) {
-        // Update the campaign to link this list
-        const { error: campaignUpdateError } = await supabase
-            .from("campaigns")
-            .update({ csv_address_list_id: newList.id })
-            .eq("id", campaign_id);
-        
-        if (campaignUpdateError) console.error("Campaign link error:", campaignUpdateError);
     }
 
     return successResponse({
+        list_id: newList?.id,
         total_addresses: dataRows.length,
         valid_addresses,
         invalid_addresses,
