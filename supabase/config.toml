@@ -536,3 +536,6 @@ verify_jwt = false
 
 [functions.removeAllInvalidAddresses]
 verify_jwt = false
+
+[functions.getCSVAddressListById]
+verify_jwt = false
