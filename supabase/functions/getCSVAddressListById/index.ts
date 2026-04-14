@@ -112,7 +112,8 @@ Deno.serve(async (req) => {
         data: {
           ...list,
           csv_address_list_id: list.id,
-          addresses: list.validated_address_list || [],
+          addresses: list.addresses || [],
+          is_editing: list.is_editing || false,
           created_at_tz: enrichTimestamp(list.created_at, preferences.timezone),
           updated_at_tz: enrichTimestamp(list.updated_at, preferences.timezone)
         }

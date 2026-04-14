@@ -275,6 +275,7 @@ Deno.serve(async (req) => {
                 mapping_used: finalMapping,
                 re_imported_at: timestamp
             },
+            is_editing: true,
             updated_at: timestamp
           })
           .eq("id", listId);
@@ -302,7 +303,8 @@ Deno.serve(async (req) => {
                 invalid_count: invalid_addresses,
                 duplicate_count: duplicate_addresses,
                 mapping_used: finalMapping
-            }
+            },
+            is_editing: true
           })
           .select("id")
           .single();
@@ -331,6 +333,7 @@ Deno.serve(async (req) => {
 
     return successResponse({
         list_id: listId,
+        is_editing: true,
         total_addresses: dataRows.length,
         valid_addresses,
         invalid_addresses,
