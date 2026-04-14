@@ -91,15 +91,6 @@ Deno.serve(async (req) => {
         try {
             const geo = await geocode(addressStr);
             if (geo.success) {
-                addresses[i] = {
-                    ...row,
-                    lat: geo.lat,
-                    long: geo.long,
-                    is_valid: true,
-                    is_included: true, // Mark as included once coordinates are found
-                    status: "valid"
-                };
-
                 const validatedItem = {
                     lat: geo.lat,
                     long: geo.long,
@@ -137,12 +128,7 @@ Deno.serve(async (req) => {
                 validatedAddressList.push(validatedItem);
                 updatedCount++;
             } else {
-                addresses[i] = {
-                    ...row,
-                    is_valid: false,
-                    status: "invalid",
-                    error_message: `Geocoding failed: ${geo.status}`
-                };
+                console.warn(`Geocoding failed for ${addressStr}: ${geo.status}`);
             }
         } catch (e) {
             console.error(`Geocoding error for ${addressStr}:`, e);
@@ -173,7 +159,6 @@ Deno.serve(async (req) => {
     const { error: updateError } = await supabase
         .from("campaign_csv_address_lists")
         .update({
-            addresses,
             validated_address_list: validatedAddressList,
             center,
             zone_name,
