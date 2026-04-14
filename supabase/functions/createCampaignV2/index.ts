@@ -532,7 +532,7 @@ async function handleStep3(supabase: any, body: any, campaign_id: string, organi
   // Verify campaign exists and belongs to organization
   const { data: existingCampaign, error: fetchError } = await supabase
     .from("campaigns")
-    .select("id, campaign_target_type")
+    .select("id, campaign_target_type, csv_address_list_id")
     .eq("id", campaign_id)
     .eq("organization_id", organizationId)
     .single();
@@ -556,12 +556,23 @@ async function handleStep3(supabase: any, body: any, campaign_id: string, organi
     );
   }
 
-  if (targetType === 'Address List' && !csv_address_list_id) {
-    return errorResponse(
-        "INVALID_INPUT",
-        "csv_address_list_id is required for Address List campaigns",
-        400
-    );
+  if (targetType === 'Address List') {
+     if (!csv_address_list_id) {
+        return errorResponse(
+            "INVALID_INPUT",
+            "csv_address_list_id is required for Address List campaigns",
+            400
+        );
+     }
+     
+     // Verification: Ensure the provided list matches the one linked to the campaign
+     if (csv_address_list_id !== existingCampaign.csv_address_list_id) {
+        return errorResponse(
+            "INVALID_INPUT",
+            "Provided csv_address_list_id does not match the address list linked to this campaign. Please ensure you have imported the list for this campaign.",
+            400
+        );
+     }
   }
 
   // If Referrals type, they can set either or both (usually zone), but we'll prioritize zone if provided

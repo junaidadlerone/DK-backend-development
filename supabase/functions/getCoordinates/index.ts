@@ -2,7 +2,7 @@ import { corsResponse, errorResponse, successResponse } from "../_shared/respons
 import { createSupabaseClient } from "../_shared/client.ts";
 import { getUserFromRequest } from "../_shared/history.ts";
 import { getUserOrganizationId } from "../_shared/organization.ts";
-import { AddressRow, AddressListMetadata as _AddressListMetadata, ValidatedAddress } from "../_shared/addressLists.ts";
+import { AddressRow } from "../_shared/addressLists.ts";
 
 /**
  * getCoordinates Edge Function
@@ -60,7 +60,6 @@ Deno.serve(async (req) => {
     if (fetchError || !list) return errorResponse("NOT_FOUND", "Address list not found", 404);
 
     const addresses: AddressRow[] = list.addresses || [];
-    const validatedAddressList: ValidatedAddress[] = list.validated_address_list || [];
     let updatedCount = 0;
 
     // Fetch user profile for createdBy
@@ -95,54 +94,27 @@ Deno.serve(async (req) => {
                     ...row,
                     lat: geo.lat,
                     long: geo.long,
+                    is_included: true,
                     is_valid: true,
-                    is_included: true, // Mark as included once coordinates are found
-                    status: "valid"
-                };
-
-                const validatedItem = {
-                    lat: geo.lat,
-                    long: geo.long,
-                    osm_id: null,
-                    status: "Valid",
-                    address: addressStr.toUpperCase(),
+                    status: "valid",
                     verified: true,
-                    zoneType: "radius(0.3km)",
-                    createdBy: profile ? {
-                        id: profile.id,
-                        full_name: profile.full_name,
-                        user_role: profile.user_role,
-                        created_at: profile.created_at,
-                        updated_at: profile.updated_at
-                    } : null,
-                    residential: true,
-                    propertyType: "Single Family Home",
-                    building_type: null,
-                    postcards_sent: 0,
-                    original_address: addressStr.toUpperCase(),
-                    campaigns_used_in: [],
-                    distanceFromCenter: 0,
-                    targeting_zone_name: `Zone at ${geo.lat.toFixed(4)}, ${geo.long.toFixed(4)}`,
                     verification_details: {
-                        city: (row.city || "").toUpperCase(),
-                        line1: (row.address_line1 || "").toUpperCase(),
+                        city: row.city,
+                        line1: row.address_line1,
                         status: "verified",
-                        details: {},
-                        postalOrZip: row.zip || "",
-                        provinceOrState: (row.state || "").toUpperCase()
-                    },
-                    first_post_card_sent_date: null
+                        postalOrZip: row.zip,
+                        provinceOrState: row.state
+                    }
                 };
-
-                validatedAddressList.push(validatedItem);
                 updatedCount++;
             } else {
                 addresses[i] = {
                     ...row,
-                    is_valid: false,
+                    is_included: false,
                     status: "invalid",
                     error_message: `Geocoding failed: ${geo.status}`
                 };
+                console.warn(`Geocoding failed for ${addressStr}: ${geo.status}`);
             }
         } catch (e) {
             console.error(`Geocoding error for ${addressStr}:`, e);
@@ -159,17 +131,25 @@ Deno.serve(async (req) => {
     if (updatedCount > 0) {
         let sumLat = 0;
         let sumLong = 0;
-        validatedAddressList.forEach(item => {
-            sumLat += item.lat;
-            sumLong += item.long;
+        let count = 0;
+        addresses.forEach(item => {
+            if (item.lat && item.long) {
+                sumLat += item.lat;
+                sumLong += item.long;
+                count++;
+            }
         });
-        const avgLat = sumLat / updatedCount;
-        const avgLong = sumLong / updatedCount;
-        center = { lat: avgLat, long: avgLong, radius: 500 }; // Default 500m radius for CSV lists
-        zone_name = `Zone at ${avgLat.toFixed(4)}, ${avgLong.toFixed(4)}`;
+        if (count > 0) {
+            const avgLat = sumLat / count;
+            const avgLong = sumLong / count;
+            center = { lat: avgLat, long: avgLong, radius: 500 }; 
+            zone_name = `Zone at ${avgLat.toFixed(4)}, ${avgLong.toFixed(4)}`;
+        }
     }
 
     // 3. Save
+    const validatedAddressList = addresses.filter(a => a.verified && a.is_included && !a.is_deleted);
+
     const { error: updateError } = await supabase
         .from("campaign_csv_address_lists")
         .update({
@@ -177,6 +157,7 @@ Deno.serve(async (req) => {
             validated_address_list: validatedAddressList,
             center,
             zone_name,
+            is_editing: false,
             metadata: {
                 ...(list.metadata || {}),
                 last_operation: "getCoordinates",
@@ -202,6 +183,7 @@ Deno.serve(async (req) => {
         status: "success",
         message: `Verified ${updatedCount} of ${addresses.length} addresses`,
         center,
+        is_editing: false,
         mode: "address-list",
         searchType: "RESIDENTIAL",
         metadata: {
@@ -213,7 +195,7 @@ Deno.serve(async (req) => {
             unverified_count: addresses.length - updatedCount,
             processingTimeMs
         },
-        addresses: validatedAddressList
+        addresses
     });
 
   } catch (error) {

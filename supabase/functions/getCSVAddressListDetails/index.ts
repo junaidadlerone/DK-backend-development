@@ -41,12 +41,12 @@ Deno.serve(async (req) => {
     }
 
     // 1. Fetch the list
-    const { data: list, error: fetchError } = await supabase
-       .from("campaign_csv_address_lists")
-       .select("*")
-       .eq("campaign_id", campaign_id)
-       .eq("organization_id", organizationId)
-       .single();
+     const { data: list, error: fetchError } = await supabase
+        .from("campaign_csv_address_lists")
+        .select("id, list_name, addresses, is_editing")
+        .eq("campaign_id", campaign_id)
+        .eq("organization_id", organizationId)
+        .single();
 
     if (fetchError || !list) {
       return errorResponse("NOT_FOUND", "Address list not found", 404);
@@ -54,13 +54,21 @@ Deno.serve(async (req) => {
 
     const addresses: AddressRow[] = list.addresses || [];
 
-    // Group addresses
-    const included = addresses.filter(addr => addr.is_included && !addr.is_deleted);
-    const excluded = addresses.filter(addr => addr.is_duplicate || !addr.is_valid || addr.is_deleted);
+    // Group addresses directly from the addresses array
+    // An address is 'included' if it is marked as included/valid and not deleted
+    const included = addresses.filter(addr => 
+      (addr.is_included || addr.status === "valid" || addr.status === "Valid" || addr.verified === true) && 
+      !addr.is_deleted
+    );
+
+    // An address is 'excluded' if it's in the list but not in the included set
+    // (This includes duplicates, deleted rows, or rows that failed geocoding)
+    const excluded = addresses.filter(addr => !included.includes(addr));
 
     return successResponse({
       id: list.id,
       list_name: list.list_name,
+      is_editing: list.is_editing || false,
       total_count: addresses.length,
       included_count: included.length,
       excluded_count: excluded.length,

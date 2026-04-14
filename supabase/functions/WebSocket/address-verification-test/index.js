@@ -1,6 +1,7 @@
 import { WebSocketServer } from 'ws';
 import fetch from 'node-fetch';
 import http from 'http';
+import process from 'node:process';
 
 // =============================================================================
 // CONFIGURATION - API KEYS & URLS
@@ -18,7 +19,7 @@ const VERIFICATION_API_URL = 'https://api.postgrid.com/v1/addver/verifications';
 // =============================================================================
 const isTestMode = true; // Set to true to inject mock data if no addresses are verified
 
-function getTestAddresses(count) {
+function getTestAddresses(count, _originalRows = []) {
   const addresses = [];
   const baseLat = 37.7749;
   const baseLong = -122.4194;
@@ -64,6 +65,54 @@ function getTestAddresses(count) {
     });
   }
   
+  return addresses;
+}
+
+/**
+ * Newly added helper for CSV Address List test mode.
+ * Preserves the original address details and IDs but injects mock verification results.
+ */
+function getCSVTestAddresses(originalRows) {
+  const addresses = [];
+  const baseLat = 33.4942; // Scottsdale Area
+  const baseLong = -111.9260;
+
+  for (let i = 0; i < originalRows.length; i++) {
+    const row = originalRows[i];
+    const latOffset = (Math.random() - 0.5) * 0.01;
+    const longOffset = (Math.random() - 0.5) * 0.01;
+
+    addresses.push({
+      ...row,
+      lat: baseLat + latOffset,
+      long: baseLong + longOffset,
+      status: 'Valid',
+      verified: true,
+      is_included: true,
+      is_valid: true,
+      verification_details: {
+        status: 'verified',
+        line1: row.address_line1 || 'Mock Line 1',
+        city: row.city || 'Scottsdale',
+        provinceOrState: row.state || 'AZ',
+        postalOrZip: row.zip || '85251',
+        details: {
+             status: 'verified',
+             line1: row.address_line1,
+             city: row.city,
+             provinceOrState: row.state,
+             postalOrZip: row.zip
+        }
+      },
+      createdBy: {
+        id: null,
+        user_role: 'TECHNICIAN',
+        full_name: 'System',
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      }
+    });
+  }
   return addresses;
 }
 
@@ -306,18 +355,26 @@ async function verifyAddresses(ws, sources, apiKey, supabaseAnonKey, showOnlyVer
         let verifiedCount = 0;
 
         if (isTestMode) {
-            const unverifiedCount = addresses.filter(addr => addr.verified !== true).length;
-            const testCount = unverifiedCount > 0 ? unverifiedCount : addresses.length || 20;
-            console.log(`Test Mode: ${unverifiedCount} unverified addresses found, generating ${testCount} test addresses`);
-            verifiedAddresses.push(...getTestAddresses(testCount));
+            let mocks;
+            if (csv_address_list_id) {
+                console.log(`Test Mode (CSV): Enriching ${addresses.length} original addresses`);
+                mocks = getCSVTestAddresses(addresses);
+            } else {
+                const unverifiedCount = addresses.filter(addr => addr.verified !== true).length;
+                const testCount = unverifiedCount > 0 ? unverifiedCount : addresses.length || 20;
+                console.log(`Test Mode (Zone): Generating ${testCount} hardcoded SF addresses`);
+                mocks = getTestAddresses(testCount);
+            }
+            
+            verifiedAddresses.push(...mocks);
             verifiedCount = verifiedAddresses.filter(addr => addr.verified === true).length;
             
             ws.send(JSON.stringify({
                 status: 'processing',
-                message: `Test mode: Using ${verifiedCount} hardcoded addresses.`,
-                total_addresses: verifiedCount,
+                message: `Test mode: ${csv_address_list_id ? 'Enriched original rows' : 'Generated mock SF addresses'}`,
+                total_addresses: mocks.length,
                 verified_count: verifiedCount,
-                processed_count: verifiedCount
+                processed_count: mocks.length
             }));
         } else {
             if (addresses.length === 0) {
@@ -381,7 +438,11 @@ async function verifyAddresses(ws, sources, apiKey, supabaseAnonKey, showOnlyVer
                 'Content-Type': 'application/json',
                 'Prefer': 'return=minimal'
             },
-            body: JSON.stringify({ addresses: verifiedAddresses, updated_at: new Date().toISOString() })
+            body: JSON.stringify({ 
+                addresses: verifiedAddresses, 
+                validated_address_list: verifiedAddresses.filter(addr => addr.verified === true),
+                updated_at: new Date().toISOString() 
+            })
         });
 
         if (!updateResponse.ok) console.error(`Error updating zone with verified addresses: ${updateResponse.statusText}`);

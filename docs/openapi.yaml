@@ -2519,6 +2519,8 @@ paths:
                     type: string
                     format: uuid
                     description: ID of the created address list
+                  is_editing:
+                    type: boolean
                   total_addresses:
                     type: integer
                   valid_addresses:
@@ -17700,6 +17702,8 @@ components:
           format: uuid
         list_name:
           type: string
+        is_editing:
+          type: boolean
         metadata:
           $ref: "#/components/schemas/AddressListMetadata"
         addresses:

@@ -2,7 +2,7 @@ import { corsResponse, errorResponse, successResponse } from "../_shared/respons
 import { createSupabaseClient } from "../_shared/client.ts";
 import { getUserFromRequest } from "../_shared/history.ts";
 import { getUserOrganizationId } from "../_shared/organization.ts";
-import { AddressRow, AddressListMetadata as _AddressListMetadata } from "../_shared/addressLists.ts";
+import { AddressRow, ValidatedAddress, AddressListMetadata as _AddressListMetadata } from "../_shared/addressLists.ts";
 
 /**
  * Edit Address Edge Function
@@ -20,6 +20,23 @@ function validateAddressFields(row: Partial<AddressRow>): { isValid: boolean; mi
         isValid: missingFields.length === 0,
         missingFields
     };
+}
+
+const GOOGLE_MAPS_API_KEY = Deno.env.get("GOOGLE_MAPS_API_KEY");
+
+async function geocode(addressStr: string) {
+  if (!GOOGLE_MAPS_API_KEY) {
+    console.error("GOOGLE_MAPS_API_KEY is not set");
+    return { lat: 0, long: 0, success: false, status: "MISSING_API_KEY" };
+  }
+  const url = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(addressStr)}&key=${GOOGLE_MAPS_API_KEY}`;
+  const res = await fetch(url);
+  const data = await res.json();
+  if (data.status === "OK" && data.results.length > 0) {
+    const loc = data.results[0].geometry.location;
+    return { lat: loc.lat, long: loc.lng, success: true };
+  }
+  return { lat: 0, long: 0, success: false, status: data.status };
 }
 
 Deno.serve(async (req) => {
@@ -67,15 +84,45 @@ Deno.serve(async (req) => {
     // 3. Re-validate
     const { isValid, missingFields } = validateAddressFields(updatedRow);
     updatedRow.is_valid = isValid;
+
     if (isValid) {
         updatedRow.status = "valid";
         delete updatedRow.error_message;
+
+        // Perform Geocoding
+        const addressStr = `${updatedRow.address_line1}, ${updatedRow.city}, ${updatedRow.state} ${updatedRow.zip}`;
+        console.log(`Geocoding updated address: ${addressStr}`);
+        
+        const geo = await geocode(addressStr);
+        if (geo.success) {
+            updatedRow.lat = geo.lat;
+            updatedRow.long = geo.long;
+            updatedRow.verified = true;
+            updatedRow.verification_details = {
+                city: updatedRow.city,
+                line1: updatedRow.address_line1,
+                status: "verified",
+                postalOrZip: updatedRow.zip,
+                provinceOrState: updatedRow.state
+            };
+        } else {
+            console.warn(`Geocoding failed for updated address: ${geo.status}`);
+            // We don't mark as invalid just because geocoding failed, 
+            // but we lack coordinates.
+        }
     } else {
         updatedRow.status = "invalid";
         updatedRow.error_message = `Missing required fields: ${missingFields.join(", ")}`;
     }
 
     addresses[index] = updatedRow;
+    
+    // Also update validated_address_list if it exists to keep them in sync
+    const validatedAddresses: ValidatedAddress[] = list.validated_address_list || [];
+    const valIndex = validatedAddresses.findIndex(v => (v.id === address_id || v.row_id === address_id));
+    if (valIndex !== -1) {
+        validatedAddresses[valIndex] = { ...updatedRow, row_id: address_id };
+    }
 
     // 4. Update metadata
     const validCount = addresses.filter(r => r.status === "valid").length;
@@ -108,6 +155,7 @@ Deno.serve(async (req) => {
         .from("campaign_csv_address_lists")
         .update({
             addresses,
+            validated_address_list: validatedAddresses,
             metadata: newMetadata,
             operation_history: updatedHistory,
             updated_at: new Date().toISOString()

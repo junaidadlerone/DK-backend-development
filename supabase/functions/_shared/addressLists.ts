@@ -34,6 +34,8 @@ export interface AddressListMetadata {
 }
 
 export interface ValidatedAddress {
+    id?: string;
+    row_id?: string;
     lat: number;
     long: number;
     osm_id: string | null;

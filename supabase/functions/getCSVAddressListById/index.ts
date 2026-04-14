@@ -100,15 +100,20 @@ Deno.serve(async (req) => {
     // Fetch user preferences
     const preferences = await getPreferences(supabase, user.userId);
 
+    // Determine if geocoding is needed
+    const needsGeocoding = (!list.validated_address_list || list.validated_address_list.length === 0) && !list.center;
+    const message = needsGeocoding ? "Addresses need to be geocoded" : "Address list retrieved successfully";
+
     // Return the list
     return successResponse(
       {
         status: "success",
-        message: "Address list retrieved successfully",
+        message: message,
         data: {
           ...list,
           csv_address_list_id: list.id,
-          addresses: list.validated_address_list || [],
+          addresses: list.addresses || [],
+          is_editing: list.is_editing || false,
           created_at_tz: enrichTimestamp(list.created_at, preferences.timezone),
           updated_at_tz: enrichTimestamp(list.updated_at, preferences.timezone)
         }
