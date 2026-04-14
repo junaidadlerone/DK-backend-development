@@ -225,44 +225,112 @@ Deno.serve(async (req) => {
     const invalid_addresses = results.filter(r => r.status === "invalid").length;
     const duplicate_addresses = results.filter(r => r.status === "duplicate").length;
 
-    // Persistence layer
-    const { data: newList, error: insertError } = await supabase
+    // Persistence layer: Re-use existing list if it exists for this campaign
+    const { data: existingList, error: fetchError } = await supabase
       .from("campaign_csv_address_lists")
-      .insert({
-        organization_id: organizationId,
-        campaign_id: campaign_id,
-        list_name,
-        original_filename: filename,
-        addresses: results,
-        validated_address_list: [], // Leaving empty per user request in import api
-        operation_history: [{
-            operation: "import",
-            timestamp: new Date().toISOString(),
-            status: "Completed",
-            details: {
-                total_rows: dataRows.length,
-                valid_count: valid_addresses,
-                invalid_count: invalid_addresses,
-                duplicate_count: duplicate_addresses
-            }
-        }],
-        metadata: { 
+      .select("id, operation_history")
+      .eq("campaign_id", campaign_id)
+      .eq("organization_id", organizationId)
+      .maybeSingle();
+
+    if (fetchError) {
+        console.error("Error fetching existing list:", fetchError);
+    }
+
+    let listId: string;
+    const timestamp = new Date().toISOString();
+    const newOperation = {
+        operation: "import",
+        timestamp,
+        status: "Completed",
+        details: {
             total_rows: dataRows.length,
             valid_count: valid_addresses,
             invalid_count: invalid_addresses,
-            duplicate_count: duplicate_addresses,
-            mapping_used: finalMapping
+            duplicate_count: duplicate_addresses
         }
-      })
-      .select("id")
-      .single();
+    };
 
-    if (insertError) {
-        console.error("Persistence error:", insertError);
+    if (existingList) {
+        // Update existing record
+        listId = existingList.id;
+        const updatedHistory = Array.isArray(existingList.operation_history) 
+            ? [...existingList.operation_history, newOperation]
+            : [newOperation];
+
+        const { error: updateError } = await supabase
+          .from("campaign_csv_address_lists")
+          .update({
+            list_name,
+            original_filename: filename,
+            addresses: results,
+            validated_address_list: [], // Clear old validated addresses
+            center: null,               // Clear old center point
+            operation_history: updatedHistory,
+            metadata: { 
+                total_rows: dataRows.length,
+                valid_count: valid_addresses,
+                invalid_count: invalid_addresses,
+                duplicate_count: duplicate_addresses,
+                mapping_used: finalMapping,
+                re_imported_at: timestamp
+            },
+            updated_at: timestamp
+          })
+          .eq("id", listId);
+
+        if (updateError) {
+            console.error("Update error:", updateError);
+            return errorResponse("DATABASE_ERROR", "Failed to update existing address list", 500);
+        }
+    } else {
+        // Insert new record
+        const { data: newList, error: insertError } = await supabase
+          .from("campaign_csv_address_lists")
+          .insert({
+            organization_id: organizationId,
+            campaign_id: campaign_id,
+            list_name,
+            original_filename: filename,
+            addresses: results,
+            validated_address_list: [], 
+            center: null,
+            operation_history: [newOperation],
+            metadata: { 
+                total_rows: dataRows.length,
+                valid_count: valid_addresses,
+                invalid_count: invalid_addresses,
+                duplicate_count: duplicate_addresses,
+                mapping_used: finalMapping
+            }
+          })
+          .select("id")
+          .single();
+
+        if (insertError) {
+            console.error("Persistence error:", insertError);
+            return errorResponse("DATABASE_ERROR", "Failed to persist address list", 500);
+        }
+        listId = newList.id;
+    }
+
+    // Update the campaign table with the csv_address_list_id
+    const { error: campaignUpdateError } = await supabase
+        .from("campaigns")
+        .update({ 
+            csv_address_list_id: listId,
+            updated_at: timestamp 
+        })
+        .eq("id", campaign_id)
+        .eq("organization_id", organizationId);
+
+    if (campaignUpdateError) {
+        console.error("Campaign update error:", campaignUpdateError);
+        // We don't fail the whole request if this minor step fails, but we should log it
     }
 
     return successResponse({
-        list_id: newList?.id,
+        list_id: listId,
         total_addresses: dataRows.length,
         valid_addresses,
         invalid_addresses,
