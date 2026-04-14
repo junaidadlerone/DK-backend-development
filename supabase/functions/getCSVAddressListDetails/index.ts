@@ -64,9 +64,13 @@ Deno.serve(async (req) => {
       : addresses.filter(addr => (addr.is_included && !addr.is_deleted));
 
     // Excluded addresses should be the rows in 'addresses' that are NOT in the 'included' list.
+    const includedRowIdSet = new Set(
+      validatedAddresses.map(v => v.row_id).filter(Boolean)
+    );
+    
     const includedAddressSet = new Set(
       validatedAddresses.length > 0
-        ? validatedAddresses.map(v => v.original_address?.toUpperCase() || v.address.toUpperCase())
+        ? validatedAddresses.filter(v => !v.row_id).map(v => v.original_address?.toUpperCase() || v.address.toUpperCase())
         : addresses.filter(addr => addr.is_included && !addr.is_deleted).map(addr => (addr.address || `${addr.address_line1 || ""}, ${addr.city || ""}`).toUpperCase().trim())
     );
 
@@ -74,7 +78,11 @@ Deno.serve(async (req) => {
       // Always exclude if explicitly marked
       if (addr.is_deleted || addr.is_duplicate || addr.is_valid === false || addr.status === "invalid") return true;
       
+      // If we have a row_id match, it's included
+      if (addr.id && includedRowIdSet.has(addr.id)) return false;
+
       // If geocoding has happened, and it's not in the 'included' set, then it's effectively excluded
+      // We only fallback to string matching if row_id is missing or doesn't match
       const addrStr = (addr.address || `${addr.address_line1 || ""}, ${addr.city || ""}`).toUpperCase().trim();
       return !includedAddressSet.has(addrStr);
     });

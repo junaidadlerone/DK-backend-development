@@ -92,6 +92,7 @@ Deno.serve(async (req) => {
             const geo = await geocode(addressStr);
             if (geo.success) {
                 const validatedItem = {
+                    row_id: row.id,
                     lat: geo.lat,
                     long: geo.long,
                     osm_id: null,
