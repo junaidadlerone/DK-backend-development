@@ -16301,6 +16301,9 @@ components:
           nullable: true
           description: Name of the campaign (set in step 1)
           example: Summer Promotion 2025
+        is_editing:
+          type: boolean
+          description: Indicates if the address list associated with the campaign is currently being geocoded or edited
         status:
           type: object
           properties:
