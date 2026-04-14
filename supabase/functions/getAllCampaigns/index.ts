@@ -96,7 +96,7 @@ Deno.serve(async (req) => {
     // Fetch paginated campaigns from user's organization
     const { data: campaigns, error: fetchError } = await supabase
       .from("campaigns")
-      .select("*, campaign_csv_address_lists(is_editing)")
+      .select("*, campaign_csv_address_lists!campaigns_csv_address_list_id_fkey(is_editing)")
       .eq("organization_id", organizationId)
       .order("created_at", { ascending: false })
       .range(offset, offset + limit - 1);
