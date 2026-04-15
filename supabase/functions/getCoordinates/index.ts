@@ -96,12 +96,12 @@ Deno.serve(async (req) => {
                     long: geo.long,
                     is_included: true,
                     is_valid: true,
-                    status: "valid",
-                    verified: true,
+                    status: "valid", // Geocoding is valid
+                    verified: false, // Default to unverified for PostGrid
                     verification_details: {
                         city: row.city,
                         line1: row.address_line1,
-                        status: "verified",
+                        status: "unverified",
                         postalOrZip: row.zip,
                         provinceOrState: row.state
                     }
