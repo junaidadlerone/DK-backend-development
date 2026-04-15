@@ -119,15 +119,19 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Fetch is_editing status if csv_address_list_id exists
+    // Fetch is_editing and skip_verification status if csv_address_list_id exists
     let is_editing = false;
+    let skip_verification = false;
     if (launchData.csv_address_list_id) {
       const { data: listData } = await supabase
         .from("campaign_csv_address_lists")
-        .select("is_editing")
+        .select("is_editing, skip_address_verification")
         .eq("id", launchData.csv_address_list_id)
         .maybeSingle();
-      if (listData) is_editing = listData.is_editing;
+      if (listData) {
+        is_editing = listData.is_editing;
+        skip_verification = listData.skip_address_verification === true;
+      }
     }
 
     // Fetch campaign details (front_template_id, back_template_id, business_data, offer_data)
@@ -215,6 +219,7 @@ Deno.serve(async (req) => {
         zone_id: launchData.zone_id,
         csv_address_list_id: launchData.csv_address_list_id,
         is_editing,
+        skip_verification,
         validated_addresses: launchData.validated_addresses,
         final_cost: finalCost,
         amount_per_postcard: amountPerPostcard,

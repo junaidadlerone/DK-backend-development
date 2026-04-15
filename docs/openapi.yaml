@@ -15320,6 +15320,45 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+  /updateCampaignVerification:
+    post:
+      tags:
+        - Address List Management
+      summary: Update skip_address_verification flag for CSV address list
+      description: |
+        Toggles the skip_address_verification flag for a specific CSV address list.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - csv_address_list_id
+                - skip_address_verification
+              properties:
+                csv_address_list_id:
+                  type: string
+                  format: uuid
+                  example: "123e4567-e89b-12d3-a456-426614174000"
+                skip_address_verification:
+                  type: boolean
+                  example: true
+      responses:
+        "200":
+          description: Successfully updated flag
+        "400":
+          description: Invalid input
+        "401":
+          description: Unauthorized
+        "403":
+          description: Forbidden/Not in organization
+        "404":
+          description: Address list not found
+        "500":
+          description: Internal server error
   /getCSVAddressListById:
     post:
       tags:
@@ -17585,7 +17624,7 @@ components:
         details:
           type: object
 
-    CSVAddressListDetailsResponse:
+CSVAddressListDetailsResponse:
       type: object
       properties:
         status:
@@ -17595,11 +17634,19 @@ components:
           format: uuid
         list_name:
           type: string
+        is_editing:
+          type: boolean
+        skip_address_verification:
+          type: boolean
+        verification_performed:
+          type: boolean
         total_count:
           type: integer
         included_count:
           type: integer
         excluded_count:
+          type: integer
+        verified_address_count:
           type: integer
         included:
           type: array

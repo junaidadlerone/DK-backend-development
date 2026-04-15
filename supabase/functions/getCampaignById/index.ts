@@ -77,7 +77,7 @@ Deno.serve(async (req) => {
     // Fetch campaign
     const { data: campaign, error: fetchError } = await supabase
       .from("campaigns")
-      .select("*, campaign_csv_address_lists!campaigns_csv_address_list_id_fkey(is_editing)")
+      .select("*, campaign_csv_address_lists!campaigns_csv_address_list_id_fkey(is_editing, skip_address_verification)")
       .eq("id", id)
       .eq("organization_id", organizationId)
       .single();
@@ -146,6 +146,7 @@ Deno.serve(async (req) => {
         data: {
           ...campaign,
           is_editing: (campaign as any).campaign_csv_address_lists?.is_editing || false,
+          skip_verification: (campaign as any).campaign_csv_address_lists?.skip_address_verification === true || false,
           total_spent,
           image_url,
           template_bundle_id,

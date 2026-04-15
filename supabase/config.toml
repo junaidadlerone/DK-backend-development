@@ -539,3 +539,6 @@ verify_jwt = false
 
 [functions.getCSVAddressListById]
 verify_jwt = false
+
+[functions.updateCampaignVerification]
+verify_jwt = false

@@ -178,7 +178,8 @@ Deno.serve(async (req) => {
                 is_duplicate: true,
                 is_included: false,
                 is_deleted: false,
-                error_message: "Duplicate address found in list"
+                error_message: "Duplicate address found in list",
+                is_reachable: null
             });
             continue;
         }
@@ -200,7 +201,8 @@ Deno.serve(async (req) => {
                 is_valid: true,
                 is_duplicate: false,
                 is_included: true,
-                is_deleted: false
+                is_deleted: false,
+                is_reachable: null
             });
         } else {
             results.push({
@@ -216,6 +218,7 @@ Deno.serve(async (req) => {
                 is_duplicate: false,
                 is_included: false,
                 is_deleted: false,
+                is_reachable: null,
                 error_message: `Missing required fields: ${missingFields.join(", ")}`
             });
         }

@@ -284,24 +284,29 @@ Deno.serve(async (req) => {
     let allAddresses: AddressRow[] = [];
     let sourceId: string | null = null;
     let sourceType: "zone" | "list" = "zone";
+    let skipVerification = false;
 
     if (campaign.csv_address_list_id) {
       // Fetch from CSV Address List
       const { data: list, error: listError } = await supabase
         .from("campaign_csv_address_lists")
-        .select("id, validated_address_list")
+        .select("id, validated_address_list, skip_address_verification")
         .eq("id", campaign.csv_address_list_id)
         .single();
-      
+
       if (listError || !list) {
         return errorResponse("NOT_FOUND", "CSV Address List not found", 404);
       }
-      
+
+      // Extract skip_verification flag
+      skipVerification = list.skip_address_verification === true || false;
+      console.log(`Skip verification flag from CSV list: ${skipVerification}`);
+
       // Use validated_address_list as primary source if available, fallback to addresses
       const csvSource = (list.validated_address_list && list.validated_address_list.length > 0)
         ? list.validated_address_list
         : [];
-        
+
       allAddresses = csvSource as AddressRow[];
       sourceId = list.id;
       sourceType = "list";
@@ -341,7 +346,7 @@ Deno.serve(async (req) => {
       `Processing ${allAddresses.length} addresses in ${sourceType} ${sourceId} for campaign ${campaign_id}`,
     );
 
-    // Filter addresses: Skip Opt-out, Keep only already verified
+    // Filter addresses based on source type and skip_verification flag
     const onlyVerifiedAddresses: VerifiedAddress[] = [];
     let optOutCount = 0;
     let validatedCount = 0;
@@ -353,15 +358,24 @@ Deno.serve(async (req) => {
         if (addr.is_included === false || addr.is_deleted === true) {
           continue;
         }
-        
+
         // Add to the list of addresses to be stored (shows up in getCampaignLaunchData)
         onlyVerifiedAddresses.push(addr as VerifiedAddress);
 
-        // Count for cost only if valid and not a duplicate
-        if (addr.is_valid === true && addr.is_duplicate === false) {
-          validatedCount++;
+        // Count for cost based on skip_verification flag (CSV CAMPAIGNS ONLY)
+        if (skipVerification) {
+          // If skip_verification is TRUE: count all valid addresses
+          if (addr.is_valid === true && addr.is_duplicate === false) {
+            validatedCount++;
+          }
+        } else {
+          // If skip_verification is FALSE: count only reachable AND valid addresses
+          if (addr.is_valid === true && addr.is_duplicate === false && addr.is_reachable === true) {
+            validatedCount++;
+          }
         }
       } else {
+        // ZONE CAMPAIGNS: Keep original behavior (ignore skip_verification)
         if (addr.status === "Opt-out") {
           optOutCount++;
           continue;
@@ -385,19 +399,21 @@ Deno.serve(async (req) => {
     const mergeVariable = campaign.business_data?.merge_variable || null;
 
     // Upsert to launch_ready_campaign_data table (update if exists, insert if not)
+    const launchDataPayload: any = {
+      campaign_id: campaign_id,
+      zone_id: sourceType === "zone" ? sourceId : null,
+      csv_address_list_id: sourceType === "list" ? sourceId : null,
+      validated_addresses: validatedCount,
+      final_cost: finalCost,
+      amount_per_postcard: amount_per_postcard,
+      verified_addresses: onlyVerifiedAddresses,
+      merge_variable: mergeVariable,
+      updated_at: new Date().toISOString(),
+    };
+
     const { data: launchData, error: upsertError } = await supabase
       .from("launch_ready_campaign_data")
-      .upsert({
-        campaign_id: campaign_id,
-        zone_id: sourceType === "zone" ? sourceId : null,
-        csv_address_list_id: sourceType === "list" ? sourceId : null,
-        validated_addresses: validatedCount,
-        final_cost: finalCost,
-        amount_per_postcard: amount_per_postcard,
-        verified_addresses: onlyVerifiedAddresses,
-        merge_variable: mergeVariable,
-        updated_at: new Date().toISOString(),
-      }, {
+      .upsert(launchDataPayload, {
         onConflict: "campaign_id",
       })
       .select()
@@ -431,7 +447,7 @@ Deno.serve(async (req) => {
 
     const processingTimeMs = Date.now() - startTime;
 
-    return successResponse({
+    const responsePayload: any = {
       status: "success",
       message:
         `Campaign launch data prepared: ${validatedCount} addresses verified`,
@@ -440,7 +456,9 @@ Deno.serve(async (req) => {
       list_of_verified_addresses: onlyVerifiedAddresses,
       launch_ready_id: launchData.id,
       processingTimeMs,
-    }, 201);
+    };
+
+    return successResponse(responsePayload, 201);
   } catch (error) {
     console.error("Unexpected error in launchReadyCampaign:", error);
     return errorResponse(
