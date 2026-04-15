@@ -275,17 +275,39 @@ async function verifyAddress(address, apiKey) {
         const postgridStatus = data.status;
         const verified = postgridStatus === 'verified' || postgridStatus === 'corrected';
         const status = (postgridStatus === 'verified' || postgridStatus === 'corrected') ? 'Valid' : 'Unverified';
-        
-        return {
-            ...address,
-            verified,
-            status: status,
-            verification_details: {
-                ...(address.verification_details || {}),
-                status: postgridStatus,
-                details: data
-            }
-        };
+        const isCsv = address.address_line1 !== undefined;
+
+        if (isCsv) {
+            return {
+                ...address,
+                verified,
+                status: status,
+                verification_details: {
+                    ...(address.verification_details || {}),
+                    status: postgridStatus,
+                    details: data
+                }
+            };
+        } else {
+            const verifiedAddress = `${data.line1}, ${data.city}, ${data.provinceOrState} ${data.postalOrZip}`;
+            
+            return {
+                ...address,
+                original_address: address.address || addressText,
+                address: verifiedAddress,
+                verified,
+                status: status,
+                verification_details: {
+                    status: postgridStatus,
+                    line1: data.line1,
+                    city: data.city,
+                    provinceOrState: data.provinceOrState,
+                    postalOrZip: data.postalOrZip,
+                    details: data
+                },
+                api_response: data
+            };
+        }
 
     } catch (error) {
         console.error('Error verifying address:', error);

@@ -148,7 +148,7 @@ Deno.serve(async (req) => {
     }
 
     // 3. Save
-    const validatedAddressList = addresses.filter(a => a.verified && a.is_included && !a.is_deleted);
+    const validatedAddressList = addresses.filter(a => a.is_valid && a.is_included && !a.is_deleted);
 
     const { error: updateError } = await supabase
         .from("campaign_csv_address_lists")
