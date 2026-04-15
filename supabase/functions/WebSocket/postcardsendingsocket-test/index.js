@@ -172,9 +172,13 @@ async function processCampaign(ws, campaignId, postgridApiKey)
             }
         }
 
-        // Filter out addresses with status "Opt-out"
+        // Filter addresses: Skip Opt-out, and for CSV lists, only send if valid and not a duplicate
         const allAddresses = launch_data.verified_addresses || [];
-        const addresses = allAddresses.filter(addr => addr.status !== 'Opt-out');
+        const addresses = allAddresses.filter(addr => 
+            addr.status !== 'Opt-out' && 
+            addr.is_valid !== false && 
+            addr.is_duplicate !== true
+        );
 
         console.log(`Found ${addresses.length} addresses to process (filtered out ${allAddresses.length - addresses.length} Opt-out addresses).`);
 

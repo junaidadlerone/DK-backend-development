@@ -96,7 +96,7 @@ Deno.serve(async (req) => {
     // Fetch paginated campaigns from user's organization
     const { data: campaigns, error: fetchError } = await supabase
       .from("campaigns")
-      .select("*")
+      .select("*, campaign_csv_address_lists!campaigns_csv_address_list_id_fkey(is_editing)")
       .eq("organization_id", organizationId)
       .order("created_at", { ascending: false })
       .range(offset, offset + limit - 1);
@@ -134,6 +134,7 @@ Deno.serve(async (req) => {
     // Add image_url, computed total_spent, and timezone info to each campaign
     const campaignsWithImages = (campaigns || []).map(campaign => ({
       ...campaign,
+      is_editing: (campaign as any).campaign_csv_address_lists?.is_editing || false,
       total_spent: campaign.id in paymentTotals
         ? paymentTotals[campaign.id]
         : (campaign.postcards_sent || 0) * 3,

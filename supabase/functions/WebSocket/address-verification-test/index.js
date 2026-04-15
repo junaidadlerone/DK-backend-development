@@ -74,30 +74,32 @@ function getTestAddresses(count, _originalRows = []) {
  */
 function getCSVTestAddresses(originalRows) {
   const addresses = [];
-  const baseLat = 33.4942; // Scottsdale Area
-  const baseLong = -111.9260;
 
   for (let i = 0; i < originalRows.length; i++) {
     const row = originalRows[i];
-    const latOffset = (Math.random() - 0.5) * 0.01;
-    const longOffset = (Math.random() - 0.5) * 0.01;
+    
+    // Simulate API response with high probability of success (90% success)
+    const isSuccess = Math.random() > 0.1; 
+    const status = isSuccess ? 'Valid' : 'Unverified';
+    const verified = isSuccess;
 
     addresses.push({
       ...row,
-      lat: baseLat + latOffset,
-      long: baseLong + longOffset,
-      status: 'Valid',
-      verified: true,
+      // Do NOT scramble coordinates - use existing ones or default if missing
+      lat: row.lat || 33.4942, 
+      long: row.long || -111.9260,
+      status: status,
+      verified: verified,
       is_included: true,
-      is_valid: true,
+      is_valid: verified,
       verification_details: {
-        status: 'verified',
+        status: isSuccess ? 'verified' : 'unverified',
         line1: row.address_line1 || 'Mock Line 1',
         city: row.city || 'Scottsdale',
         provinceOrState: row.state || 'AZ',
         postalOrZip: row.zip || '85251',
         details: {
-             status: 'verified',
+             status: isSuccess ? 'verified' : 'unverified',
              line1: row.address_line1,
              city: row.city,
              provinceOrState: row.state,
@@ -269,32 +271,20 @@ async function verifyAddress(address, apiKey) {
 
         const result = await response.json();
         const data = result.data;
-        // Accept both 'verified' and 'corrected' as valid
-        const verified = data.status === 'verified' || data.status === 'corrected';
-        const verifiedAddress = `${data.line1}, ${data.city}, ${data.provinceOrState} ${data.postalOrZip}`;
-
+        // Map PostGrid status to Valid or Unverified
+        const postgridStatus = data.status;
+        const verified = postgridStatus === 'verified' || postgridStatus === 'corrected';
+        const status = (postgridStatus === 'verified' || postgridStatus === 'corrected') ? 'Valid' : 'Unverified';
+        
         return {
             ...address,
-            original_address: address.address || addressText, // Keep original for reference
-            address: verifiedAddress,
-            // Update CSV specific fields if they exist
-            ...(address.address_line1 !== undefined && {
-                address_line1: data.line1,
-                city: data.city,
-                state: data.provinceOrState,
-                zip: data.postalOrZip
-            }),
             verified,
-            status: verified ? 'Valid' : 'Unverified',
+            status: status,
             verification_details: {
-                status: data.status,
-                line1: data.line1,
-                city: data.city,
-                provinceOrState: data.provinceOrState,
-                postalOrZip: data.postalOrZip,
+                ...(address.verification_details || {}),
+                status: postgridStatus,
                 details: data
-            },
-            api_response: data
+            }
         };
 
     } catch (error) {
@@ -440,7 +430,7 @@ async function verifyAddresses(ws, sources, apiKey, supabaseAnonKey, showOnlyVer
             },
             body: JSON.stringify({ 
                 addresses: verifiedAddresses, 
-                validated_address_list: verifiedAddresses.filter(addr => addr.verified === true),
+                validated_address_list: verifiedAddresses, // Include all addresses (Valid or Unverified)
                 updated_at: new Date().toISOString() 
             })
         });

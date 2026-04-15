@@ -289,14 +289,20 @@ Deno.serve(async (req) => {
       // Fetch from CSV Address List
       const { data: list, error: listError } = await supabase
         .from("campaign_csv_address_lists")
-        .select("id, addresses")
+        .select("id, validated_address_list")
         .eq("id", campaign.csv_address_list_id)
         .single();
       
       if (listError || !list) {
         return errorResponse("NOT_FOUND", "CSV Address List not found", 404);
       }
-      allAddresses = list.addresses || [];
+      
+      // Use validated_address_list as primary source if available, fallback to addresses
+      const csvSource = (list.validated_address_list && list.validated_address_list.length > 0)
+        ? list.validated_address_list
+        : [];
+        
+      allAddresses = csvSource as AddressRow[];
       sourceId = list.id;
       sourceType = "list";
     } else {
@@ -338,28 +344,37 @@ Deno.serve(async (req) => {
     // Filter addresses: Skip Opt-out, Keep only already verified
     const onlyVerifiedAddresses: VerifiedAddress[] = [];
     let optOutCount = 0;
+    let validatedCount = 0;
 
     for (const addr of allAddresses) {
-      if (addr.status === "Opt-out") {
-        optOutCount++;
-        continue;
-      }
 
       // Respect exclusion/deletion flags for CSV lists
       if (sourceType === "list") {
         if (addr.is_included === false || addr.is_deleted === true) {
           continue;
         }
-      }
-
-      // Check if address is already verified (from socket3 or verifyAddresses)
-      // For CSV lists, if they were geocoded successfully, they have verified: true
-      if (addr.verified === true || addr.is_valid === true) {
+        
+        // Add to the list of addresses to be stored (shows up in getCampaignLaunchData)
         onlyVerifiedAddresses.push(addr as VerifiedAddress);
+
+        // Count for cost only if valid and not a duplicate
+        if (addr.is_valid === true && addr.is_duplicate === false) {
+          validatedCount++;
+        }
+      } else {
+        if (addr.status === "Opt-out") {
+          optOutCount++;
+          continue;
+        }
+
+        // For traditional zones, keep existing behavior (requires verification)
+        if (addr.verified === true || addr.is_valid === true) {
+          onlyVerifiedAddresses.push(addr as VerifiedAddress);
+          validatedCount++;
+        }
       }
     }
 
-    const validatedCount = onlyVerifiedAddresses.length;
     const finalCost = validatedCount * amount_per_postcard;
 
     console.log(
