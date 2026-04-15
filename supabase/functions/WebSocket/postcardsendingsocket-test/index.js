@@ -172,15 +172,50 @@ async function processCampaign(ws, campaignId, postgridApiKey)
             }
         }
 
-        // Filter addresses: Skip Opt-out, and for CSV lists, only send if valid and not a duplicate
+        // Filter addresses based on campaign type and skip_verification flag
         const allAddresses = launch_data.verified_addresses || [];
-        const addresses = allAddresses.filter(addr => 
-            addr.status !== 'Opt-out' && 
-            addr.is_valid !== false && 
-            addr.is_duplicate !== true
-        );
+        const isCsvCampaign = !!launch_data.csv_address_list_id;
+        const skipVerification = isCsvCampaign ? (launch_data.skip_verification || false) : false;
 
-        console.log(`Found ${addresses.length} addresses to process (filtered out ${allAddresses.length - addresses.length} Opt-out addresses).`);
+        console.log(`Campaign type: ${isCsvCampaign ? 'CSV' : 'Zone'}, Skip verification: ${skipVerification}`);
+
+        const addresses = allAddresses.filter(addr => {
+            // Always exclude deleted addresses
+            if (addr.is_deleted === true) {
+                return false;
+            }
+
+            // Always exclude opt-outs and duplicates
+            if (addr.status === 'Opt-out' || addr.is_duplicate === true) {
+                return false;
+            }
+
+            // Always exclude invalid addresses
+            if (addr.is_valid !== true && addr.verified !== true) {
+                return false;
+            }
+
+            // For CSV campaigns: Apply reachability filter based on skip_verification flag
+            if (isCsvCampaign) {
+                if (skipVerification) {
+                    // If skip_verification is TRUE: send to all valid addresses (regardless of reachability)
+                    return true;
+                } else {
+                    // If skip_verification is FALSE: send only to reachable addresses
+                    return addr.is_reachable === true;
+                }
+            }
+
+            // For zone campaigns: Include all valid/verified addresses (no reachability check)
+            return true;
+        });
+
+        const filteredCount = allAddresses.length - addresses.length;
+        const filterReason = isCsvCampaign && !skipVerification
+            ? `(filtered unreachable: ${allAddresses.filter(a => a.is_reachable !== true).length})`
+            : `(filtered opt-outs/duplicates: ${filteredCount})`;
+
+        console.log(`Found ${addresses.length} addresses to process out of ${allAddresses.length} ${filterReason}.`);
 
         // Send progress update
         ws.send(JSON.stringify({
@@ -228,7 +263,12 @@ async function processCampaign(ws, campaignId, postgridApiKey)
             status: 'success',
             message: 'Campaign processing completed',
             processed_count: count,
-            total_addresses: addresses.length
+            total_addresses: addresses.length,
+            campaign_type: isCsvCampaign ? 'CSV' : 'Zone',
+            skip_verification: skipVerification,
+            filtered_out: allAddresses.length - addresses.length,
+            sent_successfully: count,
+            failed_count: addresses.length - count
         }));
 
         // 5. Revert Templates (Test environment specific cleanup)

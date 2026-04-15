@@ -179,23 +179,26 @@ Deno.serve(async (req) => {
 
     const processingTimeMs = Date.now() - startTime;
 
+    // Response should only show non-deleted addresses
+    const responseAddresses = addresses.filter(a => !a.is_deleted);
+
     return successResponse({
         status: "success",
-        message: `Verified ${updatedCount} of ${addresses.length} addresses`,
+        message: `Verified ${updatedCount} of ${responseAddresses.length} addresses`,
         center,
         is_editing: false,
         mode: "address-list",
         searchType: "RESIDENTIAL",
         metadata: {
-            totalBuildingsFound: addresses.length,
-            addressesReturned: addresses.length,
-            residentialCount: addresses.length,
+            totalBuildingsFound: responseAddresses.length,
+            addressesReturned: responseAddresses.length,
+            residentialCount: responseAddresses.length,
             otherCount: 0,
             verified_count: updatedCount,
-            unverified_count: addresses.length - updatedCount,
+            unverified_count: responseAddresses.length - updatedCount,
             processingTimeMs
         },
-        addresses
+        addresses: responseAddresses
     });
 
   } catch (error) {

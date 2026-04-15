@@ -178,6 +178,78 @@ wss.on('connection', (ws) => {
 });
 
 // =============================================================================
+// HELPER FUNCTIONS - CSV ADDRESS VERIFICATION
+// =============================================================================
+
+/**
+ * Extracts the skip_verification flag from the CSV address list record.
+ * Returns true if verification should be skipped, false otherwise.
+ */
+function getSkipVerificationFlag(record) {
+    return record.skip_address_verification === true || false;
+}
+
+/**
+ * Maps PostGrid API status response to is_reachable boolean.
+ * Based on the status field from PostGrid verification response.
+ */
+function mapPostgridStatusToReachability(postgridStatus) {
+    if (!postgridStatus) return false;
+    const reachableStatuses = ['verified', 'corrected'];
+    return reachableStatuses.includes(postgridStatus.toLowerCase());
+}
+
+/**
+ * Determines if an address is verified based on PostGrid status.
+ */
+function isAddressVerified(postgridStatus) {
+    if (!postgridStatus) return false;
+    return postgridStatus.toLowerCase() === 'verified' || postgridStatus.toLowerCase() === 'corrected';
+}
+
+/**
+ * Enriches a CSV address with reachability information based on PostGrid response.
+ */
+function enrichCSVAddressWithReachability(address, postgridStatus) {
+    const isReachable = mapPostgridStatusToReachability(postgridStatus);
+    return {
+        ...address,
+        is_reachable: isReachable,
+        verified: isAddressVerified(postgridStatus),
+        status: isAddressVerified(postgridStatus) ? 'Valid' : 'Unverified'
+    };
+}
+
+/**
+ * Enriches a zone address with reachability information based on PostGrid response.
+ */
+function enrichZoneAddressWithReachability(address, postgridData) {
+    const postgridStatus = postgridData.status;
+    const isReachable = mapPostgridStatusToReachability(postgridStatus);
+    const verified = isAddressVerified(postgridStatus);
+
+    const verifiedAddress = `${postgridData.line1}, ${postgridData.city}, ${postgridData.provinceOrState} ${postgridData.postalOrZip}`;
+
+    return {
+        ...address,
+        original_address: address.address,
+        address: verifiedAddress,
+        is_reachable: isReachable,
+        verified,
+        status: verified ? 'Valid' : 'Unverified',
+        verification_details: {
+            status: postgridStatus,
+            line1: postgridData.line1,
+            city: postgridData.city,
+            provinceOrState: postgridData.provinceOrState,
+            postalOrZip: postgridData.postalOrZip,
+            details: postgridData
+        },
+        api_response: postgridData
+    };
+}
+
+// =============================================================================
 // ADDRESS VERIFICATION LOGIC
 // =============================================================================
 
@@ -274,17 +346,12 @@ async function verifyAddress(address, apiKey) {
 
         const result = await response.json();
         const data = result.data;
-        // Map PostGrid status to Valid or Unverified
         const postgridStatus = data.status;
-        const verified = postgridStatus === 'verified' || postgridStatus === 'corrected';
-        const status = (postgridStatus === 'verified' || postgridStatus === 'corrected') ? 'Valid' : 'Unverified';
         const isCsv = address.address_line1 !== undefined;
 
         if (isCsv) {
             return {
-                ...address,
-                verified,
-                status: status,
+                ...enrichCSVAddressWithReachability(address, postgridStatus),
                 verification_details: {
                     ...(address.verification_details || {}),
                     status: postgridStatus,
@@ -292,24 +359,7 @@ async function verifyAddress(address, apiKey) {
                 }
             };
         } else {
-            const verifiedAddress = `${data.line1}, ${data.city}, ${data.provinceOrState} ${data.postalOrZip}`;
-            
-            return {
-                ...address,
-                original_address: address.address || addressText,
-                address: verifiedAddress,
-                verified,
-                status: status,
-                verification_details: {
-                    status: postgridStatus,
-                    line1: data.line1,
-                    city: data.city,
-                    provinceOrState: data.provinceOrState,
-                    postalOrZip: data.postalOrZip,
-                    details: data
-                },
-                api_response: data
-            };
+            return enrichZoneAddressWithReachability(address, data);
         }
 
     } catch (error) {
@@ -356,16 +406,22 @@ async function verifyZoneAddresses(ws, zone_id, apiKey, supabaseAnonKey, showOnl
             const testCount = unverifiedCount > 0 ? unverifiedCount : addresses.length || 20;
             console.log(`Test Mode (Zone): Generating ${testCount} hardcoded SF addresses`);
             const mocks = getTestAddresses(testCount);
-            
-            verifiedAddresses.push(...mocks);
+
+            // Enrich test addresses with is_reachable flag
+            const enrichedMocks = mocks.map(addr => ({
+                ...addr,
+                is_reachable: addr.verified === true
+            }));
+
+            verifiedAddresses.push(...enrichedMocks);
             verifiedCount = verifiedAddresses.filter(addr => addr.verified === true).length;
-            
+
             ws.send(JSON.stringify({
                 status: 'processing',
-                message: `Test mode: Generated mock SF addresses`,
-                total_addresses: mocks.length,
+                message: `Test mode: Generated mock SF addresses with reachability flags`,
+                total_addresses: enrichedMocks.length,
                 verified_count: verifiedCount,
-                processed_count: mocks.length
+                processed_count: enrichedMocks.length
             }));
         } else {
             if (addresses.length === 0) {
@@ -455,6 +511,7 @@ async function verifyZoneAddresses(ws, zone_id, apiKey, supabaseAnonKey, showOnl
                 unverified_count: unverifiedCount,
                 total_addresses: addresses.length,
                 returned_addresses: addressesToReturn.length,
+                reachable_count: verifiedAddresses.filter(addr => addr.is_reachable === true).length,
                 showing_only_verified: showOnlyVerified,
                 processingTimeMs
             },
@@ -489,7 +546,16 @@ async function verifyCSVAddresses(ws, list_id, apiKey, supabaseAnonKey, showOnly
         if (!results || results.length === 0) throw new Error(`Record not found in ${table}`);
 
         const record = results[0];
-        const addresses = record.addresses || [];
+        const allAddresses = record.addresses || [];
+
+        // Use validated_address_list (already filtered) for processing, fallback to filtered addresses
+        const addresses = (record.validated_address_list && record.validated_address_list.length > 0)
+            ? record.validated_address_list
+            : allAddresses.filter(addr => !addr.is_deleted);
+
+        // Extract skip_verification flag from record
+        const skipVerification = getSkipVerificationFlag(record);
+        console.log(`Skip verification flag: ${skipVerification}`);
 
         const verifiedAddresses = [];
         let verifiedCount = 0;
@@ -497,16 +563,22 @@ async function verifyCSVAddresses(ws, list_id, apiKey, supabaseAnonKey, showOnly
         if (isTestMode) {
             console.log(`Test Mode (CSV): Enriching ${addresses.length} original addresses`);
             const mocks = getCSVTestAddresses(addresses);
-            
-            verifiedAddresses.push(...mocks);
+
+            // Enrich test addresses with is_reachable flag
+            const enrichedMocks = mocks.map(addr => ({
+                ...addr,
+                is_reachable: addr.verified === true
+            }));
+
+            verifiedAddresses.push(...enrichedMocks);
             verifiedCount = verifiedAddresses.filter(addr => addr.verified === true).length;
-            
+
             ws.send(JSON.stringify({
                 status: 'processing',
-                message: `Test mode: Enriched original rows`,
-                total_addresses: mocks.length,
+                message: `Test mode: Enriched original rows with reachability flags`,
+                total_addresses: enrichedMocks.length,
                 verified_count: verifiedCount,
-                processed_count: mocks.length
+                processed_count: enrichedMocks.length
             }));
         } else {
             if (addresses.length === 0) {
@@ -555,6 +627,7 @@ async function verifyCSVAddresses(ws, list_id, apiKey, supabaseAnonKey, showOnly
         const processingTimeMs = Date.now() - startTime;
 
         console.log(`Processing complete: ${verifiedCount} verified, ${unverifiedCount} unverified`);
+        console.log(`Setting skip_address_verification to FALSE (verification was executed)`);
         ws.send(JSON.stringify({ status: 'processing', message: `Updating ${table} with processed addresses...` }));
 
         const updateResponse = await fetch(fetchUrl, {
@@ -565,10 +638,11 @@ async function verifyCSVAddresses(ws, list_id, apiKey, supabaseAnonKey, showOnly
                 'Content-Type': 'application/json',
                 'Prefer': 'return=minimal'
             },
-            body: JSON.stringify({ 
-                addresses: verifiedAddresses, 
-                validated_address_list: verifiedAddresses, // Include all addresses for CSV
-                updated_at: new Date().toISOString() 
+            body: JSON.stringify({
+                addresses: verifiedAddresses,
+                validated_address_list: verifiedAddresses,
+                skip_address_verification: false,
+                updated_at: new Date().toISOString()
             })
         });
 
@@ -588,10 +662,12 @@ async function verifyCSVAddresses(ws, list_id, apiKey, supabaseAnonKey, showOnly
             searchType: null,
             metadata: {
                 ...(record.metadata || {}),
+                skip_verification: false,
                 verified_count: verifiedCount,
                 unverified_count: unverifiedCount,
                 total_addresses: addresses.length,
                 returned_addresses: addressesToReturn.length,
+                reachable_count: verifiedAddresses.filter(addr => addr.is_reachable === true).length,
                 showing_only_verified: showOnlyVerified,
                 processingTimeMs
             },

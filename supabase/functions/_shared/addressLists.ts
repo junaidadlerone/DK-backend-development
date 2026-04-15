@@ -20,6 +20,7 @@ export interface AddressRow {
     full_name?: string; // Optional recipient name
     first_name?: string;
     last_name?: string;
+    is_reachable?: boolean | null;
 }
 
 export interface AddressListMetadata {
