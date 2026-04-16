@@ -107,6 +107,8 @@ tags:
     description: Address discovery and verification operations
   - name: Analytics
     description: Organization-level analytics with intelligent daily caching
+  - name: Analytics 2.0
+    description: Postcard-level delivery analytics powered by individual PostGrid postcard tracking
   - name: Billing
     description: Stripe payment methods and billing history management (ADMIN only)
   - name: Version 2 APIs
@@ -9556,6 +9558,253 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
+  /getAnalyticsV2:
+    post:
+      tags:
+        - Analytics 2.0
+      summary: Get postcard-level delivery analytics
+      description: |
+        Returns real-time delivery analytics based on individual PostGrid postcard records
+        stored in the `postcard_sends` table. Unlike `/getAnalytics`, these metrics reflect
+        the actual delivery lifecycle of each postcard rather than aggregate campaign counters.
+
+        **Note:** Only postcards sent after the `postcard_sends` table was introduced will
+        appear in these metrics. Historical campaigns will show 0 for postcard-level metrics.
+
+        **Supported types:**
+        - `dashboard_cards` — Summary cards for the analytics dashboard
+
+        **Access:** All roles (ADMIN, MARKETER, TECHNICIAN)
+      operationId: getAnalyticsV2
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - type
+              properties:
+                type:
+                  type: string
+                  enum:
+                    - dashboard_cards
+                  description: The analytics type to retrieve
+            examples:
+              dashboard_cards:
+                summary: Get dashboard card metrics
+                value:
+                  type: "dashboard_cards"
+      responses:
+        "200":
+          description: Analytics computed successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: "success"
+                  message:
+                    type: string
+                    example: "Analytics computed successfully"
+                  data:
+                    $ref: "#/components/schemas/DashboardCardsAnalytics"
+              examples:
+                dashboard_cards:
+                  summary: Dashboard cards analytics
+                  value:
+                    status: "success"
+                    message: "Analytics computed successfully"
+                    data:
+                      in_flight_postcards: 450
+                      delivered: 1200
+                      delivery_rate: 72.73
+                      spent_to_date: 4950.00
+                      spent_to_date_display:
+                        value: 4950.00
+                        currency_code: "USD"
+                        symbol: "$"
+                        formatted: "$4,950.00"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              examples:
+                invalid_type:
+                  summary: Unsupported analytics type
+                  value:
+                    error: "INVALID_TYPE"
+                    message: "Analytics type \"foo\" is not supported. Supported types: dashboard_cards"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Forbidden - user not in any organization
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /storePostcardSends:
+    post:
+      tags:
+        - Analytics 2.0
+      summary: Store postcard send records (internal)
+      description: |
+        **Internal use only.** Called by the WebSocket postcard sending server after
+        each campaign run to persist individual PostGrid postcard IDs into the
+        `postcard_sends` table. This enables per-postcard delivery status tracking
+        for analytics.
+
+        Authentication uses the Supabase service role key. Not intended to be called
+        directly by frontend clients.
+      operationId: storePostcardSends
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - campaign_id
+                - postcards
+              properties:
+                campaign_id:
+                  type: string
+                  format: uuid
+                  description: The campaign these postcards belong to
+                postcards:
+                  type: array
+                  minItems: 1
+                  items:
+                    type: object
+                    required:
+                      - postgrid_postcard_id
+                    properties:
+                      postgrid_postcard_id:
+                        type: string
+                        description: PostGrid postcard ID returned on creation (e.g. "postcard_xxx")
+                        example: "postcard_abc123"
+                      address:
+                        type: string
+                        description: Mailing address the postcard was sent to
+                        example: "123 Main St, Springfield, IL 62701"
+            example:
+              campaign_id: "550e8400-e29b-41d4-a716-446655440000"
+              postcards:
+                - postgrid_postcard_id: "postcard_abc123"
+                  address: "123 Main St, Springfield, IL 62701"
+                - postgrid_postcard_id: "postcard_def456"
+                  address: "456 Oak Ave, Springfield, IL 62702"
+      responses:
+        "201":
+          description: Postcard records stored successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: "success"
+                  message:
+                    type: string
+                    example: "Stored 2 postcard records"
+                  inserted:
+                    type: integer
+                    example: 2
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Campaign not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /syncPostcardStatuses:
+    post:
+      tags:
+        - Analytics 2.0
+      summary: Sync postcard delivery statuses from PostGrid (scheduled)
+      description: |
+        **Scheduled/cron function.** Queries PostGrid for the current delivery status
+        of every non-terminal postcard in the `postcard_sends` table and updates the
+        stored status accordingly.
+
+        Terminal statuses (`completed`, `cancelled`) are never re-fetched.
+        Non-terminal statuses (`ready`, `printing`, `processed_for_delivery`) are
+        refreshed on every run.
+
+        Intended to be triggered on a schedule (e.g., every 6 hours). Can also be
+        called manually to force a refresh.
+      operationId: syncPostcardStatuses
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: Sync completed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: "Postcard status sync complete"
+                  total_checked:
+                    type: integer
+                    description: Total non-terminal postcards checked
+                    example: 500
+                  updated:
+                    type: integer
+                    description: Number of postcards whose status changed
+                    example: 45
+                  errors:
+                    type: integer
+                    description: Number of PostGrid API errors encountered
+                    example: 0
+                  unchanged:
+                    type: integer
+                    description: Number of postcards with unchanged status
+                    example: 455
+        "500":
+          description: Internal server error or missing API key
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
   /getAnalyticsPageData:
     post:
       tags:
@@ -17069,6 +17318,45 @@ components:
           type: integer
           description: "Addresses with Opt-out verified"
           example: 87
+
+    DashboardCardsAnalytics:
+      type: object
+      description: "Dashboard card analytics from Analytics 2.0 — based on individual PostGrid postcard delivery records"
+      properties:
+        in_flight_postcards:
+          type: integer
+          description: "Postcards with status ready, printing, or processed_for_delivery (en route to recipient)"
+          example: 450
+        delivered:
+          type: integer
+          description: "Postcards with status completed (most likely delivered, per PostGrid approximation)"
+          example: 1200
+        delivery_rate:
+          type: number
+          format: float
+          description: "Percentage of sent postcards that have been delivered: (delivered / total_sent) * 100"
+          example: 72.73
+        spent_to_date:
+          type: number
+          format: float
+          description: "Total amount charged to the organization across all campaigns, in USD (sourced from payment_history)"
+          example: 4950.00
+        spent_to_date_display:
+          type: object
+          description: "Currency-enriched representation of spent_to_date using the user's saved currency preference"
+          properties:
+            value:
+              type: number
+              example: 4950.00
+            currency_code:
+              type: string
+              example: "USD"
+            symbol:
+              type: string
+              example: "$"
+            formatted:
+              type: string
+              example: "$4,950.00"
 
     GlobalExclusionsAnalytics:
       type: object

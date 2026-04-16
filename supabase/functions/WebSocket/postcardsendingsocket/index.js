@@ -159,15 +159,21 @@ async function processCampaign(ws, campaignId, postgridApiKey)
         }));
 
         // 3. Loop through addresses and send postcards
+        const postcardRecords = [];
+
         for (let i = 0; i < addresses.length; i++)
         {
             const addr = addresses[i];
             try
             {
-                const success = await sendPostcard(addr, campaign_templates, business_data, offer_data, postgridApiKey);
-                if (success)
+                const postcardId = await sendPostcard(addr, campaign_templates, business_data, offer_data, postgridApiKey);
+                if (postcardId)
                 {
                     count++;
+                    postcardRecords.push({
+                        postgrid_postcard_id: postcardId,
+                        address: addr.address || addr.address_line1 || ''
+                    });
                 }
 
                 // Send progress update every 5 addresses or on last address
@@ -190,7 +196,13 @@ async function processCampaign(ws, campaignId, postgridApiKey)
 
         console.log(`Finished processing. Total sent: ${count}`);
 
-        // 4. Update PostCards Sent Count
+        // 4. Store individual postcard records for analytics (before updating sent count)
+        if (postcardRecords.length > 0)
+        {
+            await storePostcardSends(campaignId, postcardRecords);
+        }
+
+        // 5. Update PostCards Sent Count
         await updateSentCount(campaignId, count);
 
         ws.send(JSON.stringify({
@@ -264,18 +276,46 @@ async function sendPostcard(addressObj, templates, businessData, offerData, post
         const json = await response.json();
         console.log(`PostGrid Success Response for ${addressObj.address}:`, JSON.stringify(json, null, 2));
         console.log(`Postcard sent to ${addressObj.address}. ID: ${json.id}`);
-        return true;
+        return json.id || null;  // return PostGrid postcard ID (e.g. "postcard_xxx")
     } else
     {
         const errorText = await response.text();
         console.error(`PostGrid Error (${response.status}) for ${addressObj.address}:`, errorText);
-        return false;
+        return null;
     }
 }
 
 // =============================================================================
 // SUPABASE UPDATE
 // =============================================================================
+async function storePostcardSends(campaignId, postcards)
+{
+    try
+    {
+        const response = await fetch(`${SUPABASE_URL}/storePostcardSends`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'apikey': SUPABASE_ANON_KEY,
+                'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+            },
+            body: JSON.stringify({ campaign_id: campaignId, postcards: postcards })
+        });
+
+        if (!response.ok)
+        {
+            console.error(`Failed to store postcard sends: ${response.statusText}`);
+        } else
+        {
+            console.log(`Stored ${postcards.length} postcard records for campaign ${campaignId}`);
+        }
+    } catch (err)
+    {
+        // Non-fatal — analytics data loss is preferable to breaking the campaign send
+        console.error(`Failed to store postcard sends for campaign ${campaignId}:`, err.message);
+    }
+}
+
 async function updateSentCount(campaignId, count)
 {
     const response = await fetch(`${SUPABASE_URL}/updatePostCardsSentCount`, {
