@@ -70,9 +70,9 @@ Deno.serve(async (req) => {
     const verified_address_count = validatedAddresses.filter(addr => addr.is_reachable === true).length;
 
     /** * verification_performed logic:
-     * true if the validated_address_list has been populated with records
+     * true only if verification has returned actual results (is_reachable is not null for at least one address)
      */
-    const verification_performed = validatedAddresses.length > 0;
+    const verification_performed = validatedAddresses.some(addr => addr.is_reachable !== null);
 
     return successResponse({
       id: list.id,
