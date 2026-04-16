@@ -47,8 +47,45 @@ export async function createPostGridTracker(
 }
 
 /**
+ * Retrieves a PostGrid template by its ID.
+ * Returns { exists: true, data } on success, or { exists: false, error } when the
+ * template cannot be found (404) or the API returns any other error status.
+ *
+ * @param templateId The PostGrid template ID (e.g. "template_abc123")
+ */
+export async function getPostGridTemplate(
+  templateId: string
+): Promise<{ exists: boolean; data?: unknown; error?: string }> {
+  if (!POSTGRID_API_KEY) {
+    throw new Error("POSTGRID_POSTCARD_API_KEY environment variable is not set");
+  }
+
+  const response = await fetch(`${POSTGRID_BASE_URL}/templates/${templateId}`, {
+    method: "GET",
+    headers: {
+      "x-api-key": POSTGRID_API_KEY,
+    },
+  });
+
+  if (response.status === 404) {
+    return { exists: false, error: "Template not found on PostGrid" };
+  }
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    return {
+      exists: false,
+      error: `PostGrid API error (${response.status}): ${errorText}`,
+    };
+  }
+
+  const data = await response.json();
+  return { exists: true, data };
+}
+
+/**
  * Retrieves statistics for a PostGrid Tracker.
- * 
+ *
  * @param id The tracker ID
  * @returns The tracker object containing totalCount and uniqueCount
  */

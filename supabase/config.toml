@@ -542,3 +542,6 @@ verify_jwt = false
 
 [functions.updateCampaignVerification]
 verify_jwt = false
+
+[functions.auditUniversalTemplates]
+verify_jwt = false
