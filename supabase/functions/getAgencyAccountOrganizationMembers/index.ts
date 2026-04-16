@@ -22,11 +22,12 @@ Deno.serve(async (req) => {
       return errorResponse("UNAUTHORIZED", "Unable to authenticate user", 401);
     }
 
-    // Find the org this user owns (their signup org)
+    // Find the agency org this user owns (their signup org — is_agency = true)
     const { data: org, error: orgError } = await supabase
       .from("organizations")
       .select("id, business_name, organization_members")
       .eq("owner_id", user.userId)
+      .eq("is_agency", true)
       .maybeSingle();
 
     if (orgError) {

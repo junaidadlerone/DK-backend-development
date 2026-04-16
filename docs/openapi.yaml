@@ -107,6 +107,8 @@ tags:
     description: Address discovery and verification operations
   - name: Analytics
     description: Organization-level analytics with intelligent daily caching
+  - name: Analytics 2.0
+    description: Postcard-level delivery analytics powered by individual PostGrid postcard tracking
   - name: Billing
     description: Stripe payment methods and billing history management (ADMIN only)
   - name: Version 2 APIs
@@ -9827,6 +9829,435 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
+  /getAnalyticsV2:
+    post:
+      tags:
+        - Analytics 2.0
+      summary: Get postcard-level delivery analytics
+      description: |
+        Returns real-time delivery analytics based on individual PostGrid postcard records
+        stored in the `postcard_sends` table. Unlike `/getAnalytics` (which uses aggregate
+        campaign counters), these metrics reflect the actual delivery lifecycle of each
+        postcard sourced directly from PostGrid statuses.
+
+        **Note:** Only postcards sent after the `postcard_sends` table was introduced will
+        appear in these metrics. Historical campaigns will show 0 for postcard-level metrics.
+
+        ---
+
+        ## How PostGrid tracking works
+
+        PostGrid provides **two separate tracking fields** per postcard:
+
+        ### Standard `status` field (all orders)
+        Every postcard has a `status` field that progresses through this lifecycle:
+
+        | Status | Description |
+        |---|---|
+        | `ready` | Order created successfully, will be printed on sendDate |
+        | `printing` | Given to a printer, being processed within SLA |
+        | `processed_for_delivery` | Handed off to the local postal service |
+        | `completed` | Most likely delivered *(PostGrid approximation)* |
+        | `cancelled` | Cancelled, will never be sent |
+
+        ### `imbStatus` field — Intelligent-Mail Tracking (US only, nullable)
+        For US orders, once a postcard is scanned at a USPS facility, PostGrid adds an
+        additional `imbStatus` field with more granular tracking:
+
+        | imbStatus | Description |
+        |---|---|
+        | `entered_mail_stream` | Postcard has entered a USPS facility |
+        | `out_for_delivery` | Processed at final USPS facility — will deliver within a day |
+        | `returned_to_sender` | Returned to sender (undeliverable) |
+
+        We store these in `postcard_sends.postgrid_status` and `postcard_sends.imb_status`.
+        `imb_status` is `null` for non-US orders or until the postcard is first scanned.
+
+        ---
+
+        ## Supported `type` values
+
+        ### `dashboard_cards`
+        Top-level summary cards for the main analytics dashboard.
+
+        | Field | Source | Description |
+        |---|---|---|
+        | `in_flight_postcards` | `postgrid_status` | Count of postcards with status `ready`, `printing`, or `processed_for_delivery` |
+        | `delivered` | `postgrid_status = completed` | Count of postcards most likely delivered (PostGrid approximation) |
+        | `delivery_rate` | derived | `(delivered / total_sent) * 100` — percentage, 2 decimal places |
+        | `spent_to_date` | `payment_history` | Sum of `amount_paid` for this organization across all campaigns |
+        | `spent_to_date_display` | derived | Currency-formatted `spent_to_date` using the user's saved currency preference |
+
+        ---
+
+        ### `delivery_funnel`
+        Full breakdown of every postcard's current status, expressed as **percentages of
+        `total_postcards_sent`**. Combines both `postgrid_status` and `imb_status` fields.
+
+        | Response field | PostGrid source | PostGrid value(s) | Description |
+        |---|---|---|---|
+        | `total_postcards_sent` | — | — | Raw count of all postcards (percentage denominator) |
+        | `delivered` | `postgrid_status` | `completed` | % most likely delivered |
+        | `processed` | `postgrid_status` | `processed_for_delivery` | % handed to local postal service |
+        | `printing` | `postgrid_status` | `printing` | % currently being printed |
+        | `ready` | `postgrid_status` | `ready` | % awaiting print on sendDate |
+        | `cancelled` | `postgrid_status` | `cancelled` | % cancelled, never sent |
+        | `in_transit` | `imb_status` | `entered_mail_stream` + `out_for_delivery` | % confirmed inside USPS network (US only) |
+        | `returned` | `imb_status` | `returned_to_sender` | % returned to sender (US only) |
+
+        All percentages are rounded to 2 decimal places. Returns `0` when `total_postcards_sent` is 0.
+        `in_transit` and `returned` will be `0` for non-US campaigns (no `imbStatus` from PostGrid).
+
+        ---
+
+        ### `waste_meter`
+        Quantifies postcard spend that produced no delivery — returned, cancelled, and delayed
+        postcards expressed as **piece counts and dollar costs** ($3.00 per postcard).
+
+        Also emits an overall **`status`** risk indicator based on
+        `(wasted + delayed) / total_postcards_sent`:
+
+        | `status` value | Condition | Meaning |
+        |---|---|---|
+        | `Healthy` | problem rate < 5% | Delivery pipeline is performing well |
+        | `At Risk` | problem rate 5–15% | Moderate waste — worth monitoring |
+        | `Critical` | problem rate > 15% | High waste — requires attention |
+
+        | Field | Source | Definition |
+        |---|---|---|
+        | `status` | derived | Risk indicator: `Healthy` / `At Risk` / `Critical` |
+        | `total_pieces_wasted` | derived | `total_pieces_returned + total_pieces_cancelled` |
+        | `total_amount_wasted` | derived | `total_pieces_wasted × $3.00` |
+        | `total_pieces_returned` | `imb_status = returned_to_sender` | Postcards USPS returned to sender |
+        | `total_amount_returned` | derived | `total_pieces_returned × $3.00` |
+        | `total_pieces_cancelled` | `postgrid_status = cancelled` | Postcards cancelled before printing |
+        | `total_amount_cancelled` | derived | `total_pieces_cancelled × $3.00` |
+        | `total_pieces_delayed` | derived | Not `completed`/`cancelled` AND ≥ 7 working days since sent |
+        | `total_amount_delayed` | derived | `total_pieces_delayed × $3.00` |
+
+        **Delayed definition:** A postcard is delayed if it has NOT reached `completed` or `cancelled`
+        AND 7 or more working days (Monday–Friday, excluding weekends) have elapsed since `created_at`.
+
+        Dollar amounts use a fixed price of **$3.00 USD per postcard**. Returns `0` for all
+        piece/amount fields when no postcards have been sent.
+
+        ---
+
+        **Access:** All roles (ADMIN, MARKETER, TECHNICIAN)
+      operationId: getAnalyticsV2
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - type
+              properties:
+                type:
+                  type: string
+                  enum:
+                    - dashboard_cards
+                    - delivery_funnel
+                    - waste_meter
+                  description: |
+                    The analytics view to retrieve.
+                    - `dashboard_cards` — high-level summary card metrics
+                    - `delivery_funnel` — full PostGrid status breakdown as percentages
+                    - `waste_meter` — wasted/delayed postcard counts + dollar costs + risk status
+            examples:
+              dashboard_cards:
+                summary: "dashboard_cards — top-level summary cards"
+                value:
+                  type: "dashboard_cards"
+              delivery_funnel:
+                summary: "delivery_funnel — full status percentage breakdown"
+                value:
+                  type: "delivery_funnel"
+              waste_meter:
+                summary: "waste_meter — wasted and delayed postcard analysis"
+                value:
+                  type: "waste_meter"
+      responses:
+        "200":
+          description: Analytics computed successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - status
+                  - message
+                  - data
+                properties:
+                  status:
+                    type: string
+                    example: "success"
+                  message:
+                    type: string
+                    example: "Analytics computed successfully"
+                  data:
+                    oneOf:
+                      - $ref: "#/components/schemas/DashboardCardsAnalytics"
+                      - $ref: "#/components/schemas/DeliveryFunnelAnalytics"
+                      - $ref: "#/components/schemas/WasteMeterAnalytics"
+                    discriminator:
+                      propertyName: _type
+              examples:
+                dashboard_cards:
+                  summary: "dashboard_cards response"
+                  value:
+                    status: "success"
+                    message: "Analytics computed successfully"
+                    data:
+                      in_flight_postcards: 450
+                      delivered: 1200
+                      delivery_rate: 72.73
+                      spent_to_date: 4950.00
+                      spent_to_date_display:
+                        value: 4950.00
+                        currency_code: "USD"
+                        symbol: "$"
+                        formatted: "$4,950.00"
+                delivery_funnel:
+                  summary: "delivery_funnel response"
+                  value:
+                    status: "success"
+                    message: "Analytics computed successfully"
+                    data:
+                      total_postcards_sent: 5000
+                      delivered: 72.50
+                      in_transit: 8.20
+                      processed: 6.10
+                      printing: 4.80
+                      ready: 3.40
+                      returned: 2.50
+                      cancelled: 2.50
+                waste_meter:
+                  summary: "waste_meter response"
+                  value:
+                    status: "success"
+                    message: "Analytics computed successfully"
+                    data:
+                      status: "At Risk"
+                      total_pieces_wasted: 87
+                      total_amount_wasted: 261.00
+                      total_pieces_returned: 42
+                      total_amount_returned: 126.00
+                      total_pieces_cancelled: 45
+                      total_amount_cancelled: 135.00
+                      total_pieces_delayed: 130
+                      total_amount_delayed: 390.00
+        "400":
+          description: Invalid request — missing or unsupported type
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              examples:
+                missing_type:
+                  summary: Missing type field
+                  value:
+                    error: "INVALID_INPUT"
+                    message: "type is required and must be a string"
+                invalid_type:
+                  summary: Unsupported analytics type
+                  value:
+                    error: "INVALID_TYPE"
+                    message: "Analytics type \"foo\" is not supported. Supported types: dashboard_cards, delivery_funnel, waste_meter"
+        "401":
+          description: Unauthorized — missing or invalid Bearer token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              examples:
+                unauthorized:
+                  summary: Missing token
+                  value:
+                    error: "UNAUTHORIZED"
+                    message: "Unable to authenticate user"
+        "403":
+          description: Forbidden — user is not associated with any organization
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              examples:
+                no_org:
+                  summary: No organization
+                  value:
+                    error: "NO_ORGANIZATION"
+                    message: "User is not associated with any organization"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              examples:
+                server_error:
+                  summary: Unexpected server error
+                  value:
+                    error: "INTERNAL_ERROR"
+                    message: "An unexpected error occurred. Please try again later."
+
+  /storePostcardSends:
+    post:
+      tags:
+        - Analytics 2.0
+      summary: Store postcard send records (internal)
+      description: |
+        **Internal use only.** Called by the WebSocket postcard sending server after
+        each campaign run to persist individual PostGrid postcard IDs into the
+        `postcard_sends` table. This enables per-postcard delivery status tracking
+        for analytics.
+
+        Authentication uses the Supabase service role key. Not intended to be called
+        directly by frontend clients.
+      operationId: storePostcardSends
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - campaign_id
+                - postcards
+              properties:
+                campaign_id:
+                  type: string
+                  format: uuid
+                  description: The campaign these postcards belong to
+                postcards:
+                  type: array
+                  minItems: 1
+                  items:
+                    type: object
+                    required:
+                      - postgrid_postcard_id
+                    properties:
+                      postgrid_postcard_id:
+                        type: string
+                        description: PostGrid postcard ID returned on creation (e.g. "postcard_xxx")
+                        example: "postcard_abc123"
+                      address:
+                        type: string
+                        description: Mailing address the postcard was sent to
+                        example: "123 Main St, Springfield, IL 62701"
+            example:
+              campaign_id: "550e8400-e29b-41d4-a716-446655440000"
+              postcards:
+                - postgrid_postcard_id: "postcard_abc123"
+                  address: "123 Main St, Springfield, IL 62701"
+                - postgrid_postcard_id: "postcard_def456"
+                  address: "456 Oak Ave, Springfield, IL 62702"
+      responses:
+        "201":
+          description: Postcard records stored successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: "success"
+                  message:
+                    type: string
+                    example: "Stored 2 postcard records"
+                  inserted:
+                    type: integer
+                    example: 2
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Campaign not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /syncPostcardStatuses:
+    post:
+      tags:
+        - Analytics 2.0
+      summary: Sync postcard delivery statuses from PostGrid (scheduled)
+      description: |
+        **Scheduled/cron function.** Queries PostGrid for the current delivery statuses
+        of every non-terminal postcard in the `postcard_sends` table and updates both
+        `postgrid_status` and `imb_status` columns accordingly.
+
+        **What gets updated per postcard:**
+        - `postgrid_status` ← PostGrid `status` field (standard lifecycle)
+        - `imb_status` ← PostGrid `imbStatus` field (US Intelligent-Mail Tracking, nullable)
+
+        **Terminal statuses** (never re-fetched — DB write skipped):
+        - `postgrid_status`: `completed`, `cancelled`
+
+        **Non-terminal statuses** (refreshed on every run):
+        - `postgrid_status`: `ready`, `printing`, `processed_for_delivery`
+        - `imb_status`: always re-checked for non-terminal postcards since `imbStatus`
+          can arrive and update independently of the main `status`
+
+        Postcards where neither `status` nor `imbStatus` changed are skipped (no DB write).
+        Intended to be triggered on a schedule (e.g., every 6 hours). Can also be
+        called manually to force a refresh.
+      operationId: syncPostcardStatuses
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: Sync completed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: "Postcard status sync complete"
+                  total_checked:
+                    type: integer
+                    description: Total non-terminal postcards checked
+                    example: 500
+                  updated:
+                    type: integer
+                    description: Number of postcards whose status changed
+                    example: 45
+                  errors:
+                    type: integer
+                    description: Number of PostGrid API errors encountered
+                    example: 0
+                  unchanged:
+                    type: integer
+                    description: Number of postcards with unchanged status
+                    example: 455
+        "500":
+          description: Internal server error or missing API key
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
   /getAnalyticsPageData:
     post:
       tags:
@@ -17340,6 +17771,245 @@ components:
           type: integer
           description: "Addresses with Opt-out verified"
           example: 87
+
+    DashboardCardsAnalytics:
+      type: object
+      description: "Dashboard card analytics from Analytics 2.0 — based on individual PostGrid postcard delivery records"
+      properties:
+        in_flight_postcards:
+          type: integer
+          description: "Count of postcards with PostGrid status ready, printing, or processed_for_delivery (not yet delivered or cancelled)"
+          example: 450
+        delivered:
+          type: integer
+          description: "Postcards with status completed (most likely delivered, per PostGrid approximation)"
+          example: 1200
+        delivery_rate:
+          type: number
+          format: float
+          description: "Percentage of sent postcards that have been delivered: (delivered / total_sent) * 100"
+          example: 72.73
+        spent_to_date:
+          type: number
+          format: float
+          description: "Total amount charged to the organization across all campaigns, in USD (sourced from payment_history)"
+          example: 4950.00
+        spent_to_date_display:
+          type: object
+          description: "Currency-enriched representation of spent_to_date using the user's saved currency preference"
+          properties:
+            value:
+              type: number
+              example: 4950.00
+            currency_code:
+              type: string
+              example: "USD"
+            symbol:
+              type: string
+              example: "$"
+            formatted:
+              type: string
+              example: "$4,950.00"
+
+    DeliveryFunnelAnalytics:
+      type: object
+      description: |
+        Full PostGrid delivery status breakdown for all postcards sent by the organization.
+        Every field except `total_postcards_sent` is a **percentage** (0.00–100.00, 2 decimal places)
+        of `total_postcards_sent`.
+
+        **Two data sources are combined:**
+
+        Fields derived from PostGrid's standard `status` field (all orders):
+        `delivered`, `processed`, `printing`, `ready`, `cancelled`
+
+        Fields derived from PostGrid's `imbStatus` field — Intelligent-Mail Tracking
+        (US orders only, `null` until first USPS facility scan):
+        `in_transit` (= `entered_mail_stream` + `out_for_delivery`), `returned`
+
+        Statuses are refreshed on a schedule by `syncPostcardStatuses`.
+        Terminal statuses (`completed`, `cancelled`) stop being polled from PostGrid.
+        `returned_to_sender` (imbStatus) is also terminal once set.
+      required:
+        - total_postcards_sent
+        - delivered
+        - in_transit
+        - processed
+        - printing
+        - ready
+        - returned
+        - cancelled
+      properties:
+        total_postcards_sent:
+          type: integer
+          description: |
+            Raw count of all postcard records for this organization.
+            This is the denominator used to calculate every percentage field below.
+          example: 5000
+        delivered:
+          type: number
+          format: float
+          description: |
+            % of postcards with PostGrid `status = completed`.
+            PostGrid considers these "most likely delivered" (approximation — no physical confirmation).
+            Source: `postcard_sends.postgrid_status`
+          example: 72.50
+        in_transit:
+          type: number
+          format: float
+          description: |
+            % of postcards currently confirmed inside the USPS network.
+            Combines two PostGrid `imbStatus` values:
+            - `entered_mail_stream` — scanned at a USPS facility
+            - `out_for_delivery` — at final USPS facility, expected delivery within a day
+            Source: `postcard_sends.imb_status`
+            Note: Will be 0.00 for non-US orders (no imbStatus provided by PostGrid).
+          example: 8.20
+        processed:
+          type: number
+          format: float
+          description: |
+            % of postcards with PostGrid `status = processed_for_delivery`.
+            The postcard has been handed off to the local postal service but not yet scanned by USPS.
+            Source: `postcard_sends.postgrid_status`
+          example: 6.10
+        printing:
+          type: number
+          format: float
+          description: |
+            % of postcards with PostGrid `status = printing`.
+            The postcard has been sent to a print provider and is being processed.
+            Source: `postcard_sends.postgrid_status`
+          example: 4.80
+        ready:
+          type: number
+          format: float
+          description: |
+            % of postcards with PostGrid `status = ready`.
+            The order was created successfully and is awaiting printing on its sendDate.
+            Source: `postcard_sends.postgrid_status`
+          example: 3.40
+        returned:
+          type: number
+          format: float
+          description: |
+            % of postcards with PostGrid `imbStatus = returned_to_sender`.
+            The postcard was undeliverable and has been returned.
+            Source: `postcard_sends.imb_status`
+            Note: Will be 0.00 for non-US orders (no imbStatus provided by PostGrid).
+          example: 2.50
+        cancelled:
+          type: number
+          format: float
+          description: |
+            % of postcards with PostGrid `status = cancelled`.
+            The order was cancelled and will never be sent.
+            Source: `postcard_sends.postgrid_status`
+          example: 2.50
+
+    WasteMeterAnalytics:
+      type: object
+      description: |
+        Waste meter analytics — quantifies postcard spend that produced no confirmed delivery.
+
+        **Definitions:**
+
+        | Category | Definition | Source field |
+        |---|---|---|
+        | `returned` | PostGrid `imbStatus = returned_to_sender` — USPS could not deliver and returned the piece | `postcard_sends.imb_status` |
+        | `cancelled` | PostGrid `status = cancelled` — order cancelled, never printed or sent | `postcard_sends.postgrid_status` |
+        | `wasted` | `returned + cancelled` — total pieces that incurred cost with zero delivery | combined |
+        | `delayed` | Not `completed` or `cancelled`, AND ≥ 7 **working days** (Mon–Fri) since created | `postcard_sends.created_at` |
+
+        **Dollar amounts** are calculated at a fixed rate of **$3.00 USD per postcard**, rounded to 2 decimal places.
+
+        **Risk status thresholds** are based on `(wasted + delayed) / total_sent × 100`:
+
+        | Status | Problem rate |
+        |---|---|
+        | `Healthy` | < 5% |
+        | `At Risk` | 5% – 15% |
+        | `Critical` | > 15% |
+
+        Returns `Healthy` when no postcards have been sent yet.
+      required:
+        - status
+        - total_pieces_wasted
+        - total_amount_wasted
+        - total_pieces_returned
+        - total_amount_returned
+        - total_pieces_cancelled
+        - total_amount_cancelled
+        - total_pieces_delayed
+        - total_amount_delayed
+      properties:
+        status:
+          type: string
+          enum:
+            - Healthy
+            - At Risk
+            - Critical
+          description: |
+            Overall waste risk status for this organization's postcard campaigns.
+            Computed from `(total_pieces_wasted + total_pieces_delayed) / total_postcards_sent × 100`.
+
+            - `Healthy` — problem rate < 5%
+            - `At Risk` — problem rate 5%–15%
+            - `Critical` — problem rate > 15%
+          example: "At Risk"
+        total_pieces_wasted:
+          type: integer
+          description: |
+            Total pieces that cost money but were never delivered.
+            `total_pieces_returned + total_pieces_cancelled`
+          example: 87
+        total_amount_wasted:
+          type: number
+          format: float
+          description: |
+            Dollar cost of all wasted pieces. `total_pieces_wasted × $3.00`
+          example: 261.00
+        total_pieces_returned:
+          type: integer
+          description: |
+            Pieces where PostGrid `imbStatus = returned_to_sender`.
+            USPS could not deliver (undeliverable address, no forwarding) and returned the piece.
+            Source: `postcard_sends.imb_status`
+            Note: Only populated for US orders — PostGrid does not provide imbStatus for non-US addresses.
+          example: 42
+        total_amount_returned:
+          type: number
+          format: float
+          description: |
+            Dollar cost of returned pieces. `total_pieces_returned × $3.00`
+          example: 126.00
+        total_pieces_cancelled:
+          type: integer
+          description: |
+            Pieces where PostGrid `status = cancelled`.
+            The order was cancelled before it was ever printed or sent.
+            Source: `postcard_sends.postgrid_status`
+          example: 45
+        total_amount_cancelled:
+          type: number
+          format: float
+          description: |
+            Dollar cost of cancelled pieces. `total_pieces_cancelled × $3.00`
+          example: 135.00
+        total_pieces_delayed:
+          type: integer
+          description: |
+            Pieces that are still active (not `completed` or `cancelled`) but have not been
+            delivered after **7 or more working days** (Monday–Friday) since the order was created.
+            These represent spend that has not yet yielded a confirmed delivery and may never do so.
+            Source: `postcard_sends.created_at` compared to today using Mon–Fri day counting.
+          example: 130
+        total_amount_delayed:
+          type: number
+          format: float
+          description: |
+            Dollar cost of delayed pieces. `total_pieces_delayed × $3.00`
+          example: 390.00
 
     GlobalExclusionsAnalytics:
       type: object
