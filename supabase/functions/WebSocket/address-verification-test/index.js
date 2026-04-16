@@ -630,6 +630,12 @@ async function verifyCSVAddresses(ws, list_id, apiKey, supabaseAnonKey, showOnly
         console.log(`Setting skip_address_verification to FALSE (verification was executed)`);
         ws.send(JSON.stringify({ status: 'processing', message: `Updating ${table} with processed addresses...` }));
 
+        // Merge verified addresses back into the original allAddresses array to prevent pruning deleted items
+        const finalAddresses = allAddresses.map(originalAddr => {
+            const updated = verifiedAddresses.find(v => v.id === originalAddr.id);
+            return updated ? updated : originalAddr;
+        });
+
         const updateResponse = await fetch(fetchUrl, {
             method: 'PATCH',
             headers: {
@@ -639,7 +645,7 @@ async function verifyCSVAddresses(ws, list_id, apiKey, supabaseAnonKey, showOnly
                 'Prefer': 'return=minimal'
             },
             body: JSON.stringify({
-                addresses: verifiedAddresses,
+                addresses: finalAddresses,
                 validated_address_list: verifiedAddresses,
                 skip_address_verification: false,
                 updated_at: new Date().toISOString()
