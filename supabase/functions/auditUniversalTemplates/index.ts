@@ -1,6 +1,5 @@
 import { corsResponse, errorResponse, successResponse } from "../_shared/response.ts";
 import { createSupabaseClient } from "../_shared/client.ts";
-import { getUserFromRequest } from "../_shared/history.ts";
 import { getPostGridTemplate } from "../_shared/postgrid.ts";
 
 /**
@@ -105,6 +104,52 @@ function hasIssues(summary: AuditSummary): boolean {
 }
 
 /**
+ * Builds a plain-English summary for non-PostGrid-deletion issues
+ * (deleted_in_db_only, deleted_everywhere, check_errors).
+ * Used when deleted_from_postgrid is 0 so OpenAI is not called.
+ */
+function buildStandardSummary(
+  summary: AuditSummary,
+  entries: TemplateAuditEntry[]
+): string {
+  const sentences: string[] = [
+    `Audit completed. ${summary.total} universal template(s) were checked; ${summary.active} are healthy.`,
+  ];
+
+  if (summary.deleted_in_db_only > 0) {
+    const names = entries
+      .filter((e) => e.status === "deleted_in_db_only")
+      .map((e) => e.description ?? e.postgrid_template_id)
+      .join(", ");
+    sentences.push(
+      `${summary.deleted_in_db_only} template(s) are marked deleted in the database but still exist on PostGrid — these may need to be removed from PostGrid manually: ${names}.`
+    );
+  }
+
+  if (summary.deleted_everywhere > 0) {
+    const names = entries
+      .filter((e) => e.status === "deleted_everywhere")
+      .map((e) => e.description ?? e.postgrid_template_id)
+      .join(", ");
+    sentences.push(
+      `${summary.deleted_everywhere} template(s) have been deleted both in the database and on PostGrid: ${names}.`
+    );
+  }
+
+  if (summary.check_errors > 0) {
+    const names = entries
+      .filter((e) => e.status === "check_error")
+      .map((e) => e.description ?? e.postgrid_template_id)
+      .join(", ");
+    sentences.push(
+      `${summary.check_errors} template(s) could not be verified due to PostGrid API errors and require manual review: ${names}.`
+    );
+  }
+
+  return sentences.join(" ");
+}
+
+/**
  * Calls OpenAI to produce a concise plain-English summary of the audit findings.
  * Returns null without throwing if the API key is missing or the call fails,
  * so the audit report is always saved even when summarisation fails.
@@ -132,7 +177,8 @@ async function generateOpenAISummary(
     `You are an internal system monitoring assistant. ` +
     `A scheduled audit of universal postcard templates has just completed. ` +
     `Summarise the findings in 3-5 concise sentences suitable for a technical admin. ` +
-    `Be direct and highlight any action items.\n\n` +
+    `Be direct and highlight any action items. ` +
+    `For every affected template, you MUST include its exact PostGrid ID (e.g. tmpl_xxxx) in the summary — do not omit or paraphrase it.\n\n` +
     `Audit summary:\n` +
     `  Total templates checked : ${summary.total}\n` +
     `  Active (healthy)        : ${summary.active}\n` +
@@ -186,11 +232,6 @@ Deno.serve(async (req) => {
 
   try {
     const supabase = createSupabaseClient();
-
-    const user = getUserFromRequest(req);
-    if (!user) {
-      return errorResponse("UNAUTHORIZED", "Unable to authenticate user", 401);
-    }
 
     // ── 1. Load all universal templates ───────────────────────────────────
     const { data: templates, error: fetchError } = await supabase
@@ -310,8 +351,10 @@ Deno.serve(async (req) => {
       });
     }
 
-    // ── 6. Issues found → generate OpenAI summary ─────────────────────────
-    const openaiSummary = await generateOpenAISummary(summary, auditEntries);
+    // ── 6. Issues found → generate OpenAI summary (only when deleted_from_postgrid > 0) ──
+    const openaiSummary = summary.deleted_from_postgrid > 0
+      ? await generateOpenAISummary(summary, auditEntries)
+      : buildStandardSummary(summary, auditEntries);
 
     // ── 7. Persist the report ──────────────────────────────────────────────
     const { data: savedReport, error: insertError } = await supabase
