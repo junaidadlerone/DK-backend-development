@@ -35,10 +35,23 @@ import { enrichCurrency } from "../_shared/currency.ts";
  * Supported types:
  * - dashboard_cards: in_flight_postcards, delivered, delivery_rate, spent_to_date
  * - delivery_funnel: full status breakdown as percentages of total_postcards_sent
+ * - waste_meter:     wasted, returned, cancelled, and delayed postcard counts + dollar costs
  */
 
 // Standard PostGrid `status` values that mean the postcard is still in motion
 const IN_FLIGHT_STATUSES = ["ready", "printing", "processed_for_delivery"];
+
+// Price charged per postcard (USD). Used for waste_meter dollar calculations.
+const PRICE_PER_POSTCARD = 3.00;
+
+// Waste meter risk thresholds — based on (wasted + delayed) as % of total sent
+const WASTE_STATUS_THRESHOLDS = {
+  HEALTHY: 5,   // < 5%  → Healthy
+  AT_RISK: 15,  // 5–15% → At Risk
+  // > 15%   → Critical
+} as const;
+
+type WasteMeterStatus = "Healthy" | "At Risk" | "Critical";
 
 interface AnalyticsV2Request {
   type: string;
@@ -68,6 +81,22 @@ interface DeliveryFunnelData {
   // From imb_status (Intelligent-Mail Tracking, US only)
   in_transit: number;
   returned: number;
+}
+
+interface WasteMeterData {
+  status: WasteMeterStatus;
+  // Combined wasted = returned + cancelled
+  total_pieces_wasted: number;
+  total_amount_wasted: number;
+  // Returned (imbStatus = returned_to_sender)
+  total_pieces_returned: number;
+  total_amount_returned: number;
+  // Cancelled (postgrid_status = cancelled)
+  total_pieces_cancelled: number;
+  total_amount_cancelled: number;
+  // Delayed: not completed/cancelled, >= 7 working days since sent
+  total_pieces_delayed: number;
+  total_amount_delayed: number;
 }
 
 Deno.serve(async (req) => {
@@ -131,10 +160,20 @@ Deno.serve(async (req) => {
         }, 200);
       }
 
+      case "waste_meter": {
+        const preferences = await getUserPreferences(supabase, user.userId);
+        const data = await computeWasteMeter(supabase, organizationId, preferences);
+        return successResponse({
+          status: "success",
+          message: "Analytics computed successfully",
+          data,
+        }, 200);
+      }
+
       default:
         return errorResponse(
           "INVALID_TYPE",
-          `Analytics type "${type}" is not supported. Supported types: dashboard_cards, delivery_funnel`,
+          `Analytics type "${type}" is not supported. Supported types: dashboard_cards, delivery_funnel, waste_meter`,
           400,
         );
     }
@@ -295,5 +334,134 @@ async function computeDeliveryFunnel(
     // the postcard is inside the USPS network (in transit toward the recipient)
     in_transit: pct(imbCounts.entered_mail_stream + imbCounts.out_for_delivery),
     returned: pct(imbCounts.returned_to_sender),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Waste Meter
+// ---------------------------------------------------------------------------
+
+/**
+ * Counts working days (Mon–Fri) that have elapsed since a given date up to today.
+ * A postcard is considered delayed if workingDaysSince(created_at) >= 7.
+ *
+ * Example: created Monday Jan 6 → 7th working day = Wednesday Jan 15.
+ *          On Jan 15 the function returns 7 → delayed.
+ */
+function workingDaysSince(createdAt: Date): number {
+  const todayMidnight = new Date();
+  todayMidnight.setHours(0, 0, 0, 0);
+
+  const cursor = new Date(createdAt);
+  cursor.setHours(0, 0, 0, 0);
+
+  let count = 0;
+  while (cursor < todayMidnight) {
+    cursor.setDate(cursor.getDate() + 1);
+    const day = cursor.getDay(); // 0 = Sunday, 6 = Saturday
+    if (day !== 0 && day !== 6) {
+      count++;
+    }
+  }
+  return count;
+}
+
+/**
+ * Determines the waste meter risk status from the problem rate.
+ *
+ * problem_rate = (total_pieces_wasted + total_pieces_delayed) / total_postcards_sent * 100
+ *
+ * Thresholds:
+ *   < 5%   → Healthy   (low waste, delivery pipeline is performing well)
+ *   5–15%  → At Risk   (moderate waste, worth monitoring)
+ *   > 15%  → Critical  (high waste, requires attention)
+ */
+function resolveWasteStatus(
+  piecesWasted: number,
+  piecesDelayed: number,
+  total: number,
+): WasteMeterStatus {
+  if (total === 0) return "Healthy";
+  const problemRate = ((piecesWasted + piecesDelayed) / total) * 100;
+  if (problemRate < WASTE_STATUS_THRESHOLDS.HEALTHY) return "Healthy";
+  if (problemRate < WASTE_STATUS_THRESHOLDS.AT_RISK) return "At Risk";
+  return "Critical";
+}
+
+/**
+ * Compute Waste Meter Analytics
+ *
+ * Wasted postcard breakdown and dollar cost, plus a risk status indicator.
+ *
+ * Definitions:
+ *   returned  — postcard has imbStatus = returned_to_sender (USPS returned it)
+ *   cancelled — postcard has postgrid_status = cancelled (never printed/sent)
+ *   wasted    — returned + cancelled (all money spent with no delivery)
+ *   delayed   — postcard is not completed or cancelled AND >= 7 working days
+ *               have passed since it was created (still no delivery confirmation)
+ *
+ * Dollar amounts use a fixed PRICE_PER_POSTCARD ($3.00 USD).
+ * Status thresholds are based on (wasted + delayed) / total_sent.
+ */
+async function computeWasteMeter(
+  supabase: any,
+  organizationId: string,
+  preferences: any,
+): Promise<WasteMeterData> {
+  const { data: rows, error } = await supabase
+    .from("postcard_sends")
+    .select("postgrid_status, imb_status, created_at")
+    .eq("organization_id", organizationId);
+
+  if (error) {
+    console.error("Error fetching postcard_sends for waste_meter:", error);
+    throw new Error("Failed to fetch postcard data");
+  }
+
+  const postcards: Array<{
+    postgrid_status: string;
+    imb_status: string | null;
+    created_at: string;
+  }> = rows ?? [];
+
+  const total = postcards.length;
+  let piecesReturned = 0;
+  let piecesCancelled = 0;
+  let piecesDelayed = 0;
+
+  for (const p of postcards) {
+    // Returned: USPS gave it back (imbStatus)
+    if (p.imb_status === "returned_to_sender") {
+      piecesReturned++;
+    }
+
+    // Cancelled: never sent (postgrid_status)
+    if (p.postgrid_status === "cancelled") {
+      piecesCancelled++;
+    }
+
+    // Delayed: still active (not completed, not cancelled) but overdue
+    if (p.postgrid_status !== "completed" && p.postgrid_status !== "cancelled") {
+      const elapsed = workingDaysSince(new Date(p.created_at));
+      if (elapsed >= 7) {
+        piecesDelayed++;
+      }
+    }
+  }
+
+  const piecesWasted = piecesReturned + piecesCancelled;
+  const usd = (pieces: number): number =>
+    Math.round(pieces * PRICE_PER_POSTCARD * 100) / 100;
+
+  return {
+    status: resolveWasteStatus(piecesWasted, piecesDelayed, total),
+    total_pieces_wasted: piecesWasted,
+    total_amount_wasted: usd(piecesWasted),
+    total_pieces_returned: piecesReturned,
+    total_amount_returned: usd(piecesReturned),
+    total_pieces_cancelled: piecesCancelled,
+    total_amount_cancelled: usd(piecesCancelled),
+    total_pieces_delayed: piecesDelayed,
+    total_amount_delayed: usd(piecesDelayed),
   };
 }

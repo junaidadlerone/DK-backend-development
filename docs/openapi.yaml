@@ -9639,6 +9639,39 @@ paths:
 
         ---
 
+        ### `waste_meter`
+        Quantifies postcard spend that produced no delivery — returned, cancelled, and delayed
+        postcards expressed as **piece counts and dollar costs** ($3.00 per postcard).
+
+        Also emits an overall **`status`** risk indicator based on
+        `(wasted + delayed) / total_postcards_sent`:
+
+        | `status` value | Condition | Meaning |
+        |---|---|---|
+        | `Healthy` | problem rate < 5% | Delivery pipeline is performing well |
+        | `At Risk` | problem rate 5–15% | Moderate waste — worth monitoring |
+        | `Critical` | problem rate > 15% | High waste — requires attention |
+
+        | Field | Source | Definition |
+        |---|---|---|
+        | `status` | derived | Risk indicator: `Healthy` / `At Risk` / `Critical` |
+        | `total_pieces_wasted` | derived | `total_pieces_returned + total_pieces_cancelled` |
+        | `total_amount_wasted` | derived | `total_pieces_wasted × $3.00` |
+        | `total_pieces_returned` | `imb_status = returned_to_sender` | Postcards USPS returned to sender |
+        | `total_amount_returned` | derived | `total_pieces_returned × $3.00` |
+        | `total_pieces_cancelled` | `postgrid_status = cancelled` | Postcards cancelled before printing |
+        | `total_amount_cancelled` | derived | `total_pieces_cancelled × $3.00` |
+        | `total_pieces_delayed` | derived | Not `completed`/`cancelled` AND ≥ 7 working days since sent |
+        | `total_amount_delayed` | derived | `total_pieces_delayed × $3.00` |
+
+        **Delayed definition:** A postcard is delayed if it has NOT reached `completed` or `cancelled`
+        AND 7 or more working days (Monday–Friday, excluding weekends) have elapsed since `created_at`.
+
+        Dollar amounts use a fixed price of **$3.00 USD per postcard**. Returns `0` for all
+        piece/amount fields when no postcards have been sent.
+
+        ---
+
         **Access:** All roles (ADMIN, MARKETER, TECHNICIAN)
       operationId: getAnalyticsV2
       security:
@@ -9657,10 +9690,12 @@ paths:
                   enum:
                     - dashboard_cards
                     - delivery_funnel
+                    - waste_meter
                   description: |
                     The analytics view to retrieve.
                     - `dashboard_cards` — high-level summary card metrics
                     - `delivery_funnel` — full PostGrid status breakdown as percentages
+                    - `waste_meter` — wasted/delayed postcard counts + dollar costs + risk status
             examples:
               dashboard_cards:
                 summary: "dashboard_cards — top-level summary cards"
@@ -9670,6 +9705,10 @@ paths:
                 summary: "delivery_funnel — full status percentage breakdown"
                 value:
                   type: "delivery_funnel"
+              waste_meter:
+                summary: "waste_meter — wasted and delayed postcard analysis"
+                value:
+                  type: "waste_meter"
       responses:
         "200":
           description: Analytics computed successfully
@@ -9692,6 +9731,7 @@ paths:
                     oneOf:
                       - $ref: "#/components/schemas/DashboardCardsAnalytics"
                       - $ref: "#/components/schemas/DeliveryFunnelAnalytics"
+                      - $ref: "#/components/schemas/WasteMeterAnalytics"
                     discriminator:
                       propertyName: _type
               examples:
@@ -9724,6 +9764,21 @@ paths:
                       ready: 3.40
                       returned: 2.50
                       cancelled: 2.50
+                waste_meter:
+                  summary: "waste_meter response"
+                  value:
+                    status: "success"
+                    message: "Analytics computed successfully"
+                    data:
+                      status: "At Risk"
+                      total_pieces_wasted: 87
+                      total_amount_wasted: 261.00
+                      total_pieces_returned: 42
+                      total_amount_returned: 126.00
+                      total_pieces_cancelled: 45
+                      total_amount_cancelled: 135.00
+                      total_pieces_delayed: 130
+                      total_amount_delayed: 390.00
         "400":
           description: Invalid request — missing or unsupported type
           content:
@@ -9740,7 +9795,7 @@ paths:
                   summary: Unsupported analytics type
                   value:
                     error: "INVALID_TYPE"
-                    message: "Analytics type \"foo\" is not supported. Supported types: dashboard_cards, delivery_funnel"
+                    message: "Analytics type \"foo\" is not supported. Supported types: dashboard_cards, delivery_funnel, waste_meter"
         "401":
           description: Unauthorized — missing or invalid Bearer token
           content:
@@ -17580,6 +17635,110 @@ components:
             The order was cancelled and will never be sent.
             Source: `postcard_sends.postgrid_status`
           example: 2.50
+
+    WasteMeterAnalytics:
+      type: object
+      description: |
+        Waste meter analytics — quantifies postcard spend that produced no confirmed delivery.
+
+        **Definitions:**
+
+        | Category | Definition | Source field |
+        |---|---|---|
+        | `returned` | PostGrid `imbStatus = returned_to_sender` — USPS could not deliver and returned the piece | `postcard_sends.imb_status` |
+        | `cancelled` | PostGrid `status = cancelled` — order cancelled, never printed or sent | `postcard_sends.postgrid_status` |
+        | `wasted` | `returned + cancelled` — total pieces that incurred cost with zero delivery | combined |
+        | `delayed` | Not `completed` or `cancelled`, AND ≥ 7 **working days** (Mon–Fri) since created | `postcard_sends.created_at` |
+
+        **Dollar amounts** are calculated at a fixed rate of **$3.00 USD per postcard**, rounded to 2 decimal places.
+
+        **Risk status thresholds** are based on `(wasted + delayed) / total_sent × 100`:
+
+        | Status | Problem rate |
+        |---|---|
+        | `Healthy` | < 5% |
+        | `At Risk` | 5% – 15% |
+        | `Critical` | > 15% |
+
+        Returns `Healthy` when no postcards have been sent yet.
+      required:
+        - status
+        - total_pieces_wasted
+        - total_amount_wasted
+        - total_pieces_returned
+        - total_amount_returned
+        - total_pieces_cancelled
+        - total_amount_cancelled
+        - total_pieces_delayed
+        - total_amount_delayed
+      properties:
+        status:
+          type: string
+          enum:
+            - Healthy
+            - At Risk
+            - Critical
+          description: |
+            Overall waste risk status for this organization's postcard campaigns.
+            Computed from `(total_pieces_wasted + total_pieces_delayed) / total_postcards_sent × 100`.
+
+            - `Healthy` — problem rate < 5%
+            - `At Risk` — problem rate 5%–15%
+            - `Critical` — problem rate > 15%
+          example: "At Risk"
+        total_pieces_wasted:
+          type: integer
+          description: |
+            Total pieces that cost money but were never delivered.
+            `total_pieces_returned + total_pieces_cancelled`
+          example: 87
+        total_amount_wasted:
+          type: number
+          format: float
+          description: |
+            Dollar cost of all wasted pieces. `total_pieces_wasted × $3.00`
+          example: 261.00
+        total_pieces_returned:
+          type: integer
+          description: |
+            Pieces where PostGrid `imbStatus = returned_to_sender`.
+            USPS could not deliver (undeliverable address, no forwarding) and returned the piece.
+            Source: `postcard_sends.imb_status`
+            Note: Only populated for US orders — PostGrid does not provide imbStatus for non-US addresses.
+          example: 42
+        total_amount_returned:
+          type: number
+          format: float
+          description: |
+            Dollar cost of returned pieces. `total_pieces_returned × $3.00`
+          example: 126.00
+        total_pieces_cancelled:
+          type: integer
+          description: |
+            Pieces where PostGrid `status = cancelled`.
+            The order was cancelled before it was ever printed or sent.
+            Source: `postcard_sends.postgrid_status`
+          example: 45
+        total_amount_cancelled:
+          type: number
+          format: float
+          description: |
+            Dollar cost of cancelled pieces. `total_pieces_cancelled × $3.00`
+          example: 135.00
+        total_pieces_delayed:
+          type: integer
+          description: |
+            Pieces that are still active (not `completed` or `cancelled`) but have not been
+            delivered after **7 or more working days** (Monday–Friday) since the order was created.
+            These represent spend that has not yet yielded a confirmed delivery and may never do so.
+            Source: `postcard_sends.created_at` compared to today using Mon–Fri day counting.
+          example: 130
+        total_amount_delayed:
+          type: number
+          format: float
+          description: |
+            Dollar cost of delayed pieces. `total_pieces_delayed × $3.00`
+          example: 390.00
 
     GlobalExclusionsAnalytics:
       type: object
