@@ -9672,6 +9672,24 @@ paths:
 
         ---
 
+        ### `scan_trend`
+        Aggregates QR code scan data across all campaigns in the organization that have a
+        PostGrid tracker linked via `/linkQRCodeToCampaign`.
+
+        **Data source:** PostGrid Tracker API (`GET /print-mail/v1/trackers/{id}`)
+
+        | Field | Description |
+        |---|---|
+        | `total_scans` | Sum of `visitCount` across all org campaign trackers |
+        | `unique_scans` | Sum of `uniqueVisitCount` across all org campaign trackers |
+        | `scan_rate` | `(total_scans / total_postcards_sent) × 100`, rounded to 2dp |
+        | `breakdown.monday_scans` … `breakdown.sunday_scans` | All-time scan counts grouped by day of week they occurred |
+
+        `breakdown` counts **all historical scans** by weekday (e.g. 42 scans have ever occurred on a Monday).
+        Returns all zeros when no trackers are linked or no scans have occurred yet.
+
+        ---
+
         **Access:** All roles (ADMIN, MARKETER, TECHNICIAN)
       operationId: getAnalyticsV2
       security:
@@ -9691,11 +9709,13 @@ paths:
                     - dashboard_cards
                     - delivery_funnel
                     - waste_meter
+                    - scan_trend
                   description: |
                     The analytics view to retrieve.
                     - `dashboard_cards` — high-level summary card metrics
                     - `delivery_funnel` — full PostGrid status breakdown as percentages
                     - `waste_meter` — wasted/delayed postcard counts + dollar costs + risk status
+                    - `scan_trend` — QR scan totals, unique scans, scan rate, day-of-week breakdown
             examples:
               dashboard_cards:
                 summary: "dashboard_cards — top-level summary cards"
@@ -9709,6 +9729,10 @@ paths:
                 summary: "waste_meter — wasted and delayed postcard analysis"
                 value:
                   type: "waste_meter"
+              scan_trend:
+                summary: "scan_trend — QR code scan activity by day of week"
+                value:
+                  type: "scan_trend"
       responses:
         "200":
           description: Analytics computed successfully
@@ -9732,6 +9756,7 @@ paths:
                       - $ref: "#/components/schemas/DashboardCardsAnalytics"
                       - $ref: "#/components/schemas/DeliveryFunnelAnalytics"
                       - $ref: "#/components/schemas/WasteMeterAnalytics"
+                      - $ref: "#/components/schemas/ScanTrendAnalytics"
                     discriminator:
                       propertyName: _type
               examples:
@@ -9779,6 +9804,23 @@ paths:
                       total_amount_cancelled: 135.00
                       total_pieces_delayed: 130
                       total_amount_delayed: 390.00
+                scan_trend:
+                  summary: "scan_trend response"
+                  value:
+                    status: "success"
+                    message: "Analytics computed successfully"
+                    data:
+                      total_scans: 342
+                      unique_scans: 289
+                      scan_rate: 6.31
+                      breakdown:
+                        monday_scans: 58
+                        tuesday_scans: 63
+                        wednesday_scans: 71
+                        thursday_scans: 49
+                        friday_scans: 55
+                        saturday_scans: 28
+                        sunday_scans: 18
         "400":
           description: Invalid request — missing or unsupported type
           content:
@@ -9795,7 +9837,7 @@ paths:
                   summary: Unsupported analytics type
                   value:
                     error: "INVALID_TYPE"
-                    message: "Analytics type \"foo\" is not supported. Supported types: dashboard_cards, delivery_funnel, waste_meter"
+                    message: "Analytics type \"foo\" is not supported. Supported types: dashboard_cards, delivery_funnel, waste_meter, scan_trend"
         "401":
           description: Unauthorized — missing or invalid Bearer token
           content:
@@ -17739,6 +17781,87 @@ components:
           description: |
             Dollar cost of delayed pieces. `total_pieces_delayed × $3.00`
           example: 390.00
+
+    ScanTrendAnalytics:
+      type: object
+      description: |
+        QR code scan trend analytics from Analytics V2.
+        Aggregates scan data across all campaigns in the organization that have a PostGrid
+        tracker linked via `/linkQRCodeToCampaign`.
+
+        **Data source:** PostGrid Tracker API (`visitCount`, `uniqueVisitCount`, `clicks[]`)
+
+        `scan_rate` uses the total number of postcards sent by the org (from `postcard_sends`)
+        as the denominator. `breakdown` counts all-time scans grouped by the day of week they
+        occurred. All fields return `0` when no trackers are linked or no scans have happened yet.
+      required:
+        - total_scans
+        - unique_scans
+        - scan_rate
+        - breakdown
+      properties:
+        total_scans:
+          type: integer
+          description: |
+            Total QR code scans (visits) across all campaign trackers for this organization.
+            Sourced from PostGrid `visitCount` — counts every scan, including repeat scans by the same person.
+          example: 342
+        unique_scans:
+          type: integer
+          description: |
+            Unique QR code scanners across all campaign trackers for this organization.
+            Sourced from PostGrid `uniqueVisitCount` — counts each person once regardless of how many times they scanned.
+          example: 289
+        scan_rate:
+          type: number
+          format: float
+          description: |
+            `(total_scans / total_postcards_sent) × 100`, rounded to 2 decimal places.
+            Represents the percentage of sent postcards that resulted in at least one QR scan.
+            Returns `0` when no postcards have been sent.
+          example: 6.31
+        breakdown:
+          type: object
+          description: |
+            All-time scan counts grouped by the day of the week each scan occurred.
+            Useful for identifying which days drive the most engagement.
+          required:
+            - monday_scans
+            - tuesday_scans
+            - wednesday_scans
+            - thursday_scans
+            - friday_scans
+            - saturday_scans
+            - sunday_scans
+          properties:
+            monday_scans:
+              type: integer
+              description: Number of scans that occurred on a Monday (all-time).
+              example: 58
+            tuesday_scans:
+              type: integer
+              description: Number of scans that occurred on a Tuesday (all-time).
+              example: 63
+            wednesday_scans:
+              type: integer
+              description: Number of scans that occurred on a Wednesday (all-time).
+              example: 71
+            thursday_scans:
+              type: integer
+              description: Number of scans that occurred on a Thursday (all-time).
+              example: 49
+            friday_scans:
+              type: integer
+              description: Number of scans that occurred on a Friday (all-time).
+              example: 55
+            saturday_scans:
+              type: integer
+              description: Number of scans that occurred on a Saturday (all-time).
+              example: 28
+            sunday_scans:
+              type: integer
+              description: Number of scans that occurred on a Sunday (all-time).
+              example: 18
 
     GlobalExclusionsAnalytics:
       type: object

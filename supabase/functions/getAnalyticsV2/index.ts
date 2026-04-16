@@ -36,6 +36,7 @@ import { enrichCurrency } from "../_shared/currency.ts";
  * - dashboard_cards: in_flight_postcards, delivered, delivery_rate, spent_to_date
  * - delivery_funnel: full status breakdown as percentages of total_postcards_sent
  * - waste_meter:     wasted, returned, cancelled, and delayed postcard counts + dollar costs
+ * - scan_trend:      QR code scan totals, unique scans, scan rate, and day-of-week breakdown
  */
 
 // Standard PostGrid `status` values that mean the postcard is still in motion
@@ -97,6 +98,21 @@ interface WasteMeterData {
   // Delayed: not completed/cancelled, >= 7 working days since sent
   total_pieces_delayed: number;
   total_amount_delayed: number;
+}
+
+interface ScanTrendData {
+  total_scans: number;
+  unique_scans: number;
+  scan_rate: number;
+  breakdown: {
+    monday_scans: number;
+    tuesday_scans: number;
+    wednesday_scans: number;
+    thursday_scans: number;
+    friday_scans: number;
+    saturday_scans: number;
+    sunday_scans: number;
+  };
 }
 
 Deno.serve(async (req) => {
@@ -170,10 +186,19 @@ Deno.serve(async (req) => {
         }, 200);
       }
 
+      case "scan_trend": {
+        const data = await computeScanTrend(supabase, organizationId);
+        return successResponse({
+          status: "success",
+          message: "Analytics computed successfully",
+          data,
+        }, 200);
+      }
+
       default:
         return errorResponse(
           "INVALID_TYPE",
-          `Analytics type "${type}" is not supported. Supported types: dashboard_cards, delivery_funnel, waste_meter`,
+          `Analytics type "${type}" is not supported. Supported types: dashboard_cards, delivery_funnel, waste_meter, scan_trend`,
           400,
         );
     }
@@ -463,5 +488,138 @@ async function computeWasteMeter(
     total_amount_cancelled: usd(piecesCancelled),
     total_pieces_delayed: piecesDelayed,
     total_amount_delayed: usd(piecesDelayed),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Scan Trend
+// ---------------------------------------------------------------------------
+
+const POSTGRID_TRACKER_BASE_URL = "https://api.postgrid.com/print-mail/v1/trackers";
+
+/**
+ * Compute Scan Trend Analytics
+ *
+ * Aggregates QR code scan data across all campaigns in the organization
+ * that have a PostGrid tracker linked via linkQRCodeToCampaign.
+ *
+ * Data sources:
+ * - campaigns.postgrid_tracker_id → tracker IDs to query
+ * - PostGrid GET /print-mail/v1/trackers/{id}
+ *     visitCount         → total_scans (summed across all org trackers)
+ *     uniqueVisitCount   → unique_scans (summed across all org trackers)
+ *     clicks[].createdAt → day-of-week breakdown
+ * - postcard_sends COUNT → total_postcards_sent (denominator for scan_rate)
+ *
+ * scan_rate = (total_scans / total_postcards_sent) * 100, rounded to 2dp.
+ * breakdown counts all historical clicks by the weekday they occurred.
+ * Returns all zeros when no trackers are linked or no scans have occurred yet.
+ */
+async function computeScanTrend(
+  supabase: any,
+  organizationId: string,
+): Promise<ScanTrendData> {
+  const postgridApiKey =
+    Deno.env.get("POSTGRID_POSTCARD_API_KEY") ??
+    Deno.env.get("VITE_POSTGRID_POSTCARD_API_KEY");
+
+  const emptyBreakdown = {
+    monday_scans: 0,
+    tuesday_scans: 0,
+    wednesday_scans: 0,
+    thursday_scans: 0,
+    friday_scans: 0,
+    saturday_scans: 0,
+    sunday_scans: 0,
+  };
+
+  // Fetch campaigns with trackers and total postcards sent in parallel
+  const [campaignsResult, postcardsResult] = await Promise.all([
+    supabase
+      .from("campaigns")
+      .select("id, postgrid_tracker_id")
+      .eq("organization_id", organizationId)
+      .not("postgrid_tracker_id", "is", null),
+    supabase
+      .from("postcard_sends")
+      .select("id", { count: "exact", head: true })
+      .eq("organization_id", organizationId),
+  ]);
+
+  if (campaignsResult.error) {
+    console.error("Error fetching campaigns for scan_trend:", campaignsResult.error);
+    throw new Error("Failed to fetch campaign data");
+  }
+
+  const campaigns: Array<{ id: string; postgrid_tracker_id: string }> =
+    campaignsResult.data ?? [];
+  const totalPostcardsSent: number = postcardsResult.count ?? 0;
+
+  if (campaigns.length === 0 || !postgridApiKey) {
+    return { total_scans: 0, unique_scans: 0, scan_rate: 0, breakdown: emptyBreakdown };
+  }
+
+  // dayCounts index: 0=Sun, 1=Mon, 2=Tue, 3=Wed, 4=Thu, 5=Fri, 6=Sat
+  const dayCounts = [0, 0, 0, 0, 0, 0, 0];
+  let totalScans = 0;
+  let uniqueScans = 0;
+
+  await Promise.all(
+    campaigns.map(async (campaign) => {
+      try {
+        const response = await fetch(
+          `${POSTGRID_TRACKER_BASE_URL}/${campaign.postgrid_tracker_id}`,
+          { headers: { "x-api-key": postgridApiKey } },
+        );
+
+        if (!response.ok) {
+          console.warn(
+            `[scan_trend] PostGrid ${response.status} for tracker ${campaign.postgrid_tracker_id}`,
+          );
+          return;
+        }
+
+        const data = await response.json();
+
+        totalScans += data.visitCount ?? 0;
+        uniqueScans += data.uniqueVisitCount ?? 0;
+
+        // Aggregate per-click timestamps into day-of-week buckets
+        if (Array.isArray(data.clicks)) {
+          for (const click of data.clicks) {
+            const ts = click.createdAt ?? click.timestamp;
+            if (ts) {
+              const day = new Date(ts).getDay(); // 0=Sun … 6=Sat
+              dayCounts[day]++;
+            }
+          }
+        }
+      } catch (err) {
+        console.error(
+          `[scan_trend] Failed to fetch tracker ${campaign.postgrid_tracker_id}:`,
+          err,
+        );
+      }
+    }),
+  );
+
+  const scanRate =
+    totalPostcardsSent > 0
+      ? Math.round((totalScans / totalPostcardsSent) * 10000) / 100
+      : 0;
+
+  return {
+    total_scans: totalScans,
+    unique_scans: uniqueScans,
+    scan_rate: scanRate,
+    breakdown: {
+      sunday_scans: dayCounts[0],
+      monday_scans: dayCounts[1],
+      tuesday_scans: dayCounts[2],
+      wednesday_scans: dayCounts[3],
+      thursday_scans: dayCounts[4],
+      friday_scans: dayCounts[5],
+      saturday_scans: dayCounts[6],
+    },
   };
 }
