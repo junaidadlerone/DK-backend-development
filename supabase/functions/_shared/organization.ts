@@ -90,6 +90,15 @@ export async function validateOrganizationAccess(
   userId: string
 ): Promise<boolean> {
   try {
+    // Super admins have access to all organizations
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("is_super_admin")
+      .eq("id", userId)
+      .maybeSingle();
+
+    if (profile?.is_super_admin) return true;
+
     const { data: org, error } = await supabase
       .from("organizations")
       .select("owner_id, organization_members")
@@ -109,7 +118,7 @@ export async function validateOrganizationAccess(
     if (org.organization_members && Array.isArray(org.organization_members)) {
       const members = org.organization_members as Array<{member_uid: string, member_role: string}>;
       const member = members.find(m => m.member_uid === userId);
-      
+
       if (member && (member.member_role === "ADMIN" || member.member_role === "MARKETER")) {
         return true;
       }

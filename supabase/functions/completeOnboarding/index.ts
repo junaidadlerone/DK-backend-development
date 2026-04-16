@@ -344,14 +344,24 @@ Deno.serve(async (req) => {
           .select("id, role")
           .in("id", ids);
 
+        const addedMemberIds: string[] = [];
+
         for (const mp of memberProfiles || []) {
           const alreadyMember = existingMembers.some((m: any) => m?.member_uid === mp.id);
           if (!alreadyMember) {
-            // Use caller-specified role if provided, otherwise keep the user's existing role
             const overrideEntry = team_member_ids.find(t => t.id === mp.id);
             const assignedRole = overrideEntry?.role || mp.role;
             newMembers.push({ member_uid: mp.id, member_role: assignedRole });
+            addedMemberIds.push(mp.id);
           }
+        }
+
+        // Enable multi-org on all newly added members so they can switch between orgs
+        if (addedMemberIds.length > 0) {
+          await supabase
+            .from("profiles")
+            .update({ multi_org_enabled: true, updated_at: new Date().toISOString() })
+            .in("id", addedMemberIds);
         }
       }
 
@@ -368,7 +378,10 @@ Deno.serve(async (req) => {
             // Create user and send invite email via Supabase Auth admin
             const { data: inviteData, error: inviteError } = await supabase.auth.admin.inviteUserByEmail(
               email,
-              { data: { role } }
+              {
+                data: { role },
+                redirectTo: `${(Deno.env.get("SITE_URL") ?? "https://door-knocker-plus-dev.vercel.app").replace(/\/$/, "")}/set-password`,
+              }
             );
 
             if (inviteError || !inviteData?.user) {
