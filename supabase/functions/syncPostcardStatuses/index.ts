@@ -2,36 +2,50 @@ import { createSupabaseClient } from "../_shared/client.ts";
 
 /**
  * Sync Postcard Statuses Edge Function (Scheduled / CRON)
- * Fetches the current delivery status of every non-terminal postcard
- * from the PostGrid API and updates postcard_sends in the database.
  *
- * Terminal statuses (completed, cancelled) are never re-checked.
- * Non-terminal statuses (ready, printing, processed_for_delivery) are
- * queried from PostGrid on every run.
+ * Fetches current delivery statuses from PostGrid for every non-terminal postcard
+ * and updates postcard_sends in the database.
+ *
+ * PostGrid provides TWO separate tracking fields:
+ *
+ *   status (standard lifecycle — all orders):
+ *     ready → printing → processed_for_delivery → completed
+ *                                               → cancelled
+ *
+ *   imbStatus (Intelligent-Mail Tracking — US only, nullable):
+ *     entered_mail_stream → out_for_delivery → (status becomes completed)
+ *                                           → returned_to_sender
+ *
+ * Terminal statuses for postgrid_status: completed, cancelled
+ *   (returned_to_sender lives in imbStatus, not status)
  *
  * Process:
- * 1. Fetch all postcard_sends rows where status is non-terminal
- * 2. Query PostGrid GET /print-mail/v1/postcards/{id} for each row
- * 3. Update postgrid_status + status_updated_at in the database
- * 4. Process in batches of 50 to respect rate limits
- *
- * Intended to run on a schedule (e.g., every 6 hours via Supabase cron
- * or an external scheduler). Can also be triggered manually.
+ * 1. Fetch all postcard_sends where postgrid_status is non-terminal
+ * 2. Call PostGrid GET /print-mail/v1/postcards/{id} for each
+ * 3. Update postgrid_status from response.status
+ * 4. Update imb_status from response.imbStatus (if present)
+ * 5. Process in batches of 50 to respect rate limits
  */
 
 const POSTGRID_BASE_URL = "https://api.postgrid.com/print-mail/v1";
+
+// Only the main `status` field has true terminal values.
+// imbStatus = returned_to_sender is tracked via the imb_status column separately.
 const TERMINAL_STATUSES = ["completed", "cancelled"];
+
 const BATCH_SIZE = 50;
 
 interface PostcardSendRow {
   id: string;
   postgrid_postcard_id: string;
   postgrid_status: string;
+  imb_status: string | null;
 }
 
 interface PostGridPostcardResponse {
   id: string;
   status: string;
+  imbStatus?: string; // US Intelligent-Mail Tracking — present once at a USPS facility
 }
 
 Deno.serve(async (_req) => {
@@ -54,7 +68,7 @@ Deno.serve(async (_req) => {
   // 1. Fetch all non-terminal postcard records
   const { data: rows, error: fetchError } = await supabase
     .from("postcard_sends")
-    .select("id, postgrid_postcard_id, postgrid_status")
+    .select("id, postgrid_postcard_id, postgrid_status, imb_status")
     .not("postgrid_status", "in", `(${TERMINAL_STATUSES.join(",")})`)
     .order("created_at", { ascending: true });
 
@@ -107,30 +121,47 @@ Deno.serve(async (_req) => {
           }
 
           const pgData: PostGridPostcardResponse = await response.json();
-          const newStatus = pgData.status;
 
-          // Only write if the status actually changed
-          if (newStatus && newStatus !== row.postgrid_status) {
-            const { error: updateError } = await supabase
-              .from("postcard_sends")
-              .update({
-                postgrid_status: newStatus,
-                status_updated_at: now,
-              })
-              .eq("id", row.id);
+          const newStatus = pgData.status ?? row.postgrid_status;
+          // imbStatus is only present on US orders once they hit a USPS facility
+          const newImbStatus = pgData.imbStatus ?? null;
 
-            if (updateError) {
-              console.error(
-                `[syncPostcardStatuses] DB update failed for ${row.id}:`,
-                updateError,
-              );
-              errorCount++;
-            } else {
-              updatedCount++;
-              console.log(
-                `[syncPostcardStatuses] ${row.postgrid_postcard_id}: ${row.postgrid_status} → ${newStatus}`,
-              );
-            }
+          const statusChanged = newStatus !== row.postgrid_status;
+          const imbStatusChanged = newImbStatus !== row.imb_status;
+
+          if (!statusChanged && !imbStatusChanged) {
+            return; // Nothing changed — skip the DB write
+          }
+
+          const updatePayload: Record<string, string | null> = {
+            status_updated_at: now,
+          };
+
+          if (statusChanged) updatePayload.postgrid_status = newStatus;
+          if (imbStatusChanged) updatePayload.imb_status = newImbStatus;
+
+          const { error: updateError } = await supabase
+            .from("postcard_sends")
+            .update(updatePayload)
+            .eq("id", row.id);
+
+          if (updateError) {
+            console.error(
+              `[syncPostcardStatuses] DB update failed for ${row.id}:`,
+              updateError,
+            );
+            errorCount++;
+          } else {
+            updatedCount++;
+            const statusLog = statusChanged
+              ? `status: ${row.postgrid_status} → ${newStatus}`
+              : "";
+            const imbLog = imbStatusChanged
+              ? `imbStatus: ${row.imb_status ?? "null"} → ${newImbStatus ?? "null"}`
+              : "";
+            console.log(
+              `[syncPostcardStatuses] ${row.postgrid_postcard_id}: ${[statusLog, imbLog].filter(Boolean).join(", ")}`,
+            );
           }
         } catch (err) {
           console.error(

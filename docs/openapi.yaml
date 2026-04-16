@@ -9565,14 +9565,79 @@ paths:
       summary: Get postcard-level delivery analytics
       description: |
         Returns real-time delivery analytics based on individual PostGrid postcard records
-        stored in the `postcard_sends` table. Unlike `/getAnalytics`, these metrics reflect
-        the actual delivery lifecycle of each postcard rather than aggregate campaign counters.
+        stored in the `postcard_sends` table. Unlike `/getAnalytics` (which uses aggregate
+        campaign counters), these metrics reflect the actual delivery lifecycle of each
+        postcard sourced directly from PostGrid statuses.
 
         **Note:** Only postcards sent after the `postcard_sends` table was introduced will
         appear in these metrics. Historical campaigns will show 0 for postcard-level metrics.
 
-        **Supported types:**
-        - `dashboard_cards` — Summary cards for the analytics dashboard
+        ---
+
+        ## How PostGrid tracking works
+
+        PostGrid provides **two separate tracking fields** per postcard:
+
+        ### Standard `status` field (all orders)
+        Every postcard has a `status` field that progresses through this lifecycle:
+
+        | Status | Description |
+        |---|---|
+        | `ready` | Order created successfully, will be printed on sendDate |
+        | `printing` | Given to a printer, being processed within SLA |
+        | `processed_for_delivery` | Handed off to the local postal service |
+        | `completed` | Most likely delivered *(PostGrid approximation)* |
+        | `cancelled` | Cancelled, will never be sent |
+
+        ### `imbStatus` field — Intelligent-Mail Tracking (US only, nullable)
+        For US orders, once a postcard is scanned at a USPS facility, PostGrid adds an
+        additional `imbStatus` field with more granular tracking:
+
+        | imbStatus | Description |
+        |---|---|
+        | `entered_mail_stream` | Postcard has entered a USPS facility |
+        | `out_for_delivery` | Processed at final USPS facility — will deliver within a day |
+        | `returned_to_sender` | Returned to sender (undeliverable) |
+
+        We store these in `postcard_sends.postgrid_status` and `postcard_sends.imb_status`.
+        `imb_status` is `null` for non-US orders or until the postcard is first scanned.
+
+        ---
+
+        ## Supported `type` values
+
+        ### `dashboard_cards`
+        Top-level summary cards for the main analytics dashboard.
+
+        | Field | Source | Description |
+        |---|---|---|
+        | `in_flight_postcards` | `postgrid_status` | Count of postcards with status `ready`, `printing`, or `processed_for_delivery` |
+        | `delivered` | `postgrid_status = completed` | Count of postcards most likely delivered (PostGrid approximation) |
+        | `delivery_rate` | derived | `(delivered / total_sent) * 100` — percentage, 2 decimal places |
+        | `spent_to_date` | `payment_history` | Sum of `amount_paid` for this organization across all campaigns |
+        | `spent_to_date_display` | derived | Currency-formatted `spent_to_date` using the user's saved currency preference |
+
+        ---
+
+        ### `delivery_funnel`
+        Full breakdown of every postcard's current status, expressed as **percentages of
+        `total_postcards_sent`**. Combines both `postgrid_status` and `imb_status` fields.
+
+        | Response field | PostGrid source | PostGrid value(s) | Description |
+        |---|---|---|---|
+        | `total_postcards_sent` | — | — | Raw count of all postcards (percentage denominator) |
+        | `delivered` | `postgrid_status` | `completed` | % most likely delivered |
+        | `processed` | `postgrid_status` | `processed_for_delivery` | % handed to local postal service |
+        | `printing` | `postgrid_status` | `printing` | % currently being printed |
+        | `ready` | `postgrid_status` | `ready` | % awaiting print on sendDate |
+        | `cancelled` | `postgrid_status` | `cancelled` | % cancelled, never sent |
+        | `in_transit` | `imb_status` | `entered_mail_stream` + `out_for_delivery` | % confirmed inside USPS network (US only) |
+        | `returned` | `imb_status` | `returned_to_sender` | % returned to sender (US only) |
+
+        All percentages are rounded to 2 decimal places. Returns `0` when `total_postcards_sent` is 0.
+        `in_transit` and `returned` will be `0` for non-US campaigns (no `imbStatus` from PostGrid).
+
+        ---
 
         **Access:** All roles (ADMIN, MARKETER, TECHNICIAN)
       operationId: getAnalyticsV2
@@ -9591,12 +9656,20 @@ paths:
                   type: string
                   enum:
                     - dashboard_cards
-                  description: The analytics type to retrieve
+                    - delivery_funnel
+                  description: |
+                    The analytics view to retrieve.
+                    - `dashboard_cards` — high-level summary card metrics
+                    - `delivery_funnel` — full PostGrid status breakdown as percentages
             examples:
               dashboard_cards:
-                summary: Get dashboard card metrics
+                summary: "dashboard_cards — top-level summary cards"
                 value:
                   type: "dashboard_cards"
+              delivery_funnel:
+                summary: "delivery_funnel — full status percentage breakdown"
+                value:
+                  type: "delivery_funnel"
       responses:
         "200":
           description: Analytics computed successfully
@@ -9604,6 +9677,10 @@ paths:
             application/json:
               schema:
                 type: object
+                required:
+                  - status
+                  - message
+                  - data
                 properties:
                   status:
                     type: string
@@ -9612,10 +9689,14 @@ paths:
                     type: string
                     example: "Analytics computed successfully"
                   data:
-                    $ref: "#/components/schemas/DashboardCardsAnalytics"
+                    oneOf:
+                      - $ref: "#/components/schemas/DashboardCardsAnalytics"
+                      - $ref: "#/components/schemas/DeliveryFunnelAnalytics"
+                    discriminator:
+                      propertyName: _type
               examples:
                 dashboard_cards:
-                  summary: Dashboard cards analytics
+                  summary: "dashboard_cards response"
                   value:
                     status: "success"
                     message: "Analytics computed successfully"
@@ -9629,36 +9710,73 @@ paths:
                         currency_code: "USD"
                         symbol: "$"
                         formatted: "$4,950.00"
+                delivery_funnel:
+                  summary: "delivery_funnel response"
+                  value:
+                    status: "success"
+                    message: "Analytics computed successfully"
+                    data:
+                      total_postcards_sent: 5000
+                      delivered: 72.50
+                      in_transit: 8.20
+                      processed: 6.10
+                      printing: 4.80
+                      ready: 3.40
+                      returned: 2.50
+                      cancelled: 2.50
         "400":
-          description: Invalid request
+          description: Invalid request — missing or unsupported type
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
               examples:
+                missing_type:
+                  summary: Missing type field
+                  value:
+                    error: "INVALID_INPUT"
+                    message: "type is required and must be a string"
                 invalid_type:
                   summary: Unsupported analytics type
                   value:
                     error: "INVALID_TYPE"
-                    message: "Analytics type \"foo\" is not supported. Supported types: dashboard_cards"
+                    message: "Analytics type \"foo\" is not supported. Supported types: dashboard_cards, delivery_funnel"
         "401":
-          description: Unauthorized
+          description: Unauthorized — missing or invalid Bearer token
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+              examples:
+                unauthorized:
+                  summary: Missing token
+                  value:
+                    error: "UNAUTHORIZED"
+                    message: "Unable to authenticate user"
         "403":
-          description: Forbidden - user not in any organization
+          description: Forbidden — user is not associated with any organization
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+              examples:
+                no_org:
+                  summary: No organization
+                  value:
+                    error: "NO_ORGANIZATION"
+                    message: "User is not associated with any organization"
         "500":
           description: Internal server error
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+              examples:
+                server_error:
+                  summary: Unexpected server error
+                  value:
+                    error: "INTERNAL_ERROR"
+                    message: "An unexpected error occurred. Please try again later."
 
   /storePostcardSends:
     post:
@@ -9755,14 +9873,23 @@ paths:
         - Analytics 2.0
       summary: Sync postcard delivery statuses from PostGrid (scheduled)
       description: |
-        **Scheduled/cron function.** Queries PostGrid for the current delivery status
-        of every non-terminal postcard in the `postcard_sends` table and updates the
-        stored status accordingly.
+        **Scheduled/cron function.** Queries PostGrid for the current delivery statuses
+        of every non-terminal postcard in the `postcard_sends` table and updates both
+        `postgrid_status` and `imb_status` columns accordingly.
 
-        Terminal statuses (`completed`, `cancelled`) are never re-fetched.
-        Non-terminal statuses (`ready`, `printing`, `processed_for_delivery`) are
-        refreshed on every run.
+        **What gets updated per postcard:**
+        - `postgrid_status` ← PostGrid `status` field (standard lifecycle)
+        - `imb_status` ← PostGrid `imbStatus` field (US Intelligent-Mail Tracking, nullable)
 
+        **Terminal statuses** (never re-fetched — DB write skipped):
+        - `postgrid_status`: `completed`, `cancelled`
+
+        **Non-terminal statuses** (refreshed on every run):
+        - `postgrid_status`: `ready`, `printing`, `processed_for_delivery`
+        - `imb_status`: always re-checked for non-terminal postcards since `imbStatus`
+          can arrive and update independently of the main `status`
+
+        Postcards where neither `status` nor `imbStatus` changed are skipped (no DB write).
         Intended to be triggered on a schedule (e.g., every 6 hours). Can also be
         called manually to force a refresh.
       operationId: syncPostcardStatuses
@@ -17325,7 +17452,7 @@ components:
       properties:
         in_flight_postcards:
           type: integer
-          description: "Postcards with status ready, printing, or processed_for_delivery (en route to recipient)"
+          description: "Count of postcards with PostGrid status ready, printing, or processed_for_delivery (not yet delivered or cancelled)"
           example: 450
         delivered:
           type: integer
@@ -17357,6 +17484,102 @@ components:
             formatted:
               type: string
               example: "$4,950.00"
+
+    DeliveryFunnelAnalytics:
+      type: object
+      description: |
+        Full PostGrid delivery status breakdown for all postcards sent by the organization.
+        Every field except `total_postcards_sent` is a **percentage** (0.00–100.00, 2 decimal places)
+        of `total_postcards_sent`.
+
+        **Two data sources are combined:**
+
+        Fields derived from PostGrid's standard `status` field (all orders):
+        `delivered`, `processed`, `printing`, `ready`, `cancelled`
+
+        Fields derived from PostGrid's `imbStatus` field — Intelligent-Mail Tracking
+        (US orders only, `null` until first USPS facility scan):
+        `in_transit` (= `entered_mail_stream` + `out_for_delivery`), `returned`
+
+        Statuses are refreshed on a schedule by `syncPostcardStatuses`.
+        Terminal statuses (`completed`, `cancelled`) stop being polled from PostGrid.
+        `returned_to_sender` (imbStatus) is also terminal once set.
+      required:
+        - total_postcards_sent
+        - delivered
+        - in_transit
+        - processed
+        - printing
+        - ready
+        - returned
+        - cancelled
+      properties:
+        total_postcards_sent:
+          type: integer
+          description: |
+            Raw count of all postcard records for this organization.
+            This is the denominator used to calculate every percentage field below.
+          example: 5000
+        delivered:
+          type: number
+          format: float
+          description: |
+            % of postcards with PostGrid `status = completed`.
+            PostGrid considers these "most likely delivered" (approximation — no physical confirmation).
+            Source: `postcard_sends.postgrid_status`
+          example: 72.50
+        in_transit:
+          type: number
+          format: float
+          description: |
+            % of postcards currently confirmed inside the USPS network.
+            Combines two PostGrid `imbStatus` values:
+            - `entered_mail_stream` — scanned at a USPS facility
+            - `out_for_delivery` — at final USPS facility, expected delivery within a day
+            Source: `postcard_sends.imb_status`
+            Note: Will be 0.00 for non-US orders (no imbStatus provided by PostGrid).
+          example: 8.20
+        processed:
+          type: number
+          format: float
+          description: |
+            % of postcards with PostGrid `status = processed_for_delivery`.
+            The postcard has been handed off to the local postal service but not yet scanned by USPS.
+            Source: `postcard_sends.postgrid_status`
+          example: 6.10
+        printing:
+          type: number
+          format: float
+          description: |
+            % of postcards with PostGrid `status = printing`.
+            The postcard has been sent to a print provider and is being processed.
+            Source: `postcard_sends.postgrid_status`
+          example: 4.80
+        ready:
+          type: number
+          format: float
+          description: |
+            % of postcards with PostGrid `status = ready`.
+            The order was created successfully and is awaiting printing on its sendDate.
+            Source: `postcard_sends.postgrid_status`
+          example: 3.40
+        returned:
+          type: number
+          format: float
+          description: |
+            % of postcards with PostGrid `imbStatus = returned_to_sender`.
+            The postcard was undeliverable and has been returned.
+            Source: `postcard_sends.imb_status`
+            Note: Will be 0.00 for non-US orders (no imbStatus provided by PostGrid).
+          example: 2.50
+        cancelled:
+          type: number
+          format: float
+          description: |
+            % of postcards with PostGrid `status = cancelled`.
+            The order was cancelled and will never be sent.
+            Source: `postcard_sends.postgrid_status`
+          example: 2.50
 
     GlobalExclusionsAnalytics:
       type: object
