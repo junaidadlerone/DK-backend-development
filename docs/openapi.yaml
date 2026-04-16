@@ -2482,7 +2482,8 @@ paths:
                 - campaign_id
               properties:
                 campaign_id:
-                  type: uuid
+                  type: string
+                  format: uuid
                   description: ID of the campaign to which the address list belongs
                 list_name:
                   type: string
@@ -12614,11 +12615,23 @@ paths:
                         nullable: true
                         description: Branding theme settings
         "401":
-          $ref: "#/components/schemas/Error"
+          description: Error response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "403":
-          $ref: "#/components/schemas/Error"
+          description: Error response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "500":
-          $ref: "#/components/schemas/Error"
+          description: Error response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 
   /getCompanyLogo:
     get:
@@ -14227,11 +14240,23 @@ paths:
                   message:
                     type: string
         "400":
-          $ref: "#/components/schemas/Error"
+          description: Error response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "401":
-          $ref: "#/components/schemas/Error"
+          description: Error response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "500":
-          $ref: "#/components/schemas/Error"
+          description: Error response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 
   /unarchiveNotificationById:
     post:
@@ -14435,9 +14460,17 @@ paths:
                   message:
                     type: string
         "401":
-          $ref: "#/components/schemas/Error"
+          description: Error response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "500":
-          $ref: "#/components/schemas/Error"
+          description: Error response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 
   /sendWelcomeEmail:
     get:
@@ -14457,7 +14490,11 @@ paths:
               schema:
                 $ref: "#/components/schemas/EmailBatchResponse"
         "500":
-          $ref: "#/components/schemas/Error"
+          description: Error response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
     post:
       tags:
         - Email Notifications
@@ -14472,7 +14509,11 @@ paths:
               schema:
                 $ref: "#/components/schemas/EmailBatchResponse"
         "500":
-          $ref: "#/components/schemas/Error"
+          description: Error response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 
   /sendMaintenanceCompletedEmail:
     get:
@@ -14492,7 +14533,11 @@ paths:
               schema:
                 $ref: "#/components/schemas/EmailBatchResponse"
         "500":
-          $ref: "#/components/schemas/Error"
+          description: Error response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
     post:
       tags:
         - Email Notifications
@@ -14507,7 +14552,11 @@ paths:
               schema:
                 $ref: "#/components/schemas/EmailBatchResponse"
         "500":
-          $ref: "#/components/schemas/Error"
+          description: Error response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 
   /setMaintenanceEmailStatus:
     post:
@@ -14562,15 +14611,35 @@ paths:
                       maintenance_email_sent:
                         type: boolean
         "400":
-          $ref: "#/components/schemas/Error"
+          description: Error response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "401":
-          $ref: "#/components/schemas/Error"
+          description: Error response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "403":
-          $ref: "#/components/schemas/Error"
+          description: Error response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "404":
-          $ref: "#/components/schemas/Error"
+          description: Error response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "500":
-          $ref: "#/components/schemas/Error"
+          description: Error response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 
   # ─── Multi-Tenant Organization Management ──────────────────────────────────
 
@@ -15328,7 +15397,7 @@ paths:
       description: |
         Toggles the skip_address_verification flag for a specific CSV address list.
       security:
-        - bearerAuth: []
+        - BearerAuth: []
       requestBody:
         required: true
         content:
@@ -17624,65 +17693,65 @@ components:
         details:
           type: object
 
-CSVAddressListDetailsResponse:
-  type: object
-  properties:
-    status:
-      type: string
-    id:
-      type: string
-      format: uuid
-    list_name:
-      type: string
-    is_editing:
-      type: boolean
-    skip_address_verification:
-      type: boolean
-    verification_performed:
-      type: boolean
-    total_count:
-      type: integer
-    included_count:
-      type: integer
-    excluded_count:
-      type: integer
-    verified_address_count:
-      type: integer
-    included:
-      type: array
-      items:
-        $ref: "#/components/schemas/AddressRow"
-    excluded:
-      type: array
-      items:
-        $ref: "#/components/schemas/AddressRow"
-
-ValidatedAddress:
-  type: object
-  properties:
-    lat:
-      type: number
-    long:
-      type: number
-    osm_id:
-      type: string
-      nullable: true
-    status:
-      type: string
-    address:
-      type: string
-    verified:
-      type: boolean
-    zoneType:
-      type: string
-    residential:
-      type: boolean
-    propertyType:
-      type: string
-    targeting_zone_name:
-      type: string
-    distanceFromCenter:
-      type: number
+    CSVAddressListDetailsResponse:
+      type: object
+      properties:
+        status:
+          type: string
+        id:
+          type: string
+          format: uuid
+        list_name:
+          type: string
+        is_editing:
+          type: boolean
+        skip_address_verification:
+          type: boolean
+        verification_performed:
+          type: boolean
+        total_count:
+          type: integer
+        included_count:
+          type: integer
+        excluded_count:
+          type: integer
+        verified_address_count:
+          type: integer
+        included:
+          type: array
+          items:
+            $ref: "#/components/schemas/AddressRow"
+        excluded:
+          type: array
+          items:
+            $ref: "#/components/schemas/AddressRow"
+    
+    ValidatedAddress:
+      type: object
+      properties:
+        lat:
+          type: number
+        long:
+          type: number
+        osm_id:
+          type: string
+          nullable: true
+        status:
+          type: string
+        address:
+          type: string
+        verified:
+          type: boolean
+        zoneType:
+          type: string
+        residential:
+          type: boolean
+        propertyType:
+          type: string
+        targeting_zone_name:
+          type: string
+        distanceFromCenter:
+          type: number
 
     GetCoordinatesResponse:
       type: object
