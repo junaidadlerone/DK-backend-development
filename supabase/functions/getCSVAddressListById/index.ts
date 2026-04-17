@@ -101,7 +101,7 @@ Deno.serve(async (req) => {
     const preferences = await getPreferences(supabase, user.userId);
 
     // Determine if geocoding is needed
-    const needsGeocoding = (!list.validated_address_list || list.validated_address_list.length === 0) && !list.center;
+    const needsGeocoding = (!list.center && list.addresses && list.addresses.length > 0);
     const message = needsGeocoding ? "Addresses need to be geocoded" : "Address list retrieved successfully";
 
     // Return the list

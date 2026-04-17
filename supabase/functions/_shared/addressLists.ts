@@ -77,7 +77,6 @@ export interface AddressList {
     list_name: string;
     original_filename?: string;
     addresses: AddressRow[];
-    validated_address_list?: ValidatedAddress[];
     metadata: AddressListMetadata;
     created_at: string;
     updated_at: string;

@@ -124,6 +124,8 @@ Deno.serve(async (req) => {
     const bundles = (rows || []).map((r: any) => ({
       id:           r.bundle_id,
       is_universal: r.is_universal,
+      show_restriction_annotations_tooltips: r.show_restriction_annotations_tooltips,
+      show_restriction_area_warning:         r.show_restriction_area_warning,
       created_at:   r.bundle_created_at,
       updated_at:   r.bundle_updated_at,
       front: {
@@ -229,6 +231,8 @@ Deno.serve(async (req) => {
     const transformedBundles = filteredBundles.map(bundle => ({
       id: bundle.id,
       isUniversal: bundle.is_universal || false,
+      showRestrictionAnnotationsTooltips: bundle.show_restriction_annotations_tooltips ?? false,
+      showRestrictionAreaWarning:         bundle.show_restriction_area_warning ?? false,
       front_template: {
         id:                   bundle.front.id,
         postgrid_template_id: bundle.front.postgrid_template_id,

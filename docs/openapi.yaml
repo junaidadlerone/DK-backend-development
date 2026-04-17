@@ -12365,7 +12365,7 @@ paths:
         **Business Rules:**
         - Requires bundle ID and PostGrid API key
         - Bundle must belong to user's organization (or be universal and user is ADMIN)
-        - Can update html_front, html_back, and/or description
+        - Can update html_front, html_back, description, postcardSize, and/or restriction UI flags
         - Updates PostGrid templates first, then database
         - Description changes automatically append " Front" and " Back"
 
@@ -12412,12 +12412,20 @@ paths:
                     - 6x9
                     - 6x11
                   description: Size of the postcard. Updates both front and back templates.
+                show_restriction_annotations_tooltips:
+                  type: boolean
+                  description: When true, the UI displays tooltips for restriction annotation markers on the template. (optional)
+                show_restriction_area_warning:
+                  type: boolean
+                  description: When true, the UI displays a warning banner for restricted areas on the template. (optional)
             example:
               postgridApiKey: "test_sk_..."
               template_bundle_id: "550e8400-e29b-41d4-a716-446655440000"
               html_front: "<h1>Updated Front</h1>"
               description: "Fall Campaign"
               postcardSize: "6x9"
+              show_restriction_annotations_tooltips: true
+              show_restriction_area_warning: false
       responses:
         "200":
           description: Template bundle updated successfully
@@ -12672,6 +12680,14 @@ paths:
                           format: uuid
                         isUniversal:
                           type: boolean
+                        showRestrictionAnnotationsTooltips:
+                          type: boolean
+                          description: When true, the UI displays tooltips for restriction annotation markers on the template.
+                          default: false
+                        showRestrictionAreaWarning:
+                          type: boolean
+                          description: When true, the UI displays a warning banner for restricted areas on the template.
+                          default: false
                         front_template:
                           type: object
                           description: Front template details with timezone-enriched timestamps
@@ -12800,6 +12816,14 @@ paths:
                             nullable: true
                           is_universal:
                             type: boolean
+                          show_restriction_annotations_tooltips:
+                            type: boolean
+                            description: When true, the UI displays tooltips for restriction annotation markers on the template.
+                            default: false
+                          show_restriction_area_warning:
+                            type: boolean
+                            description: When true, the UI displays a warning banner for restricted areas on the template.
+                            default: false
                           created_at:
                             type: string
                             format: date-time
@@ -12820,6 +12844,8 @@ paths:
                     id: "550e8400-e29b-41d4-a716-446655440000"
                     organization_id: "660e8400-e29b-41d4-a716-446655440001"
                     is_universal: false
+                    show_restriction_annotations_tooltips: false
+                    show_restriction_area_warning: false
                     created_at: "2025-01-15T10:30:00Z"
                     updated_at: "2025-01-15T10:30:00Z"
                   front_template:
