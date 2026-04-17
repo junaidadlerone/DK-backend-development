@@ -66,7 +66,8 @@ Deno.serve(async (req) => {
 
     // 3. Logic for verification flags
     const verified_address_count = addresses.filter(addr => addr.is_reachable === true).length;
-    const verification_performed = addresses.some(addr => (addr.is_reachable !== undefined));
+    // null is the import-time placeholder; only true/false means the WS step actually ran
+    const verification_performed = addresses.some(addr => addr.is_reachable === true || addr.is_reachable === false);
 
     return successResponse({
       id: list.id,
