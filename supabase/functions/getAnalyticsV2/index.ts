@@ -58,7 +58,7 @@ type WasteMeterStatus = "Healthy" | "At Risk" | "Critical";
 
 interface AnalyticsV2Request {
   type: string;
-  campaign_id?: string;
+  campaign_ids?: string[];
   last_24hours?: boolean;
   last_week?: boolean;
   last_month?: boolean;
@@ -66,20 +66,20 @@ interface AnalyticsV2Request {
 
 /**
  * Optional filters that can be applied to any analytics type.
- * campaign_id — scope results to a single campaign (must belong to the org).
- * since       — ISO 8601 cutoff; only include records/events at or after this time.
- *               Derived from last_24hours / last_week / last_month flags (mutually exclusive,
- *               most restrictive flag wins: 24h > week > month).
+ * campaign_ids — scope results to one or more campaigns (must belong to the org).
+ * since        — ISO 8601 cutoff; only include records/events at or after this time.
+ *                Derived from last_24hours / last_week / last_month flags (mutually exclusive,
+ *                most restrictive flag wins: 24h > week > month).
  */
 interface AnalyticsFilters {
-  campaign_id?: string;
+  campaign_ids?: string[];
   since?: string;
 }
 
 function parseFilters(body: AnalyticsV2Request): AnalyticsFilters {
   const filters: AnalyticsFilters = {};
-  if (body.campaign_id && typeof body.campaign_id === "string") {
-    filters.campaign_id = body.campaign_id;
+  if (Array.isArray(body.campaign_ids) && body.campaign_ids.length > 0) {
+    filters.campaign_ids = body.campaign_ids;
   }
   const now = Date.now();
   if (body.last_24hours === true) {
@@ -317,9 +317,9 @@ async function computeDashboardCards(
     .select("amount_paid")
     .eq("organization_id", organizationId);
 
-  if (filters.campaign_id) {
-    postcardsQuery = postcardsQuery.eq("campaign_id", filters.campaign_id);
-    paymentsQuery = paymentsQuery.eq("campaign_id", filters.campaign_id);
+  if (filters.campaign_ids) {
+    postcardsQuery = postcardsQuery.in("campaign_id", filters.campaign_ids);
+    paymentsQuery = paymentsQuery.in("campaign_id", filters.campaign_ids);
   }
   if (filters.since) {
     postcardsQuery = postcardsQuery.gte("created_at", filters.since);
@@ -405,7 +405,7 @@ async function computeDeliveryFunnel(
     .from("postcard_sends")
     .select("postgrid_status, imb_status")
     .eq("organization_id", organizationId);
-  if (filters.campaign_id) query = query.eq("campaign_id", filters.campaign_id);
+  if (filters.campaign_ids) query = query.in("campaign_id", filters.campaign_ids);
   if (filters.since) query = query.gte("created_at", filters.since);
   const { data: rows, error } = await query;
 
@@ -536,7 +536,7 @@ async function computeWasteMeter(
     .from("postcard_sends")
     .select("postgrid_status, imb_status, created_at")
     .eq("organization_id", organizationId);
-  if (filters.campaign_id) query = query.eq("campaign_id", filters.campaign_id);
+  if (filters.campaign_ids) query = query.in("campaign_id", filters.campaign_ids);
   if (filters.since) query = query.gte("created_at", filters.since);
   const { data: rows, error } = await query;
 
@@ -642,14 +642,14 @@ async function computeScanTrend(
     .select("id, postgrid_tracker_id")
     .eq("organization_id", organizationId)
     .not("postgrid_tracker_id", "is", null);
-  if (filters.campaign_id) campaignsQuery = campaignsQuery.eq("id", filters.campaign_id);
+  if (filters.campaign_ids) campaignsQuery = campaignsQuery.in("id", filters.campaign_ids);
 
-  // Total postcards denominator also respects campaign_id filter
+  // Total postcards denominator also respects campaign_ids filter
   let postcardsQuery = supabase
     .from("postcard_sends")
     .select("id", { count: "exact", head: true })
     .eq("organization_id", organizationId);
-  if (filters.campaign_id) postcardsQuery = postcardsQuery.eq("campaign_id", filters.campaign_id);
+  if (filters.campaign_ids) postcardsQuery = postcardsQuery.in("campaign_id", filters.campaign_ids);
 
   const [campaignsResult, postcardsResult] = await Promise.all([
     campaignsQuery,
@@ -767,7 +767,7 @@ async function computeScanTrend(
 // ---------------------------------------------------------------------------
 
 // Max scan events fetched from PostGrid per tracker (most recent first)
-const RECENT_SCANS_LIMIT = 10;
+const RECENT_SCANS_LIMIT = 5;
 
 /**
  * Converts an ISO timestamp to a human-readable relative string.
@@ -820,7 +820,7 @@ async function computeRecentScans(
     .select("id, campaign_name, postgrid_tracker_id")
     .eq("organization_id", organizationId)
     .not("postgrid_tracker_id", "is", null);
-  if (filters.campaign_id) campaignsQuery = campaignsQuery.eq("id", filters.campaign_id);
+  if (filters.campaign_ids) campaignsQuery = campaignsQuery.in("id", filters.campaign_ids);
   const { data: campaigns, error: campaignsError } = await campaignsQuery;
 
   if (campaignsError) {
@@ -845,7 +845,7 @@ async function computeRecentScans(
     .eq("organization_id", organizationId)
     .order("campaign_id", { ascending: true })
     .order("created_at", { ascending: true });
-  if (filters.campaign_id) sendsQuery = sendsQuery.eq("campaign_id", filters.campaign_id);
+  if (filters.campaign_ids) sendsQuery = sendsQuery.in("campaign_id", filters.campaign_ids);
   const { data: sends, error: sendsError } = await sendsQuery;
 
   if (sendsError) {
@@ -981,7 +981,7 @@ async function computeCampaignLeaderboard(
     .select("id, campaign_name, postgrid_tracker_id, postcards_sent")
     .eq("organization_id", organizationId)
     .not("postgrid_tracker_id", "is", null);
-  if (filters.campaign_id) campaignsQuery = campaignsQuery.eq("id", filters.campaign_id);
+  if (filters.campaign_ids) campaignsQuery = campaignsQuery.in("id", filters.campaign_ids);
   const { data: campaigns, error: campaignsError } = await campaignsQuery;
 
   if (campaignsError) {

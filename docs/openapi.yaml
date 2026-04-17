@@ -9785,15 +9785,17 @@ paths:
                     - `delivery_funnel` — full PostGrid status breakdown as percentages
                     - `waste_meter` — wasted/delayed postcard counts + dollar costs + risk status
                     - `scan_trend` — QR scan totals, unique scans, scan rate, day-of-week breakdown
-                    - `recent_scans` — 10 most recent QR scans per campaign with address and timestamp
+                    - `recent_scans` — 5 most recent QR scans per campaign with address and timestamp
                     - `campaign_leaderboard` — top 5 campaigns ranked by total QR scans
-                campaign_id:
-                  type: string
-                  format: uuid
+                campaign_ids:
+                  type: array
+                  items:
+                    type: string
+                    format: uuid
                   description: |
-                    **Optional.** Scope results to a single campaign. The campaign must belong to
+                    **Optional.** Scope results to one or more campaigns. All IDs must belong to
                     the authenticated user's organization. When omitted, all campaigns are included.
-                  example: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+                  example: ["a1b2c3d4-e5f6-7890-abcd-ef1234567890", "b2c3d4e5-f6a7-8901-bcde-f12345678901"]
                 last_24hours:
                   type: boolean
                   description: |
@@ -9817,10 +9819,10 @@ paths:
                 value:
                   type: "dashboard_cards"
               dashboard_cards_filtered:
-                summary: "dashboard_cards — single campaign, last week"
+                summary: "dashboard_cards — multiple campaigns, last week"
                 value:
                   type: "dashboard_cards"
-                  campaign_id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+                  campaign_ids: ["a1b2c3d4-e5f6-7890-abcd-ef1234567890", "b2c3d4e5-f6a7-8901-bcde-f12345678901"]
                   last_week: true
               delivery_funnel:
                 summary: "delivery_funnel — full status percentage breakdown"
@@ -9831,10 +9833,10 @@ paths:
                 value:
                   type: "waste_meter"
               waste_meter_campaign:
-                summary: "waste_meter — single campaign, last month"
+                summary: "waste_meter — multiple campaigns, last month"
                 value:
                   type: "waste_meter"
-                  campaign_id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+                  campaign_ids: ["a1b2c3d4-e5f6-7890-abcd-ef1234567890", "b2c3d4e5-f6a7-8901-bcde-f12345678901"]
                   last_month: true
               scan_trend:
                 summary: "scan_trend — QR code scan activity by day of week"
@@ -9850,10 +9852,10 @@ paths:
                 value:
                   type: "recent_scans"
               recent_scans_campaign:
-                summary: "recent_scans — single campaign, last week"
+                summary: "recent_scans — multiple campaigns, last week"
                 value:
                   type: "recent_scans"
-                  campaign_id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+                  campaign_ids: ["a1b2c3d4-e5f6-7890-abcd-ef1234567890", "b2c3d4e5-f6a7-8901-bcde-f12345678901"]
                   last_week: true
               campaign_leaderboard:
                 summary: "campaign_leaderboard — top 5 campaigns by QR scan count"
