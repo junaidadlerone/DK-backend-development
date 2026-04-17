@@ -148,13 +148,10 @@ Deno.serve(async (req) => {
     }
 
     // 3. Save
-    const validatedAddressList = addresses.filter(a => a.is_valid && a.is_included && !a.is_deleted);
-
     const { error: updateError } = await supabase
         .from("campaign_csv_address_lists")
         .update({
             addresses,
-            validated_address_list: validatedAddressList,
             center,
             zone_name,
             is_editing: false,

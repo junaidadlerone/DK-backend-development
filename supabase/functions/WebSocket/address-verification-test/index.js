@@ -548,10 +548,8 @@ async function verifyCSVAddresses(ws, list_id, apiKey, supabaseAnonKey, showOnly
         const record = results[0];
         const allAddresses = record.addresses || [];
 
-        // Use validated_address_list (already filtered) for processing, fallback to filtered addresses
-        const addresses = (record.validated_address_list && record.validated_address_list.length > 0)
-            ? record.validated_address_list
-            : allAddresses.filter(addr => !addr.is_deleted);
+        // Use record.addresses directly, filtering out deleted entries
+        const addresses = allAddresses.filter(addr => !addr.is_deleted);
 
         // Extract skip_verification flag from record
         const skipVerification = getSkipVerificationFlag(record);
@@ -646,7 +644,6 @@ async function verifyCSVAddresses(ws, list_id, apiKey, supabaseAnonKey, showOnly
             },
             body: JSON.stringify({
                 addresses: finalAddresses,
-                validated_address_list: verifiedAddresses,
                 skip_address_verification: false,
                 updated_at: new Date().toISOString()
             })

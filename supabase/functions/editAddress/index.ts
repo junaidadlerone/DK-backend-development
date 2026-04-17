@@ -2,7 +2,7 @@ import { corsResponse, errorResponse, successResponse } from "../_shared/respons
 import { createSupabaseClient } from "../_shared/client.ts";
 import { getUserFromRequest } from "../_shared/history.ts";
 import { getUserOrganizationId } from "../_shared/organization.ts";
-import { AddressRow, ValidatedAddress, AddressListMetadata as _AddressListMetadata } from "../_shared/addressLists.ts";
+import { AddressRow, AddressListMetadata as _AddressListMetadata } from "../_shared/addressLists.ts";
 
 /**
  * Edit Address Edge Function
@@ -116,13 +116,6 @@ Deno.serve(async (req) => {
     }
 
     addresses[index] = updatedRow;
-    
-    // Also update validated_address_list if it exists to keep them in sync
-    const validatedAddresses: ValidatedAddress[] = list.validated_address_list || [];
-    const valIndex = validatedAddresses.findIndex(v => (v.id === address_id || v.row_id === address_id));
-    if (valIndex !== -1) {
-        validatedAddresses[valIndex] = { ...updatedRow, row_id: address_id };
-    }
 
     // 4. Update metadata
     const validCount = addresses.filter(r => r.status === "valid").length;
@@ -155,7 +148,6 @@ Deno.serve(async (req) => {
         .from("campaign_csv_address_lists")
         .update({
             addresses,
-            validated_address_list: validatedAddresses,
             metadata: newMetadata,
             operation_history: updatedHistory,
             updated_at: new Date().toISOString()

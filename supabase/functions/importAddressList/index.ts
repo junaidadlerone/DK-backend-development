@@ -267,7 +267,6 @@ Deno.serve(async (req) => {
             list_name,
             original_filename: filename,
             addresses: results,
-            validated_address_list: [], // Clear old validated addresses
             center: null,               // Clear old center point
             operation_history: updatedHistory,
             metadata: { 
@@ -297,7 +296,6 @@ Deno.serve(async (req) => {
             list_name,
             original_filename: filename,
             addresses: results,
-            validated_address_list: [], 
             center: null,
             operation_history: [newOperation],
             metadata: { 
