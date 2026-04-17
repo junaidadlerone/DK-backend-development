@@ -36,7 +36,9 @@ import { enrichCurrency } from "../_shared/currency.ts";
  * - dashboard_cards: in_flight_postcards, delivered, delivery_rate, spent_to_date
  * - delivery_funnel: full status breakdown as percentages of total_postcards_sent
  * - waste_meter:     wasted, returned, cancelled, and delayed postcard counts + dollar costs
- * - scan_trend:      QR code scan totals, unique scans, scan rate, and day-of-week breakdown
+ * - scan_trend:         QR code scan totals, unique scans, scan rate, and day-of-week breakdown
+ * - recent_scans:       per-campaign list of recent QR scans with postcard info and timestamp
+ * - campaign_leaderboard: top 5 campaigns ranked by total QR scans
  */
 
 // Standard PostGrid `status` values that mean the postcard is still in motion
@@ -56,6 +58,38 @@ type WasteMeterStatus = "Healthy" | "At Risk" | "Critical";
 
 interface AnalyticsV2Request {
   type: string;
+  campaign_id?: string;
+  last_24hours?: boolean;
+  last_week?: boolean;
+  last_month?: boolean;
+}
+
+/**
+ * Optional filters that can be applied to any analytics type.
+ * campaign_id — scope results to a single campaign (must belong to the org).
+ * since       — ISO 8601 cutoff; only include records/events at or after this time.
+ *               Derived from last_24hours / last_week / last_month flags (mutually exclusive,
+ *               most restrictive flag wins: 24h > week > month).
+ */
+interface AnalyticsFilters {
+  campaign_id?: string;
+  since?: string;
+}
+
+function parseFilters(body: AnalyticsV2Request): AnalyticsFilters {
+  const filters: AnalyticsFilters = {};
+  if (body.campaign_id && typeof body.campaign_id === "string") {
+    filters.campaign_id = body.campaign_id;
+  }
+  const now = Date.now();
+  if (body.last_24hours === true) {
+    filters.since = new Date(now - 86_400_000).toISOString();
+  } else if (body.last_week === true) {
+    filters.since = new Date(now - 7 * 86_400_000).toISOString();
+  } else if (body.last_month === true) {
+    filters.since = new Date(now - 30 * 86_400_000).toISOString();
+  }
+  return filters;
 }
 
 interface DashboardCardsData {
@@ -115,6 +149,34 @@ interface ScanTrendData {
   };
 }
 
+interface RecentScanEvent {
+  postcard_number: number;
+  scan_address: string;
+  scan_time_stamp: string;
+}
+
+interface CampaignRecentScans {
+  campaign_id: string;
+  campaign_name: string;
+  scans: RecentScanEvent[];
+}
+
+interface RecentScansData {
+  data: CampaignRecentScans[];
+}
+
+interface LeaderboardEntry {
+  campaign_name: string;
+  total_scans: number;
+  total_postcards_sent: number;
+  scan_rate: number;
+  ranking_position: number;
+}
+
+interface CampaignLeaderboardData {
+  leaderboard: LeaderboardEntry[];
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return corsResponse();
@@ -155,11 +217,12 @@ Deno.serve(async (req) => {
     }
 
     const analyticsType = type.toLowerCase();
+    const filters = parseFilters(body);
 
     switch (analyticsType) {
       case "dashboard_cards": {
         const preferences = await getUserPreferences(supabase, user.userId);
-        const data = await computeDashboardCards(supabase, organizationId, preferences);
+        const data = await computeDashboardCards(supabase, organizationId, preferences, filters);
         return successResponse({
           status: "success",
           message: "Analytics computed successfully",
@@ -168,7 +231,7 @@ Deno.serve(async (req) => {
       }
 
       case "delivery_funnel": {
-        const data = await computeDeliveryFunnel(supabase, organizationId);
+        const data = await computeDeliveryFunnel(supabase, organizationId, filters);
         return successResponse({
           status: "success",
           message: "Analytics computed successfully",
@@ -178,7 +241,7 @@ Deno.serve(async (req) => {
 
       case "waste_meter": {
         const preferences = await getUserPreferences(supabase, user.userId);
-        const data = await computeWasteMeter(supabase, organizationId, preferences);
+        const data = await computeWasteMeter(supabase, organizationId, preferences, filters);
         return successResponse({
           status: "success",
           message: "Analytics computed successfully",
@@ -187,7 +250,25 @@ Deno.serve(async (req) => {
       }
 
       case "scan_trend": {
-        const data = await computeScanTrend(supabase, organizationId);
+        const data = await computeScanTrend(supabase, organizationId, filters);
+        return successResponse({
+          status: "success",
+          message: "Analytics computed successfully",
+          data,
+        }, 200);
+      }
+
+      case "recent_scans": {
+        const data = await computeRecentScans(supabase, organizationId, filters);
+        return successResponse({
+          status: "success",
+          message: "Analytics computed successfully",
+          data,
+        }, 200);
+      }
+
+      case "campaign_leaderboard": {
+        const data = await computeCampaignLeaderboard(supabase, organizationId, filters);
         return successResponse({
           status: "success",
           message: "Analytics computed successfully",
@@ -198,7 +279,7 @@ Deno.serve(async (req) => {
       default:
         return errorResponse(
           "INVALID_TYPE",
-          `Analytics type "${type}" is not supported. Supported types: dashboard_cards, delivery_funnel, waste_meter, scan_trend`,
+          `Analytics type "${type}" is not supported. Supported types: dashboard_cards, delivery_funnel, waste_meter, scan_trend, recent_scans, campaign_leaderboard`,
           400,
         );
     }
@@ -225,16 +306,29 @@ async function computeDashboardCards(
   supabase: any,
   organizationId: string,
   preferences: any,
+  filters: AnalyticsFilters,
 ): Promise<DashboardCardsData> {
+  let postcardsQuery = supabase
+    .from("postcard_sends")
+    .select("postgrid_status")
+    .eq("organization_id", organizationId);
+  let paymentsQuery = supabase
+    .from("payment_history")
+    .select("amount_paid")
+    .eq("organization_id", organizationId);
+
+  if (filters.campaign_id) {
+    postcardsQuery = postcardsQuery.eq("campaign_id", filters.campaign_id);
+    paymentsQuery = paymentsQuery.eq("campaign_id", filters.campaign_id);
+  }
+  if (filters.since) {
+    postcardsQuery = postcardsQuery.gte("created_at", filters.since);
+    paymentsQuery = paymentsQuery.gte("created_at", filters.since);
+  }
+
   const [postcardsResult, paymentsResult] = await Promise.all([
-    supabase
-      .from("postcard_sends")
-      .select("postgrid_status")
-      .eq("organization_id", organizationId),
-    supabase
-      .from("payment_history")
-      .select("amount_paid")
-      .eq("organization_id", organizationId),
+    postcardsQuery,
+    paymentsQuery,
   ]);
 
   if (postcardsResult.error) {
@@ -305,11 +399,15 @@ async function computeDashboardCards(
 async function computeDeliveryFunnel(
   supabase: any,
   organizationId: string,
+  filters: AnalyticsFilters,
 ): Promise<DeliveryFunnelData> {
-  const { data: rows, error } = await supabase
+  let query = supabase
     .from("postcard_sends")
     .select("postgrid_status, imb_status")
     .eq("organization_id", organizationId);
+  if (filters.campaign_id) query = query.eq("campaign_id", filters.campaign_id);
+  if (filters.since) query = query.gte("created_at", filters.since);
+  const { data: rows, error } = await query;
 
   if (error) {
     console.error("Error fetching postcard_sends for delivery funnel:", error);
@@ -432,11 +530,15 @@ async function computeWasteMeter(
   supabase: any,
   organizationId: string,
   preferences: any,
+  filters: AnalyticsFilters,
 ): Promise<WasteMeterData> {
-  const { data: rows, error } = await supabase
+  let query = supabase
     .from("postcard_sends")
     .select("postgrid_status, imb_status, created_at")
     .eq("organization_id", organizationId);
+  if (filters.campaign_id) query = query.eq("campaign_id", filters.campaign_id);
+  if (filters.since) query = query.gte("created_at", filters.since);
+  const { data: rows, error } = await query;
 
   if (error) {
     console.error("Error fetching postcard_sends for waste_meter:", error);
@@ -518,6 +620,7 @@ const POSTGRID_TRACKER_BASE_URL = "https://api.postgrid.com/print-mail/v1/tracke
 async function computeScanTrend(
   supabase: any,
   organizationId: string,
+  filters: AnalyticsFilters,
 ): Promise<ScanTrendData> {
   const postgridApiKey =
     Deno.env.get("POSTGRID_POSTCARD_API_KEY") ??
@@ -533,17 +636,24 @@ async function computeScanTrend(
     sunday_scans: 0,
   };
 
-  // Fetch campaigns with trackers and total postcards sent in parallel
+  // Scope campaigns to a specific one if campaign_id filter provided
+  let campaignsQuery = supabase
+    .from("campaigns")
+    .select("id, postgrid_tracker_id")
+    .eq("organization_id", organizationId)
+    .not("postgrid_tracker_id", "is", null);
+  if (filters.campaign_id) campaignsQuery = campaignsQuery.eq("id", filters.campaign_id);
+
+  // Total postcards denominator also respects campaign_id filter
+  let postcardsQuery = supabase
+    .from("postcard_sends")
+    .select("id", { count: "exact", head: true })
+    .eq("organization_id", organizationId);
+  if (filters.campaign_id) postcardsQuery = postcardsQuery.eq("campaign_id", filters.campaign_id);
+
   const [campaignsResult, postcardsResult] = await Promise.all([
-    supabase
-      .from("campaigns")
-      .select("id, postgrid_tracker_id")
-      .eq("organization_id", organizationId)
-      .not("postgrid_tracker_id", "is", null),
-    supabase
-      .from("postcard_sends")
-      .select("id", { count: "exact", head: true })
-      .eq("organization_id", organizationId),
+    campaignsQuery,
+    postcardsQuery,
   ]);
 
   if (campaignsResult.error) {
@@ -564,44 +674,72 @@ async function computeScanTrend(
   let totalScans = 0;
   let uniqueScans = 0;
 
-  await Promise.all(
-    campaigns.map(async (campaign) => {
-      try {
-        const response = await fetch(
-          `${POSTGRID_TRACKER_BASE_URL}/${campaign.postgrid_tracker_id}`,
-          { headers: { "x-api-key": postgridApiKey } },
-        );
-
-        if (!response.ok) {
-          console.warn(
-            `[scan_trend] PostGrid ${response.status} for tracker ${campaign.postgrid_tracker_id}`,
+  if (filters.since) {
+    // Time-filtered path: use /visits endpoint, filter by createdAt in-memory.
+    // unique_scans = distinct orderId values (unique postcards scanned in window).
+    await Promise.all(
+      campaigns.map(async (campaign) => {
+        try {
+          const response = await fetch(
+            `${POSTGRID_TRACKER_BASE_URL}/${campaign.postgrid_tracker_id}/visits?limit=1000&skip=0`,
+            { headers: { "x-api-key": postgridApiKey } },
           );
-          return;
+          if (!response.ok) return;
+          const result = await response.json();
+          const visits: Array<Record<string, any>> = Array.isArray(result.data)
+            ? result.data
+            : Array.isArray(result)
+            ? result
+            : [];
+
+          const filtered = visits.filter((v) => {
+            const ts = v.createdAt ?? v.created_at;
+            return ts && ts >= filters.since!;
+          });
+
+          totalScans += filtered.length;
+
+          const seenOrders = new Set<string>();
+          for (const v of filtered) {
+            const ts = v.createdAt ?? v.created_at;
+            if (ts) dayCounts[new Date(ts).getDay()]++;
+            const oid = v.orderId ?? v.order_id;
+            if (oid) seenOrders.add(oid);
+          }
+          uniqueScans += seenOrders.size;
+        } catch (err) {
+          console.error(`[scan_trend] Failed for tracker ${campaign.postgrid_tracker_id}:`, err);
         }
-
-        const data = await response.json();
-
-        totalScans += data.visitCount ?? 0;
-        uniqueScans += data.uniqueVisitCount ?? 0;
-
-        // Aggregate per-click timestamps into day-of-week buckets
-        if (Array.isArray(data.clicks)) {
-          for (const click of data.clicks) {
-            const ts = click.createdAt ?? click.timestamp;
-            if (ts) {
-              const day = new Date(ts).getDay(); // 0=Sun … 6=Sat
-              dayCounts[day]++;
+      }),
+    );
+  } else {
+    // No time filter: use tracker summary for totals, embedded clicks for breakdown.
+    await Promise.all(
+      campaigns.map(async (campaign) => {
+        try {
+          const response = await fetch(
+            `${POSTGRID_TRACKER_BASE_URL}/${campaign.postgrid_tracker_id}`,
+            { headers: { "x-api-key": postgridApiKey } },
+          );
+          if (!response.ok) {
+            console.warn(`[scan_trend] PostGrid ${response.status} for tracker ${campaign.postgrid_tracker_id}`);
+            return;
+          }
+          const data = await response.json();
+          totalScans += data.visitCount ?? 0;
+          uniqueScans += data.uniqueVisitCount ?? 0;
+          if (Array.isArray(data.clicks)) {
+            for (const click of data.clicks) {
+              const ts = click.createdAt ?? click.timestamp;
+              if (ts) dayCounts[new Date(ts).getDay()]++;
             }
           }
+        } catch (err) {
+          console.error(`[scan_trend] Failed for tracker ${campaign.postgrid_tracker_id}:`, err);
         }
-      } catch (err) {
-        console.error(
-          `[scan_trend] Failed to fetch tracker ${campaign.postgrid_tracker_id}:`,
-          err,
-        );
-      }
-    }),
-  );
+      }),
+    );
+  }
 
   const scanRate =
     totalPostcardsSent > 0
@@ -622,4 +760,315 @@ async function computeScanTrend(
       saturday_scans: dayCounts[6],
     },
   };
+}
+
+// ---------------------------------------------------------------------------
+// Recent Scans
+// ---------------------------------------------------------------------------
+
+// Max scan events fetched from PostGrid per tracker (most recent first)
+const RECENT_SCANS_LIMIT = 10;
+
+/**
+ * Converts an ISO timestamp to a human-readable relative string.
+ * e.g. "just now", "5 minutes ago", "2 hours ago", "3 days ago"
+ */
+function timeAgo(isoString: string): string {
+  const diffMs = Date.now() - new Date(isoString).getTime();
+  const minutes = Math.floor(diffMs / 60_000);
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes} minute${minutes === 1 ? "" : "s"} ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} hour${hours === 1 ? "" : "s"} ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 30) return `${days} day${days === 1 ? "" : "s"} ago`;
+  const months = Math.floor(days / 30);
+  return `${months} month${months === 1 ? "" : "s"} ago`;
+}
+
+/**
+ * Compute Recent Scans Analytics
+ *
+ * Returns the most recent QR code scan events per campaign for this organization.
+ * Each scan is enriched with the delivery address and a human-readable timestamp.
+ *
+ * Data flow:
+ * 1. Fetch campaigns with postgrid_tracker_id from DB
+ * 2. Fetch all postcard_sends for the org → build two lookup maps:
+ *      postgrid_postcard_id → delivery address
+ *      postgrid_postcard_id → sequential postcard number within that campaign
+ * 3. For each campaign, call PostGrid GET /trackers/{id}/visits (up to RECENT_SCANS_LIMIT)
+ * 4. Join each visit's orderId to the postcard_sends lookup
+ *      scan_address    = postcard_sends.address (the household the card was mailed to)
+ *      postcard_number = sequential row number within the campaign (ordered by created_at)
+ *      scan_time_stamp = timeAgo(visit.createdAt)
+ * 5. Only include campaigns that have at least one scan
+ * 6. Sort campaigns by most recent scan descending
+ */
+async function computeRecentScans(
+  supabase: any,
+  organizationId: string,
+  filters: AnalyticsFilters,
+): Promise<RecentScansData> {
+  const postgridApiKey =
+    Deno.env.get("POSTGRID_POSTCARD_API_KEY") ??
+    Deno.env.get("VITE_POSTGRID_POSTCARD_API_KEY");
+
+  // 1. Fetch campaigns with trackers (scope to campaign_id if provided)
+  let campaignsQuery = supabase
+    .from("campaigns")
+    .select("id, campaign_name, postgrid_tracker_id")
+    .eq("organization_id", organizationId)
+    .not("postgrid_tracker_id", "is", null);
+  if (filters.campaign_id) campaignsQuery = campaignsQuery.eq("id", filters.campaign_id);
+  const { data: campaigns, error: campaignsError } = await campaignsQuery;
+
+  if (campaignsError) {
+    console.error("Error fetching campaigns for recent_scans:", campaignsError);
+    throw new Error("Failed to fetch campaign data");
+  }
+
+  const campaignList: Array<{
+    id: string;
+    campaign_name: string;
+    postgrid_tracker_id: string;
+  }> = campaigns ?? [];
+
+  if (campaignList.length === 0 || !postgridApiKey) {
+    return { data: [] };
+  }
+
+  // 2. Fetch postcard_sends for address/number lookup — scope to campaign if filtered
+  let sendsQuery = supabase
+    .from("postcard_sends")
+    .select("postgrid_postcard_id, campaign_id, address, created_at")
+    .eq("organization_id", organizationId)
+    .order("campaign_id", { ascending: true })
+    .order("created_at", { ascending: true });
+  if (filters.campaign_id) sendsQuery = sendsQuery.eq("campaign_id", filters.campaign_id);
+  const { data: sends, error: sendsError } = await sendsQuery;
+
+  if (sendsError) {
+    console.error("Error fetching postcard_sends for recent_scans:", sendsError);
+    throw new Error("Failed to fetch postcard data");
+  }
+
+  // postcardId → delivery address
+  const addressMap = new Map<string, string>();
+  // postcardId → sequential number within campaign (1-based)
+  const numberMap = new Map<string, number>();
+  const campaignCounters = new Map<string, number>();
+
+  for (const row of sends ?? []) {
+    const n = (campaignCounters.get(row.campaign_id) ?? 0) + 1;
+    campaignCounters.set(row.campaign_id, n);
+    numberMap.set(row.postgrid_postcard_id, n);
+    if (row.address) addressMap.set(row.postgrid_postcard_id, row.address);
+  }
+
+  // 3. Fetch visits from PostGrid for each campaign in parallel
+  const campaignScans: CampaignRecentScans[] = [];
+
+  await Promise.all(
+    campaignList.map(async (campaign) => {
+      try {
+        const response = await fetch(
+          `${POSTGRID_TRACKER_BASE_URL}/${campaign.postgrid_tracker_id}/visits?limit=${RECENT_SCANS_LIMIT}&skip=0`,
+          { headers: { "x-api-key": postgridApiKey } },
+        );
+
+        if (!response.ok) {
+          console.warn(
+            `[recent_scans] PostGrid ${response.status} for tracker ${campaign.postgrid_tracker_id}`,
+          );
+          return;
+        }
+
+        const result = await response.json();
+        // PostGrid list responses wrap items in a `data` array
+        let visits: Array<Record<string, any>> = Array.isArray(result.data)
+          ? result.data
+          : Array.isArray(result)
+          ? result
+          : [];
+
+        // Apply time filter if provided
+        if (filters.since) {
+          visits = visits.filter((v) => {
+            const ts = v.createdAt ?? v.created_at;
+            return ts && ts >= filters.since!;
+          });
+        }
+
+        if (visits.length === 0) return;
+
+        const scans: RecentScanEvent[] = visits.map((visit, index) => {
+          const orderId: string | undefined = visit.orderId ?? visit.order_id ?? visit.order;
+          const ts: string = visit.createdAt ?? visit.created_at ?? "";
+
+          // Postcard number from our DB lookup, fallback to visit index
+          const postcardNumber = orderId
+            ? (numberMap.get(orderId) ?? index + 1)
+            : index + 1;
+
+          // Delivery address from our DB, fallback to any geo PostGrid provides
+          const address = (orderId && addressMap.get(orderId))
+            ?? [visit.city, visit.region ?? visit.state]
+              .filter(Boolean)
+              .join(", ")
+            ?? "Unknown";
+
+          return {
+            postcard_number: postcardNumber,
+            scan_address: address,
+            scan_time_stamp: ts ? timeAgo(ts) : "Unknown",
+          };
+        });
+
+        campaignScans.push({
+          campaign_id: campaign.id,
+          campaign_name: campaign.campaign_name,
+          scans,
+        });
+      } catch (err) {
+        console.error(
+          `[recent_scans] Failed for tracker ${campaign.postgrid_tracker_id}:`,
+          err,
+        );
+      }
+    }),
+  );
+
+  // Sort campaigns: most recent scan first (visits are already ordered by PostGrid descending)
+  campaignScans.sort((a, b) => b.scans.length - a.scans.length);
+
+  return { data: campaignScans };
+}
+
+// ---------------------------------------------------------------------------
+// Campaign Leaderboard
+// ---------------------------------------------------------------------------
+
+const LEADERBOARD_SIZE = 5;
+
+/**
+ * Compute Campaign Leaderboard Analytics
+ *
+ * Returns the top 5 campaigns for this organization ranked by total QR scans.
+ *
+ * Data flow:
+ * 1. Fetch all campaigns with postgrid_tracker_id, campaign_name, postcards_sent
+ * 2. For each campaign call PostGrid GET /trackers/{id} → read visitCount
+ * 3. Sort by visitCount descending, take top LEADERBOARD_SIZE
+ * 4. Assign ranking_position 1–N
+ * 5. Compute scan_rate = (total_scans / total_postcards_sent) * 100
+ *
+ * Campaigns without a tracker or with zero scans are excluded from the board.
+ * total_postcards_sent comes from campaigns.postcards_sent (maintained by
+ * updatePostCardsSentCount after each campaign send).
+ */
+async function computeCampaignLeaderboard(
+  supabase: any,
+  organizationId: string,
+  filters: AnalyticsFilters,
+): Promise<CampaignLeaderboardData> {
+  const postgridApiKey =
+    Deno.env.get("POSTGRID_POSTCARD_API_KEY") ??
+    Deno.env.get("VITE_POSTGRID_POSTCARD_API_KEY");
+
+  let campaignsQuery = supabase
+    .from("campaigns")
+    .select("id, campaign_name, postgrid_tracker_id, postcards_sent")
+    .eq("organization_id", organizationId)
+    .not("postgrid_tracker_id", "is", null);
+  if (filters.campaign_id) campaignsQuery = campaignsQuery.eq("id", filters.campaign_id);
+  const { data: campaigns, error: campaignsError } = await campaignsQuery;
+
+  if (campaignsError) {
+    console.error("Error fetching campaigns for campaign_leaderboard:", campaignsError);
+    throw new Error("Failed to fetch campaign data");
+  }
+
+  const campaignList: Array<{
+    id: string;
+    campaign_name: string;
+    postgrid_tracker_id: string;
+    postcards_sent: number | null;
+  }> = campaigns ?? [];
+
+  if (campaignList.length === 0 || !postgridApiKey) {
+    return { leaderboard: [] };
+  }
+
+  // Fetch scan counts — use visits endpoint when time filter is set, tracker summary otherwise
+  const entries: Array<Omit<LeaderboardEntry, "ranking_position">> = [];
+
+  await Promise.all(
+    campaignList.map(async (campaign) => {
+      try {
+        let totalScans = 0;
+
+        if (filters.since) {
+          // Time-filtered: fetch visits and count those within the window
+          const response = await fetch(
+            `${POSTGRID_TRACKER_BASE_URL}/${campaign.postgrid_tracker_id}/visits?limit=1000&skip=0`,
+            { headers: { "x-api-key": postgridApiKey } },
+          );
+          if (!response.ok) return;
+          const result = await response.json();
+          const visits: Array<Record<string, any>> = Array.isArray(result.data)
+            ? result.data
+            : Array.isArray(result)
+            ? result
+            : [];
+          totalScans = visits.filter((v) => {
+            const ts = v.createdAt ?? v.created_at;
+            return ts && ts >= filters.since!;
+          }).length;
+        } else {
+          // No time filter: use tracker summary (faster)
+          const response = await fetch(
+            `${POSTGRID_TRACKER_BASE_URL}/${campaign.postgrid_tracker_id}`,
+            { headers: { "x-api-key": postgridApiKey } },
+          );
+          if (!response.ok) {
+            console.warn(
+              `[campaign_leaderboard] PostGrid ${response.status} for tracker ${campaign.postgrid_tracker_id}`,
+            );
+            return;
+          }
+          const data = await response.json();
+          totalScans = data.visitCount ?? 0;
+        }
+
+        if (totalScans === 0) return;
+
+        const totalPostcardsSent: number = campaign.postcards_sent ?? 0;
+        const scanRate =
+          totalPostcardsSent > 0
+            ? Math.round((totalScans / totalPostcardsSent) * 10000) / 100
+            : 0;
+
+        entries.push({
+          campaign_name: campaign.campaign_name,
+          total_scans: totalScans,
+          total_postcards_sent: totalPostcardsSent,
+          scan_rate: scanRate,
+        });
+      } catch (err) {
+        console.error(
+          `[campaign_leaderboard] Failed for tracker ${campaign.postgrid_tracker_id}:`,
+          err,
+        );
+      }
+    }),
+  );
+
+  // Sort by total_scans descending, take top N, assign ranking_position
+  const leaderboard: LeaderboardEntry[] = entries
+    .sort((a, b) => b.total_scans - a.total_scans)
+    .slice(0, LEADERBOARD_SIZE)
+    .map((entry, index) => ({ ...entry, ranking_position: index + 1 }));
+
+  return { leaderboard };
 }
