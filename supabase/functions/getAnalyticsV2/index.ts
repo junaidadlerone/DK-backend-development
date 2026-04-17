@@ -105,17 +105,22 @@ interface DashboardCardsData {
   };
 }
 
+interface FunnelBucket {
+  count: number;
+  percentage: number;
+}
+
 interface DeliveryFunnelData {
   total_postcards_sent: number;
   // From postgrid_status (standard field)
-  delivered: number;
-  processed: number;
-  printing: number;
-  ready: number;
-  cancelled: number;
+  delivered: FunnelBucket;
+  processed: FunnelBucket;
+  printing: FunnelBucket;
+  ready: FunnelBucket;
+  cancelled: FunnelBucket;
   // From imb_status (Intelligent-Mail Tracking, US only)
-  in_transit: number;
-  returned: number;
+  in_transit: FunnelBucket;
+  returned: FunnelBucket;
 }
 
 interface WasteMeterData {
@@ -442,21 +447,23 @@ async function computeDeliveryFunnel(
     if (imb && imb in imbCounts) imbCounts[imb]++;
   }
 
-  const pct = (count: number): number =>
-    total > 0 ? Math.round((count / total) * 10000) / 100 : 0;
+  const bucket = (count: number): FunnelBucket => ({
+    count,
+    percentage: total > 0 ? Math.round((count / total) * 10000) / 10000 : 0,
+  });
 
   return {
     total_postcards_sent: total,
     // From postgrid_status
-    delivered: pct(statusCounts.completed),
-    processed: pct(statusCounts.processed_for_delivery),
-    printing: pct(statusCounts.printing),
-    ready: pct(statusCounts.ready),
-    cancelled: pct(statusCounts.cancelled),
+    delivered: bucket(statusCounts.completed),
+    processed: bucket(statusCounts.processed_for_delivery),
+    printing: bucket(statusCounts.printing),
+    ready: bucket(statusCounts.ready),
+    cancelled: bucket(statusCounts.cancelled),
     // From imb_status — both entered_mail_stream and out_for_delivery mean
     // the postcard is inside the USPS network (in transit toward the recipient)
-    in_transit: pct(imbCounts.entered_mail_stream + imbCounts.out_for_delivery),
-    returned: pct(imbCounts.returned_to_sender),
+    in_transit: bucket(imbCounts.entered_mail_stream + imbCounts.out_for_delivery),
+    returned: bucket(imbCounts.returned_to_sender),
   };
 }
 

@@ -9917,13 +9917,27 @@ paths:
                     message: "Analytics computed successfully"
                     data:
                       total_postcards_sent: 5000
-                      delivered: 72.50
-                      in_transit: 8.20
-                      processed: 6.10
-                      printing: 4.80
-                      ready: 3.40
-                      returned: 2.50
-                      cancelled: 2.50
+                      delivered:
+                        count: 3625
+                        percentage: 0.725
+                      in_transit:
+                        count: 410
+                        percentage: 0.082
+                      processed:
+                        count: 305
+                        percentage: 0.061
+                      printing:
+                        count: 240
+                        percentage: 0.048
+                      ready:
+                        count: 170
+                        percentage: 0.034
+                      returned:
+                        count: 125
+                        percentage: 0.025
+                      cancelled:
+                        count: 125
+                        percentage: 0.025
                 waste_meter:
                   summary: "waste_meter response"
                   value:
@@ -17800,12 +17814,28 @@ components:
               type: string
               example: "$4,950.00"
 
+    FunnelBucket:
+      type: object
+      required:
+        - count
+        - percentage
+      properties:
+        count:
+          type: integer
+          description: Raw postcard count for this status.
+          example: 3625
+        percentage:
+          type: number
+          format: float
+          description: Fraction of total_postcards_sent (0.0–1.0, 4 decimal places).
+          example: 0.725
+
     DeliveryFunnelAnalytics:
       type: object
       description: |
         Full PostGrid delivery status breakdown for all postcards sent by the organization.
-        Every field except `total_postcards_sent` is a **percentage** (0.00–100.00, 2 decimal places)
-        of `total_postcards_sent`.
+        Every field except `total_postcards_sent` is a `FunnelBucket` with both a raw `count`
+        and a `percentage` (0.0–1.0, 4 decimal places) of `total_postcards_sent`.
 
         **Two data sources are combined:**
 
@@ -17836,65 +17866,33 @@ components:
             This is the denominator used to calculate every percentage field below.
           example: 5000
         delivered:
-          type: number
-          format: float
+          $ref: "#/components/schemas/FunnelBucket"
           description: |
-            % of postcards with PostGrid `status = completed`.
+            Postcards with PostGrid `status = completed`.
             PostGrid considers these "most likely delivered" (approximation — no physical confirmation).
-            Source: `postcard_sends.postgrid_status`
-          example: 72.50
         in_transit:
-          type: number
-          format: float
+          $ref: "#/components/schemas/FunnelBucket"
           description: |
-            % of postcards currently confirmed inside the USPS network.
-            Combines two PostGrid `imbStatus` values:
-            - `entered_mail_stream` — scanned at a USPS facility
-            - `out_for_delivery` — at final USPS facility, expected delivery within a day
-            Source: `postcard_sends.imb_status`
-            Note: Will be 0.00 for non-US orders (no imbStatus provided by PostGrid).
-          example: 8.20
+            Postcards currently confirmed inside the USPS network.
+            Combines `entered_mail_stream` + `out_for_delivery` imbStatus values.
+            Note: Will be 0 for non-US orders.
         processed:
-          type: number
-          format: float
-          description: |
-            % of postcards with PostGrid `status = processed_for_delivery`.
-            The postcard has been handed off to the local postal service but not yet scanned by USPS.
-            Source: `postcard_sends.postgrid_status`
-          example: 6.10
+          $ref: "#/components/schemas/FunnelBucket"
+          description: Postcards with PostGrid `status = processed_for_delivery`.
         printing:
-          type: number
-          format: float
-          description: |
-            % of postcards with PostGrid `status = printing`.
-            The postcard has been sent to a print provider and is being processed.
-            Source: `postcard_sends.postgrid_status`
-          example: 4.80
+          $ref: "#/components/schemas/FunnelBucket"
+          description: Postcards with PostGrid `status = printing`.
         ready:
-          type: number
-          format: float
-          description: |
-            % of postcards with PostGrid `status = ready`.
-            The order was created successfully and is awaiting printing on its sendDate.
-            Source: `postcard_sends.postgrid_status`
-          example: 3.40
+          $ref: "#/components/schemas/FunnelBucket"
+          description: Postcards with PostGrid `status = ready` — awaiting print on sendDate.
         returned:
-          type: number
-          format: float
+          $ref: "#/components/schemas/FunnelBucket"
           description: |
-            % of postcards with PostGrid `imbStatus = returned_to_sender`.
-            The postcard was undeliverable and has been returned.
-            Source: `postcard_sends.imb_status`
-            Note: Will be 0.00 for non-US orders (no imbStatus provided by PostGrid).
-          example: 2.50
+            Postcards with PostGrid `imbStatus = returned_to_sender`.
+            Note: Will be 0 for non-US orders.
         cancelled:
-          type: number
-          format: float
-          description: |
-            % of postcards with PostGrid `status = cancelled`.
-            The order was cancelled and will never be sent.
-            Source: `postcard_sends.postgrid_status`
-          example: 2.50
+          $ref: "#/components/schemas/FunnelBucket"
+          description: Postcards with PostGrid `status = cancelled` — never sent.
 
     WasteMeterAnalytics:
       type: object
