@@ -3,9 +3,9 @@
 -- ============================================================
 
 ALTER TABLE template_bundles
-  ADD COLUMN IF NOT EXISTS show_restriction_annotations_tooltips BOOLEAN NOT NULL DEFAULT false,
-  ADD COLUMN IF NOT EXISTS show_restriction_area_warning          BOOLEAN NOT NULL DEFAULT false;
-
+  ADD COLUMN IF NOT EXISTS show_restriction_annotations_tooltips BOOLEAN NOT NULL DEFAULT true,
+  ADD COLUMN IF NOT EXISTS show_restriction_area_warning          BOOLEAN NOT NULL DEFAULT true;
+  
 -- ---------------------------------------------------------------
 -- Update get_template_bundles RPC to expose new columns
 -- Must DROP first because the RETURNS TABLE shape is changing.
