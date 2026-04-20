@@ -43,7 +43,7 @@ Deno.serve(async (req) => {
     // 1. Fetch the list - Added skip_address_verification to select
      const { data: list, error: fetchError } = await supabase
         .from("campaign_csv_address_lists")
-        .select("id, list_name, addresses, validated_address_list, is_editing, skip_address_verification, metadata")
+        .select("id, list_name, addresses, is_editing, skip_address_verification, metadata")
         .eq("campaign_id", campaign_id)
         .eq("organization_id", organizationId)
         .single();
@@ -53,26 +53,21 @@ Deno.serve(async (req) => {
     }
 
     const addresses: AddressRow[] = list.addresses || [];
-    const validatedAddresses: AddressRow[] = list.validated_address_list || [];
 
     // 2. Identify 'Excluded' addresses based on failure flags
-    const excluded = addresses.filter(addr => 
+    const excluded = addresses.filter(addr =>
       addr.is_deleted === true || addr.status === "invalid" || addr.is_duplicate === true
     );
 
     // Included addresses are simply all those that aren't specifically excluded
-    const included = addresses.filter(addr => 
+    const included = addresses.filter(addr =>
       addr.is_deleted !== true && addr.status !== "invalid" && addr.is_duplicate !== true
     );
 
     // 3. Logic for verification flags
-    // Verified address count based on validated_address_list where is_reachable is true
-    const verified_address_count = validatedAddresses.filter(addr => addr.is_reachable === true).length;
-
-    /** * verification_performed logic:
-     * true only if verification has returned actual results (is_reachable is not null for at least one address)
-     */
-    const verification_performed = validatedAddresses.some(addr => addr.is_reachable !== null);
+    const verified_address_count = addresses.filter(addr => addr.is_reachable === true).length;
+    // null is the import-time placeholder; only true/false means the WS step actually ran
+    const verification_performed = addresses.some(addr => addr.is_reachable === true || addr.is_reachable === false);
 
     return successResponse({
       id: list.id,

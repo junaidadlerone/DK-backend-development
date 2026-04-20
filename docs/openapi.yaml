@@ -9943,6 +9943,91 @@ paths:
 
         ---
 
+        ### `scan_trend`
+        Aggregates QR code scan data across all campaigns in the organization that have a
+        PostGrid tracker linked via `/linkQRCodeToCampaign`.
+
+        **Data source:** PostGrid Tracker API (`GET /print-mail/v1/trackers/{id}`)
+
+        | Field | Description |
+        |---|---|
+        | `total_scans` | Sum of `visitCount` across all org campaign trackers |
+        | `unique_scans` | Sum of `uniqueVisitCount` across all org campaign trackers |
+        | `scan_rate` | `(total_scans / total_postcards_sent) × 100`, rounded to 2dp |
+        | `breakdown.monday_scans` … `breakdown.sunday_scans` | All-time scan counts grouped by day of week they occurred |
+
+        `breakdown` counts **all historical scans** by weekday (e.g. 42 scans have ever occurred on a Monday).
+        Returns all zeros when no trackers are linked or no scans have occurred yet.
+
+        ---
+
+        ### `recent_scans`
+        Returns the **10 most recent QR code scan events per campaign**, enriched with delivery
+        address and a human-readable relative timestamp. Campaigns with zero scans are excluded.
+
+        **Data sources:**
+        - PostGrid `GET /trackers/{id}/visits` → scan events (timestamp, PostGrid postcard `orderId`)
+        - `postcard_sends` table → delivery address and sequential postcard number per campaign
+
+        | Field | Source | Description |
+        |---|---|---|
+        | `campaign_id` | `campaigns.id` | Campaign UUID |
+        | `campaign_name` | `campaigns.campaign_name` | Campaign display name |
+        | `scans[].postcard_number` | `postcard_sends` row number | Sequential position of the postcard within the campaign (ordered by send date) |
+        | `scans[].scan_address` | `postcard_sends.address` | Delivery address the postcard was mailed to — the household that scanned the QR code |
+        | `scans[].scan_time_stamp` | `visit.createdAt` | Human-readable relative time: `"just now"`, `"5 minutes ago"`, `"2 hours ago"`, `"3 days ago"`, etc. |
+
+        Campaigns are sorted by number of recent scans descending. Returns `data: []` when no
+        trackers are linked.
+
+        ---
+
+        ### `campaign_leaderboard`
+        Returns the **top 5 campaigns ranked by total QR scans**, giving a quick view of which
+        campaigns are driving the most engagement.
+
+        **Data sources:**
+        - PostGrid `GET /trackers/{id}` → `visitCount` per campaign tracker
+        - `campaigns.postcards_sent` → total postcards sent per campaign
+
+        | Field | Description |
+        |---|---|
+        | `campaign_name` | Display name of the campaign |
+        | `total_scans` | Total QR scan count from PostGrid `visitCount` |
+        | `total_postcards_sent` | Total postcards sent for this campaign |
+        | `scan_rate` | `(total_scans / total_postcards_sent) × 100`, rounded to 2dp |
+        | `ranking_position` | Rank 1–5 (1 = most scans) |
+
+        Campaigns with zero scans or no tracker linked are excluded. Returns `leaderboard: []`
+        when no campaigns have trackers. Maximum 5 entries.
+
+        ---
+
+        ---
+
+        ### Optional Filters (apply to all types)
+
+        All parameters below are optional and can be combined with any `type`.
+
+        | Parameter | Type | Description |
+        |---|---|---|
+        | `campaign_id` | `string (uuid)` | Scope results to one campaign. Must belong to the org. |
+        | `last_24hours` | `boolean` | Restrict to the last 24 hours. |
+        | `last_week` | `boolean` | Restrict to the last 7 days. |
+        | `last_month` | `boolean` | Restrict to the last 30 days. |
+
+        When no time filter is set, all historical data is returned. If multiple time flags
+        are set, the most restrictive window is used: `last_24hours` > `last_week` > `last_month`.
+
+        **DB-based types** (`dashboard_cards`, `delivery_funnel`, `waste_meter`): filters are
+        applied directly to `postcard_sends` and `payment_history` Supabase queries.
+
+        **PostGrid-based types** (`scan_trend`, `recent_scans`, `campaign_leaderboard`): `campaign_id`
+        restricts which tracker is queried. Time filters use the PostGrid `/visits` endpoint
+        (up to 1000 most recent events) and filter by `createdAt` in-memory.
+
+        ---
+
         **Access:** All roles (ADMIN, MARKETER, TECHNICIAN)
       operationId: getAnalyticsV2
       security:
@@ -9962,16 +10047,54 @@ paths:
                     - dashboard_cards
                     - delivery_funnel
                     - waste_meter
+                    - scan_trend
+                    - recent_scans
+                    - campaign_leaderboard
                   description: |
                     The analytics view to retrieve.
                     - `dashboard_cards` — high-level summary card metrics
                     - `delivery_funnel` — full PostGrid status breakdown as percentages
                     - `waste_meter` — wasted/delayed postcard counts + dollar costs + risk status
+                    - `scan_trend` — QR scan totals, unique scans, scan rate, day-of-week breakdown
+                    - `recent_scans` — 5 most recent QR scans per campaign with address and timestamp
+                    - `campaign_leaderboard` — top 5 campaigns ranked by total QR scans
+                campaign_ids:
+                  type: array
+                  items:
+                    type: string
+                    format: uuid
+                  description: |
+                    **Optional.** Scope results to one or more campaigns. All IDs must belong to
+                    the authenticated user's organization. When omitted, all campaigns are included.
+                  example: ["a1b2c3d4-e5f6-7890-abcd-ef1234567890", "b2c3d4e5-f6a7-8901-bcde-f12345678901"]
+                last_24hours:
+                  type: boolean
+                  description: |
+                    **Optional.** When `true`, restrict results to the last 24 hours.
+                    Mutually exclusive with `last_week` and `last_month` — if multiple flags are
+                    set, the most restrictive window wins (`last_24hours` > `last_week` > `last_month`).
+                  example: true
+                last_week:
+                  type: boolean
+                  description: |
+                    **Optional.** When `true`, restrict results to the last 7 days.
+                  example: true
+                last_month:
+                  type: boolean
+                  description: |
+                    **Optional.** When `true`, restrict results to the last 30 days.
+                  example: true
             examples:
               dashboard_cards:
-                summary: "dashboard_cards — top-level summary cards"
+                summary: "dashboard_cards — all campaigns, all time"
                 value:
                   type: "dashboard_cards"
+              dashboard_cards_filtered:
+                summary: "dashboard_cards — multiple campaigns, last week"
+                value:
+                  type: "dashboard_cards"
+                  campaign_ids: ["a1b2c3d4-e5f6-7890-abcd-ef1234567890", "b2c3d4e5-f6a7-8901-bcde-f12345678901"]
+                  last_week: true
               delivery_funnel:
                 summary: "delivery_funnel — full status percentage breakdown"
                 value:
@@ -9980,6 +10103,40 @@ paths:
                 summary: "waste_meter — wasted and delayed postcard analysis"
                 value:
                   type: "waste_meter"
+              waste_meter_campaign:
+                summary: "waste_meter — multiple campaigns, last month"
+                value:
+                  type: "waste_meter"
+                  campaign_ids: ["a1b2c3d4-e5f6-7890-abcd-ef1234567890", "b2c3d4e5-f6a7-8901-bcde-f12345678901"]
+                  last_month: true
+              scan_trend:
+                summary: "scan_trend — QR code scan activity by day of week"
+                value:
+                  type: "scan_trend"
+              scan_trend_24h:
+                summary: "scan_trend — last 24 hours only"
+                value:
+                  type: "scan_trend"
+                  last_24hours: true
+              recent_scans:
+                summary: "recent_scans — latest QR scan events per campaign"
+                value:
+                  type: "recent_scans"
+              recent_scans_campaign:
+                summary: "recent_scans — multiple campaigns, last week"
+                value:
+                  type: "recent_scans"
+                  campaign_ids: ["a1b2c3d4-e5f6-7890-abcd-ef1234567890", "b2c3d4e5-f6a7-8901-bcde-f12345678901"]
+                  last_week: true
+              campaign_leaderboard:
+                summary: "campaign_leaderboard — top 5 campaigns by QR scan count"
+                value:
+                  type: "campaign_leaderboard"
+              campaign_leaderboard_month:
+                summary: "campaign_leaderboard — last month's top performers"
+                value:
+                  type: "campaign_leaderboard"
+                  last_month: true
       responses:
         "200":
           description: Analytics computed successfully
@@ -10003,6 +10160,9 @@ paths:
                       - $ref: "#/components/schemas/DashboardCardsAnalytics"
                       - $ref: "#/components/schemas/DeliveryFunnelAnalytics"
                       - $ref: "#/components/schemas/WasteMeterAnalytics"
+                      - $ref: "#/components/schemas/ScanTrendAnalytics"
+                      - $ref: "#/components/schemas/RecentScansAnalytics"
+                      - $ref: "#/components/schemas/CampaignLeaderboardAnalytics"
                     discriminator:
                       propertyName: _type
               examples:
@@ -10028,13 +10188,27 @@ paths:
                     message: "Analytics computed successfully"
                     data:
                       total_postcards_sent: 5000
-                      delivered: 72.50
-                      in_transit: 8.20
-                      processed: 6.10
-                      printing: 4.80
-                      ready: 3.40
-                      returned: 2.50
-                      cancelled: 2.50
+                      delivered:
+                        count: 3625
+                        percentage: 0.725
+                      in_transit:
+                        count: 410
+                        percentage: 0.082
+                      processed:
+                        count: 305
+                        percentage: 0.061
+                      printing:
+                        count: 240
+                        percentage: 0.048
+                      ready:
+                        count: 170
+                        percentage: 0.034
+                      returned:
+                        count: 125
+                        percentage: 0.025
+                      cancelled:
+                        count: 125
+                        percentage: 0.025
                 waste_meter:
                   summary: "waste_meter response"
                   value:
@@ -10050,6 +10224,80 @@ paths:
                       total_amount_cancelled: 135.00
                       total_pieces_delayed: 130
                       total_amount_delayed: 390.00
+                scan_trend:
+                  summary: "scan_trend response"
+                  value:
+                    status: "success"
+                    message: "Analytics computed successfully"
+                    data:
+                      total_scans: 342
+                      unique_scans: 289
+                      scan_rate: 6.31
+                      breakdown:
+                        monday_scans: 58
+                        tuesday_scans: 63
+                        wednesday_scans: 71
+                        thursday_scans: 49
+                        friday_scans: 55
+                        saturday_scans: 28
+                        sunday_scans: 18
+                recent_scans:
+                  summary: "recent_scans response"
+                  value:
+                    status: "success"
+                    message: "Analytics computed successfully"
+                    data:
+                      data:
+                        - campaign_id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+                          campaign_name: "Spring Promotion 2024"
+                          scans:
+                            - postcard_number: 42
+                              scan_address: "512 Elm St, Austin, TX 78701"
+                              scan_time_stamp: "15 minutes ago"
+                            - postcard_number: 17
+                              scan_address: "88 Maple Ave, Dallas, TX 75201"
+                              scan_time_stamp: "2 hours ago"
+                            - postcard_number: 103
+                              scan_address: "4 Oak Blvd, Houston, TX 77001"
+                              scan_time_stamp: "1 day ago"
+                        - campaign_id: "b2c3d4e5-f6a7-8901-bcde-fa2345678901"
+                          campaign_name: "Summer Sale Campaign"
+                          scans:
+                            - postcard_number: 8
+                              scan_address: "200 Pine Rd, San Antonio, TX 78201"
+                              scan_time_stamp: "3 hours ago"
+                campaign_leaderboard:
+                  summary: "campaign_leaderboard response"
+                  value:
+                    status: "success"
+                    message: "Analytics computed successfully"
+                    data:
+                      leaderboard:
+                        - campaign_name: "Campaign Awesome"
+                          total_scans: 55
+                          total_postcards_sent: 5000
+                          scan_rate: 1.10
+                          ranking_position: 1
+                        - campaign_name: "Spring Promo 2024"
+                          total_scans: 38
+                          total_postcards_sent: 2000
+                          scan_rate: 1.90
+                          ranking_position: 2
+                        - campaign_name: "Summer Sale"
+                          total_scans: 21
+                          total_postcards_sent: 1500
+                          scan_rate: 1.40
+                          ranking_position: 3
+                        - campaign_name: "Campaign Awesome 2"
+                          total_scans: 15
+                          total_postcards_sent: 100
+                          scan_rate: 15.00
+                          ranking_position: 4
+                        - campaign_name: "Q4 Outreach"
+                          total_scans: 7
+                          total_postcards_sent: 800
+                          scan_rate: 0.88
+                          ranking_position: 5
         "400":
           description: Invalid request — missing or unsupported type
           content:
@@ -10066,7 +10314,7 @@ paths:
                   summary: Unsupported analytics type
                   value:
                     error: "INVALID_TYPE"
-                    message: "Analytics type \"foo\" is not supported. Supported types: dashboard_cards, delivery_funnel, waste_meter"
+                    message: "Analytics type \"foo\" is not supported. Supported types: dashboard_cards, delivery_funnel, waste_meter, scan_trend, recent_scans, campaign_leaderboard"
         "401":
           description: Unauthorized — missing or invalid Bearer token
           content:
@@ -12402,7 +12650,7 @@ paths:
         **Business Rules:**
         - Requires bundle ID and PostGrid API key
         - Bundle must belong to user's organization (or be universal and user is ADMIN)
-        - Can update html_front, html_back, and/or description
+        - Can update html_front, html_back, description, postcardSize, and/or restriction UI flags
         - Updates PostGrid templates first, then database
         - Description changes automatically append " Front" and " Back"
 
@@ -12449,12 +12697,20 @@ paths:
                     - 6x9
                     - 6x11
                   description: Size of the postcard. Updates both front and back templates.
+                show_restriction_annotations_tooltips:
+                  type: boolean
+                  description: When true, the UI displays tooltips for restriction annotation markers on the template. (optional)
+                show_restriction_area_warning:
+                  type: boolean
+                  description: When true, the UI displays a warning banner for restricted areas on the template. (optional)
             example:
               postgridApiKey: "test_sk_..."
               template_bundle_id: "550e8400-e29b-41d4-a716-446655440000"
               html_front: "<h1>Updated Front</h1>"
               description: "Fall Campaign"
               postcardSize: "6x9"
+              show_restriction_annotations_tooltips: true
+              show_restriction_area_warning: false
       responses:
         "200":
           description: Template bundle updated successfully
@@ -12709,6 +12965,14 @@ paths:
                           format: uuid
                         isUniversal:
                           type: boolean
+                        showRestrictionAnnotationsTooltips:
+                          type: boolean
+                          description: When true, the UI displays tooltips for restriction annotation markers on the template.
+                          default: false
+                        showRestrictionAreaWarning:
+                          type: boolean
+                          description: When true, the UI displays a warning banner for restricted areas on the template.
+                          default: false
                         front_template:
                           type: object
                           description: Front template details with timezone-enriched timestamps
@@ -12837,6 +13101,14 @@ paths:
                             nullable: true
                           is_universal:
                             type: boolean
+                          show_restriction_annotations_tooltips:
+                            type: boolean
+                            description: When true, the UI displays tooltips for restriction annotation markers on the template.
+                            default: false
+                          show_restriction_area_warning:
+                            type: boolean
+                            description: When true, the UI displays a warning banner for restricted areas on the template.
+                            default: false
                           created_at:
                             type: string
                             format: date-time
@@ -12857,6 +13129,8 @@ paths:
                     id: "550e8400-e29b-41d4-a716-446655440000"
                     organization_id: "660e8400-e29b-41d4-a716-446655440001"
                     is_universal: false
+                    show_restriction_annotations_tooltips: false
+                    show_restriction_area_warning: false
                     created_at: "2025-01-15T10:30:00Z"
                     updated_at: "2025-01-15T10:30:00Z"
                   front_template:
@@ -17811,12 +18085,28 @@ components:
               type: string
               example: "$4,950.00"
 
+    FunnelBucket:
+      type: object
+      required:
+        - count
+        - percentage
+      properties:
+        count:
+          type: integer
+          description: Raw postcard count for this status.
+          example: 3625
+        percentage:
+          type: number
+          format: float
+          description: Fraction of total_postcards_sent (0.0–1.0, 4 decimal places).
+          example: 0.725
+
     DeliveryFunnelAnalytics:
       type: object
       description: |
         Full PostGrid delivery status breakdown for all postcards sent by the organization.
-        Every field except `total_postcards_sent` is a **percentage** (0.00–100.00, 2 decimal places)
-        of `total_postcards_sent`.
+        Every field except `total_postcards_sent` is a `FunnelBucket` with both a raw `count`
+        and a `percentage` (0.0–1.0, 4 decimal places) of `total_postcards_sent`.
 
         **Two data sources are combined:**
 
@@ -17847,65 +18137,33 @@ components:
             This is the denominator used to calculate every percentage field below.
           example: 5000
         delivered:
-          type: number
-          format: float
+          $ref: "#/components/schemas/FunnelBucket"
           description: |
-            % of postcards with PostGrid `status = completed`.
+            Postcards with PostGrid `status = completed`.
             PostGrid considers these "most likely delivered" (approximation — no physical confirmation).
-            Source: `postcard_sends.postgrid_status`
-          example: 72.50
         in_transit:
-          type: number
-          format: float
+          $ref: "#/components/schemas/FunnelBucket"
           description: |
-            % of postcards currently confirmed inside the USPS network.
-            Combines two PostGrid `imbStatus` values:
-            - `entered_mail_stream` — scanned at a USPS facility
-            - `out_for_delivery` — at final USPS facility, expected delivery within a day
-            Source: `postcard_sends.imb_status`
-            Note: Will be 0.00 for non-US orders (no imbStatus provided by PostGrid).
-          example: 8.20
+            Postcards currently confirmed inside the USPS network.
+            Combines `entered_mail_stream` + `out_for_delivery` imbStatus values.
+            Note: Will be 0 for non-US orders.
         processed:
-          type: number
-          format: float
-          description: |
-            % of postcards with PostGrid `status = processed_for_delivery`.
-            The postcard has been handed off to the local postal service but not yet scanned by USPS.
-            Source: `postcard_sends.postgrid_status`
-          example: 6.10
+          $ref: "#/components/schemas/FunnelBucket"
+          description: Postcards with PostGrid `status = processed_for_delivery`.
         printing:
-          type: number
-          format: float
-          description: |
-            % of postcards with PostGrid `status = printing`.
-            The postcard has been sent to a print provider and is being processed.
-            Source: `postcard_sends.postgrid_status`
-          example: 4.80
+          $ref: "#/components/schemas/FunnelBucket"
+          description: Postcards with PostGrid `status = printing`.
         ready:
-          type: number
-          format: float
-          description: |
-            % of postcards with PostGrid `status = ready`.
-            The order was created successfully and is awaiting printing on its sendDate.
-            Source: `postcard_sends.postgrid_status`
-          example: 3.40
+          $ref: "#/components/schemas/FunnelBucket"
+          description: Postcards with PostGrid `status = ready` — awaiting print on sendDate.
         returned:
-          type: number
-          format: float
+          $ref: "#/components/schemas/FunnelBucket"
           description: |
-            % of postcards with PostGrid `imbStatus = returned_to_sender`.
-            The postcard was undeliverable and has been returned.
-            Source: `postcard_sends.imb_status`
-            Note: Will be 0.00 for non-US orders (no imbStatus provided by PostGrid).
-          example: 2.50
+            Postcards with PostGrid `imbStatus = returned_to_sender`.
+            Note: Will be 0 for non-US orders.
         cancelled:
-          type: number
-          format: float
-          description: |
-            % of postcards with PostGrid `status = cancelled`.
-            The order was cancelled and will never be sent.
-            Source: `postcard_sends.postgrid_status`
-          example: 2.50
+          $ref: "#/components/schemas/FunnelBucket"
+          description: Postcards with PostGrid `status = cancelled` — never sent.
 
     WasteMeterAnalytics:
       type: object
@@ -18010,6 +18268,215 @@ components:
           description: |
             Dollar cost of delayed pieces. `total_pieces_delayed × $3.00`
           example: 390.00
+
+    ScanTrendAnalytics:
+      type: object
+      description: |
+        QR code scan trend analytics from Analytics V2.
+        Aggregates scan data across all campaigns in the organization that have a PostGrid
+        tracker linked via `/linkQRCodeToCampaign`.
+
+        **Data source:** PostGrid Tracker API (`visitCount`, `uniqueVisitCount`, `clicks[]`)
+
+        `scan_rate` uses the total number of postcards sent by the org (from `postcard_sends`)
+        as the denominator. `breakdown` counts all-time scans grouped by the day of week they
+        occurred. All fields return `0` when no trackers are linked or no scans have happened yet.
+      required:
+        - total_scans
+        - unique_scans
+        - scan_rate
+        - breakdown
+      properties:
+        total_scans:
+          type: integer
+          description: |
+            Total QR code scans (visits) across all campaign trackers for this organization.
+            Sourced from PostGrid `visitCount` — counts every scan, including repeat scans by the same person.
+          example: 342
+        unique_scans:
+          type: integer
+          description: |
+            Unique QR code scanners across all campaign trackers for this organization.
+            Sourced from PostGrid `uniqueVisitCount` — counts each person once regardless of how many times they scanned.
+          example: 289
+        scan_rate:
+          type: number
+          format: float
+          description: |
+            `(total_scans / total_postcards_sent) × 100`, rounded to 2 decimal places.
+            Represents the percentage of sent postcards that resulted in at least one QR scan.
+            Returns `0` when no postcards have been sent.
+          example: 6.31
+        breakdown:
+          type: object
+          description: |
+            All-time scan counts grouped by the day of the week each scan occurred.
+            Useful for identifying which days drive the most engagement.
+          required:
+            - monday_scans
+            - tuesday_scans
+            - wednesday_scans
+            - thursday_scans
+            - friday_scans
+            - saturday_scans
+            - sunday_scans
+          properties:
+            monday_scans:
+              type: integer
+              description: Number of scans that occurred on a Monday (all-time).
+              example: 58
+            tuesday_scans:
+              type: integer
+              description: Number of scans that occurred on a Tuesday (all-time).
+              example: 63
+            wednesday_scans:
+              type: integer
+              description: Number of scans that occurred on a Wednesday (all-time).
+              example: 71
+            thursday_scans:
+              type: integer
+              description: Number of scans that occurred on a Thursday (all-time).
+              example: 49
+            friday_scans:
+              type: integer
+              description: Number of scans that occurred on a Friday (all-time).
+              example: 55
+            saturday_scans:
+              type: integer
+              description: Number of scans that occurred on a Saturday (all-time).
+              example: 28
+            sunday_scans:
+              type: integer
+              description: Number of scans that occurred on a Sunday (all-time).
+              example: 18
+
+    RecentScansAnalytics:
+      type: object
+      description: |
+        Recent QR code scan events from Analytics V2, grouped by campaign.
+        Returns the 10 most recent scans per campaign for this organization.
+        Only campaigns that have at least one scan are included.
+
+        **Data sources:**
+        - PostGrid `GET /trackers/{id}/visits` — scan events with timestamps
+        - `postcard_sends` table — delivery address and sequential postcard number
+
+        Campaigns are sorted by scan count descending (most active first).
+        Returns `data: []` when no campaigns have QR trackers linked.
+      required:
+        - data
+      properties:
+        data:
+          type: array
+          description: One entry per campaign that has recorded at least one QR scan.
+          items:
+            type: object
+            required:
+              - campaign_id
+              - campaign_name
+              - scans
+            properties:
+              campaign_id:
+                type: string
+                format: uuid
+                description: UUID of the campaign.
+                example: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+              campaign_name:
+                type: string
+                description: Display name of the campaign.
+                example: "Spring Promotion 2024"
+              scans:
+                type: array
+                description: |
+                  Up to 10 most recent scan events for this campaign, ordered by most recent first.
+                items:
+                  type: object
+                  required:
+                    - postcard_number
+                    - scan_address
+                    - scan_time_stamp
+                  properties:
+                    postcard_number:
+                      type: integer
+                      description: |
+                        Sequential position of the scanned postcard within its campaign,
+                        numbered in order of send date (1 = first postcard sent in the campaign).
+                        Falls back to the scan event index if the postcard ID cannot be matched
+                        in `postcard_sends`.
+                      example: 42
+                    scan_address:
+                      type: string
+                      description: |
+                        Delivery address the postcard was mailed to — the household that scanned
+                        the QR code. Sourced from `postcard_sends.address`.
+                        Falls back to PostGrid geo data (city, region) when unavailable.
+                      example: "512 Elm St, Austin, TX 78701"
+                    scan_time_stamp:
+                      type: string
+                      description: |
+                        Human-readable relative time since the scan occurred.
+                        Values: `"just now"`, `"N minute(s) ago"`, `"N hour(s) ago"`,
+                        `"N day(s) ago"`, `"N month(s) ago"`, or `"Unknown"` if no timestamp.
+                      example: "15 minutes ago"
+
+    CampaignLeaderboardAnalytics:
+      type: object
+      description: |
+        Campaign leaderboard from Analytics V2 — top 5 campaigns ranked by total QR code scans.
+
+        **Data sources:**
+        - PostGrid Tracker API `visitCount` per campaign tracker
+        - `campaigns.postcards_sent` for total postcards sent per campaign
+
+        Only campaigns with a PostGrid tracker linked (via `/linkQRCodeToCampaign`) and at least
+        one scan are included. Returns `leaderboard: []` when no qualifying campaigns exist.
+        Maximum 5 entries. Ranked by `total_scans` descending.
+      required:
+        - leaderboard
+      properties:
+        leaderboard:
+          type: array
+          maxItems: 5
+          description: Top campaigns ranked by total QR scan count, highest first.
+          items:
+            type: object
+            required:
+              - campaign_name
+              - total_scans
+              - total_postcards_sent
+              - scan_rate
+              - ranking_position
+            properties:
+              campaign_name:
+                type: string
+                description: Display name of the campaign.
+                example: "Campaign Awesome"
+              total_scans:
+                type: integer
+                description: |
+                  Total number of QR code scans (visits) for this campaign.
+                  Sourced from PostGrid `visitCount` — includes repeat scans by the same person.
+                example: 55
+              total_postcards_sent:
+                type: integer
+                description: |
+                  Total postcards sent for this campaign.
+                  Sourced from `campaigns.postcards_sent`, maintained by the postcard sending pipeline.
+                example: 5000
+              scan_rate:
+                type: number
+                format: float
+                description: |
+                  `(total_scans / total_postcards_sent) × 100`, rounded to 2 decimal places.
+                  Returns `0` when no postcards have been sent.
+                example: 1.10
+              ranking_position:
+                type: integer
+                minimum: 1
+                maximum: 5
+                description: |
+                  Rank within the leaderboard. `1` = campaign with the most scans.
+                example: 1
 
     GlobalExclusionsAnalytics:
       type: object

@@ -290,7 +290,7 @@ Deno.serve(async (req) => {
       // Fetch from CSV Address List
       const { data: list, error: listError } = await supabase
         .from("campaign_csv_address_lists")
-        .select("id, validated_address_list, skip_address_verification")
+        .select("id, addresses, skip_address_verification")
         .eq("id", campaign.csv_address_list_id)
         .single();
 
@@ -302,12 +302,10 @@ Deno.serve(async (req) => {
       skipVerification = list.skip_address_verification === true || false;
       console.log(`Skip verification flag from CSV list: ${skipVerification}`);
 
-      // Use validated_address_list as primary source if available, fallback to addresses
-      const csvSource = (list.validated_address_list && list.validated_address_list.length > 0)
-        ? list.validated_address_list
-        : [];
 
-      allAddresses = csvSource as AddressRow[];
+      
+      allAddresses = list.addresses as AddressRow[];
+      allAddresses = allAddresses.filter(addr => addr.is_reachable !== false);      
       sourceId = list.id;
       sourceType = "list";
     } else {
@@ -363,14 +361,18 @@ Deno.serve(async (req) => {
         onlyVerifiedAddresses.push(addr as VerifiedAddress);
 
         // Count for cost based on skip_verification flag (CSV CAMPAIGNS ONLY)
+        // Uses !== false / !== true so addresses that haven't been through the
+        // WebSocket verification step (flags are undefined) are treated as eligible.
         if (skipVerification) {
-          // If skip_verification is TRUE: count all valid addresses
-          if (addr.is_valid === true && addr.is_duplicate === false) {
+          // If skip_verification is TRUE: count all addresses not explicitly invalid or duplicate
+          if (addr.is_valid !== false && addr.is_duplicate !== true) {
             validatedCount++;
           }
         } else {
-          // If skip_verification is FALSE: count only reachable AND valid addresses
-          if (addr.is_valid === true && addr.is_duplicate === false && addr.is_reachable === true) {
+          // If skip_verification is FALSE: count non-invalid, non-duplicate, non-unreachable addresses.
+          // Mirrors the pre-filter (is_reachable !== false) so addresses without
+          // is_reachable set (e.g. no WS verification run) are treated as eligible.
+          if (addr.is_valid !== false && addr.is_duplicate !== true && addr.is_reachable !== false) {
             validatedCount++;
           }
         }

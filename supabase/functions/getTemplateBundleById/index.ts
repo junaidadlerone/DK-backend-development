@@ -65,6 +65,8 @@ Deno.serve(async (req) => {
         template_back_id,
         organization_id,
         is_universal,
+        show_restriction_annotations_tooltips,
+        show_restriction_area_warning,
         created_at,
         updated_at
       `)
@@ -119,6 +121,8 @@ Deno.serve(async (req) => {
             id: bundle.id,
             organization_id: bundle.organization_id,
             is_universal: bundle.is_universal,
+            show_restriction_annotations_tooltips: bundle.show_restriction_annotations_tooltips ?? false,
+            show_restriction_area_warning: bundle.show_restriction_area_warning ?? false,
             created_at: bundle.created_at,
             updated_at: bundle.updated_at
           },

@@ -32,6 +32,8 @@ interface RequestBody {
   html_back?: string;
   description?: string;
   postcardSize?: '4x6' | '6x9' | '6x11';
+  show_restriction_annotations_tooltips?: boolean;
+  show_restriction_area_warning?: boolean;
 }
 
 Deno.serve(async (req) => {
@@ -86,7 +88,7 @@ Deno.serve(async (req) => {
       );
     }
 
-    const { template_bundle_id, html_front, html_back, description, postcardSize } = requestBody;
+    const { template_bundle_id, html_front, html_back, description, postcardSize, show_restriction_annotations_tooltips, show_restriction_area_warning } = requestBody;
 
     // Read PostGrid API key from environment
     const postgridApiKey = Deno.env.get("POSTGRID_POSTCARD_API_KEY");
@@ -109,10 +111,11 @@ Deno.serve(async (req) => {
     }
 
     // Validate at least one update field provided
-    if (!html_front && !html_back && !description && !postcardSize) {
+    if (!html_front && !html_back && !description && !postcardSize &&
+        show_restriction_annotations_tooltips === undefined && show_restriction_area_warning === undefined) {
       return errorResponse(
         "INVALID_INPUT",
-        "At least one of html_front, html_back, description, or postcardSize must be provided",
+        "At least one of html_front, html_back, description, postcardSize, show_restriction_annotations_tooltips, or show_restriction_area_warning must be provided",
         400
       );
     }
@@ -320,10 +323,17 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Update bundle timestamp
+    // Update bundle (timestamp + any bundle-level fields)
+    const bundleUpdate: any = { updated_at: new Date().toISOString() };
+    if (show_restriction_annotations_tooltips !== undefined) {
+      bundleUpdate.show_restriction_annotations_tooltips = show_restriction_annotations_tooltips;
+    }
+    if (show_restriction_area_warning !== undefined) {
+      bundleUpdate.show_restriction_area_warning = show_restriction_area_warning;
+    }
     await supabase
       .from("template_bundles")
-      .update({ updated_at: new Date().toISOString() })
+      .update(bundleUpdate)
       .eq("id", template_bundle_id);
 
     // Fetch updated bundle
@@ -371,6 +381,8 @@ Deno.serve(async (req) => {
       bundle: {
         id: updatedBundle.id,
         isUniversal: updatedBundle.is_universal,
+        showRestrictionAnnotationsTooltips: updatedBundle.show_restriction_annotations_tooltips ?? false,
+        showRestrictionAreaWarning: updatedBundle.show_restriction_area_warning ?? false,
         front_template: {
           id: updatedBundle.front.id,
           postgrid_template_id: updatedBundle.front.postgrid_template_id,
