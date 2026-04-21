@@ -64,30 +64,35 @@ interface AnalyticsV2Request {
   last_month?: boolean;
 }
 
+type ScanPeriod = "last_24hours" | "last_week" | "last_month" | "all_time";
+
 /**
  * Optional filters that can be applied to any analytics type.
  * campaign_ids — scope results to one or more campaigns (must belong to the org).
  * since        — ISO 8601 cutoff; only include records/events at or after this time.
- *                Derived from last_24hours / last_week / last_month flags (mutually exclusive,
- *                most restrictive flag wins: 24h > week > month).
+ * period       — controls scan_trend breakdown granularity.
  */
 interface AnalyticsFilters {
   campaign_ids?: string[];
   since?: string;
+  period: ScanPeriod;
 }
 
 function parseFilters(body: AnalyticsV2Request): AnalyticsFilters {
-  const filters: AnalyticsFilters = {};
+  const filters: AnalyticsFilters = { period: "all_time" };
   if (Array.isArray(body.campaign_ids) && body.campaign_ids.length > 0) {
     filters.campaign_ids = body.campaign_ids;
   }
   const now = Date.now();
   if (body.last_24hours === true) {
     filters.since = new Date(now - 86_400_000).toISOString();
+    filters.period = "last_24hours";
   } else if (body.last_week === true) {
     filters.since = new Date(now - 7 * 86_400_000).toISOString();
+    filters.period = "last_week";
   } else if (body.last_month === true) {
     filters.since = new Date(now - 30 * 86_400_000).toISOString();
+    filters.period = "last_month";
   }
   return filters;
 }
@@ -125,6 +130,7 @@ interface DeliveryFunnelData {
 
 interface WasteMeterData {
   status: WasteMeterStatus;
+  total_postcards_sent: number;
   // Combined wasted = returned + cancelled
   total_pieces_wasted: number;
   total_amount_wasted: number;
@@ -139,19 +145,47 @@ interface WasteMeterData {
   total_amount_delayed: number;
 }
 
+// Breakdown shapes per period — use the matching interface based on the request filter sent.
+interface ScanTrendBreakdown24Hours {
+  "12am": number;
+  "2am": number;
+  "4am": number;
+  "6am": number;
+  "8am": number;
+  "10am": number;
+  "12pm": number;
+  "2pm": number;
+  "4pm": number;
+  "6pm": number;
+  "8pm": number;
+  "10pm": number;
+}
+
+interface ScanTrendBreakdownLastWeek {
+  sunday_scans: number;
+  monday_scans: number;
+  tuesday_scans: number;
+  wednesday_scans: number;
+  thursday_scans: number;
+  friday_scans: number;
+  saturday_scans: number;
+}
+
+// last_month: 15 rolling day keys, e.g. "Apr 6" … "Apr 20"
+type ScanTrendBreakdownLastMonth = Record<string, number>;
+
+// all_time: 6 monthly keys, e.g. "Nov 2025" … "Apr 2026"
+type ScanTrendBreakdownAllTime = Record<string, number>;
+
 interface ScanTrendData {
   total_scans: number;
   unique_scans: number;
   scan_rate: number;
-  breakdown: {
-    monday_scans: number;
-    tuesday_scans: number;
-    wednesday_scans: number;
-    thursday_scans: number;
-    friday_scans: number;
-    saturday_scans: number;
-    sunday_scans: number;
-  };
+  breakdown:
+    | ScanTrendBreakdown24Hours
+    | ScanTrendBreakdownLastWeek
+    | ScanTrendBreakdownLastMonth
+    | ScanTrendBreakdownAllTime;
 }
 
 interface RecentScanEvent {
@@ -589,6 +623,7 @@ async function computeWasteMeter(
 
   return {
     status: resolveWasteStatus(piecesWasted, piecesDelayed, total),
+    total_postcards_sent: total,
     total_pieces_wasted: piecesWasted,
     total_amount_wasted: usd(piecesWasted),
     total_pieces_returned: piecesReturned,
@@ -605,6 +640,264 @@ async function computeWasteMeter(
 // ---------------------------------------------------------------------------
 
 const POSTGRID_TRACKER_BASE_URL = "https://api.postgrid.com/print-mail/v1/trackers";
+
+// ---------------------------------------------------------------------------
+// Simulated-data helpers
+// Enabled per-organization via the ANALYTICS_SIMULATED_ORG_IDS secret
+// (comma-separated org UUIDs). When an org is listed, the three scan-based
+// analytics types return data derived from postcard_sends instead of calling
+// the PostGrid tracker API — useful for demo accounts and seeded dev data.
+// ---------------------------------------------------------------------------
+
+/**
+ * Returns true when the given org ID is in the ANALYTICS_SIMULATED_ORG_IDS
+ * secret (comma-separated list of UUIDs).
+ */
+function _isSimulatedOrg(organizationId: string): boolean {
+  const ids = (Deno.env.get("ANALYTICS_SIMULATED_ORG_IDS") ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  return ids.includes(organizationId);
+}
+
+// ---------------------------------------------------------------------------
+// Scan trend breakdown helpers
+// ---------------------------------------------------------------------------
+
+const MONTHS_SHORT = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+
+/** Maps a 0-23 hour value to its 2-hour slot label (e.g. 14 → "2pm"). */
+function hourSlotKey(hour: number): string {
+  const slot = Math.floor(hour / 2) * 2;
+  if (slot === 0) return "12am";
+  if (slot === 12) return "12pm";
+  return slot < 12 ? `${slot}am` : `${slot - 12}pm`;
+}
+
+function formatDayLabel(d: Date): string {
+  return `${MONTHS_SHORT[d.getMonth()]} ${d.getDate()}`;
+}
+
+function formatMonthLabel(d: Date): string {
+  return `${MONTHS_SHORT[d.getMonth()]} ${d.getFullYear()}`;
+}
+
+/**
+ * Builds a zeroed breakdown Record for the given period.
+ *
+ * last_24hours → 12 two-hour slot keys  (12am … 10pm)
+ * last_week    → 7 weekday keys          (monday_scans … sunday_scans)
+ * last_month   → daily keys for either:
+ *                  day 1–15  →  1st of current month … today
+ *                  day 16+   →  today-14 … today
+ * all_time     → 6 monthly keys          (e.g. "Nov 2025" … "Apr 2026")
+ */
+function buildBreakdown(visits: Array<{ ts: string }>, period: "last_24hours"): ScanTrendBreakdown24Hours;
+function buildBreakdown(visits: Array<{ ts: string }>, period: "last_week"): ScanTrendBreakdownLastWeek;
+function buildBreakdown(visits: Array<{ ts: string }>, period: "last_month"): ScanTrendBreakdownLastMonth;
+function buildBreakdown(visits: Array<{ ts: string }>, period: "all_time"): ScanTrendBreakdownAllTime;
+function buildBreakdown(visits: Array<{ ts: string }>, period: ScanPeriod): ScanTrendBreakdown24Hours | ScanTrendBreakdownLastWeek | ScanTrendBreakdownLastMonth | ScanTrendBreakdownAllTime;
+function buildBreakdown(
+  visits: Array<{ ts: string }>,
+  period: ScanPeriod,
+): ScanTrendBreakdown24Hours | ScanTrendBreakdownLastWeek | ScanTrendBreakdownLastMonth | ScanTrendBreakdownAllTime {
+  if (period === "last_24hours") {
+    const buckets: ScanTrendBreakdown24Hours = { "12am": 0, "2am": 0, "4am": 0, "6am": 0, "8am": 0, "10am": 0, "12pm": 0, "2pm": 0, "4pm": 0, "6pm": 0, "8pm": 0, "10pm": 0 };
+    for (const { ts } of visits) {
+      const key = hourSlotKey(new Date(ts).getHours()) as keyof ScanTrendBreakdown24Hours;
+      if (key in buckets) buckets[key]++;
+    }
+    return buckets;
+  }
+
+  if (period === "last_week") {
+    const buckets: ScanTrendBreakdownLastWeek = { sunday_scans: 0, monday_scans: 0, tuesday_scans: 0, wednesday_scans: 0, thursday_scans: 0, friday_scans: 0, saturday_scans: 0 };
+    const DOW: Array<keyof ScanTrendBreakdownLastWeek> = ["sunday_scans","monday_scans","tuesday_scans","wednesday_scans","thursday_scans","friday_scans","saturday_scans"];
+    for (const { ts } of visits) {
+      buckets[DOW[new Date(ts).getDay()]]++;
+    }
+    return buckets;
+  }
+
+  if (period === "last_month") {
+    const now = new Date();
+    const start = new Date(now);
+    if (now.getDate() <= 15) {
+      start.setDate(1);
+    } else {
+      start.setDate(start.getDate() - 14);
+    }
+    start.setHours(0, 0, 0, 0);
+
+    const buckets: ScanTrendBreakdownLastMonth = {};
+    const cursor = new Date(start);
+    while (cursor <= now) {
+      buckets[formatDayLabel(cursor)] = 0;
+      cursor.setDate(cursor.getDate() + 1);
+    }
+    for (const { ts } of visits) {
+      const key = formatDayLabel(new Date(ts));
+      if (key in buckets) buckets[key]++;
+    }
+    return buckets;
+  }
+
+  // all_time — last 6 full months
+  const now = new Date();
+  const buckets: Record<string, number> = {};
+  for (let i = 5; i >= 0; i--) {
+    buckets[formatMonthLabel(new Date(now.getFullYear(), now.getMonth() - i, 1))] = 0;
+  }
+  for (const { ts } of visits) {
+    const key = formatMonthLabel(new Date(ts));
+    if (key in buckets) buckets[key]++;
+  }
+  return buckets;
+}
+
+/**
+ * Generates fake tracker_visit objects that mirror the PostGrid
+ * GET /trackers/{id}/visits response shape, then processes them
+ * through the same filtering + buildBreakdown logic as the real path.
+ */
+function _simulateScanTrend(
+  totalPostcardsSent: number,
+  period: ScanPeriod,
+  since?: string,
+  postcardIds: string[] = [],
+): ScanTrendData {
+  if (totalPostcardsSent === 0) {
+    return { total_scans: 0, unique_scans: 0, scan_rate: 0, breakdown: buildBreakdown([], period) };
+  }
+
+  // Generate ~13% scan rate worth of fake visits spread across last 6 months
+  const visitCount = Math.floor(totalPostcardsSent * 0.13);
+  const now = Date.now();
+  const sixMonthsMs = 180 * 24 * 60 * 60 * 1000;
+
+  // Hour-of-day weights (afternoon peak) — used to bias visit timestamps
+  const hourWeights = [0.01,0.01,0.005,0.005,0.01,0.02,0.04,0.07,0.09,0.10,0.10,0.11,0.11,0.10,0.09,0.08,0.06,0.05,0.04,0.03,0.02,0.015,0.01,0.005];
+  const hourCdf: number[] = [];
+  hourWeights.reduce((acc, w, i) => { hourCdf[i] = acc + w; return hourCdf[i]; }, 0);
+
+  function pickHour(): number {
+    const r = Math.random();
+    return hourCdf.findIndex((c) => r <= c);
+  }
+
+  // Generate fake visits with realistic createdAt spread over last 6 months
+  const fakeVisits = Array.from({ length: visitCount }, (_, i) => {
+    const msAgo = Math.floor(Math.random() * sixMonthsMs);
+    const visitDate = new Date(now - msAgo);
+    visitDate.setHours(pickHour(), Math.floor(Math.random() * 60), 0, 0);
+    const orderId = postcardIds.length > 0
+      ? postcardIds[i % postcardIds.length]
+      : `postcard_sim_${i % Math.max(Math.floor(totalPostcardsSent * 0.78), 1)}`;
+    return {
+      id: `tracker_visit_sim_${i}`,
+      object: "tracker_visit",
+      live: false,
+      orderID: orderId,
+      createdAt: visitDate.toISOString(),
+    };
+  });
+
+  // Apply the same time filter the real path uses
+  const filtered = since
+    ? fakeVisits.filter((v) => v.createdAt >= since)
+    : fakeVisits;
+
+  const totalScans = filtered.length;
+  const seenOrders = new Set(filtered.map((v) => v.orderID));
+  const uniqueScans = seenOrders.size;
+  const scanRate =
+    totalPostcardsSent > 0
+      ? Math.round((totalScans / totalPostcardsSent) * 10000) / 100
+      : 0;
+
+  // For all_time, totals come from the full set (mirrors tracker summary visitCount)
+  const allTimeTotalScans = period === "all_time" ? visitCount : totalScans;
+  const allTimeUniqueScans = period === "all_time"
+    ? new Set(fakeVisits.map((v) => v.orderID)).size
+    : uniqueScans;
+
+  const visits = period === "all_time" ? fakeVisits : filtered;
+
+  return {
+    total_scans: allTimeTotalScans,
+    unique_scans: allTimeUniqueScans,
+    scan_rate: period === "all_time"
+      ? Math.round((allTimeTotalScans / totalPostcardsSent) * 10000) / 100
+      : scanRate,
+    breakdown: buildBreakdown(visits.map((v) => ({ ts: v.createdAt })), period),
+  };
+}
+
+/** Simulates recent_scans data from the postcard_sends already in the DB. */
+function _simulateRecentScans(
+  campaigns: Array<{ id: string; campaign_name: string; postgrid_tracker_id: string }>,
+  sends: Array<{ postgrid_postcard_id: string; campaign_id: string; address: string | null; created_at: string }>,
+  since?: string,
+): RecentScansData {
+  const sendsByCampaign = new Map<string, typeof sends>();
+  for (const s of sends) {
+    if (!sendsByCampaign.has(s.campaign_id)) sendsByCampaign.set(s.campaign_id, []);
+    sendsByCampaign.get(s.campaign_id)!.push(s);
+  }
+
+  const result: CampaignRecentScans[] = [];
+  for (const campaign of campaigns) {
+    const campaignSends = (sendsByCampaign.get(campaign.id) ?? [])
+      .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+      .slice(0, RECENT_SCANS_LIMIT);
+
+    if (campaignSends.length === 0) continue;
+
+    const scans: RecentScanEvent[] = campaignSends.map((s, idx) => {
+      // Spread simulated scan times evenly over the last 48 hours
+      const fakeTs = new Date(Date.now() - (idx + 1) * 8 * 60 * 60 * 1000).toISOString();
+      if (since && fakeTs < since) return null;
+      return {
+        postcard_number: idx + 1,
+        scan_address: s.address ?? "Unknown",
+        scan_time_stamp: timeAgo(fakeTs),
+      };
+    }).filter(Boolean) as RecentScanEvent[];
+
+    if (scans.length > 0) {
+      result.push({ campaign_id: campaign.id, campaign_name: campaign.campaign_name, scans });
+    }
+  }
+  return { data: result };
+}
+
+/** Simulates campaign_leaderboard data from campaigns.postcards_sent. */
+function _simulateCampaignLeaderboard(
+  campaigns: Array<{ id: string; campaign_name: string; postgrid_tracker_id: string; postcards_sent: number | null }>,
+): CampaignLeaderboardData {
+  const entries = campaigns
+    .map((c) => {
+      const sent = c.postcards_sent ?? 0;
+      if (sent === 0) return null;
+      const totalScans = Math.floor(sent * 0.13);
+      if (totalScans === 0) return null;
+      return {
+        campaign_name: c.campaign_name,
+        total_scans: totalScans,
+        total_postcards_sent: sent,
+        scan_rate: Math.round((totalScans / sent) * 10000) / 100,
+      };
+    })
+    .filter(Boolean) as Array<Omit<LeaderboardEntry, "ranking_position">>;
+
+  const leaderboard: LeaderboardEntry[] = entries
+    .sort((a, b) => b.total_scans - a.total_scans)
+    .slice(0, LEADERBOARD_SIZE)
+    .map((entry, idx) => ({ ...entry, ranking_position: idx + 1 }));
+
+  return { leaderboard };
+}
 
 /**
  * Compute Scan Trend Analytics
@@ -632,16 +925,6 @@ async function computeScanTrend(
   const postgridApiKey =
     Deno.env.get("POSTGRID_POSTCARD_API_KEY") ??
     Deno.env.get("VITE_POSTGRID_POSTCARD_API_KEY");
-
-  const emptyBreakdown = {
-    monday_scans: 0,
-    tuesday_scans: 0,
-    wednesday_scans: 0,
-    thursday_scans: 0,
-    friday_scans: 0,
-    saturday_scans: 0,
-    sunday_scans: 0,
-  };
 
   // Scope campaigns to a specific one if campaign_id filter provided
   let campaignsQuery = supabase
@@ -673,17 +956,56 @@ async function computeScanTrend(
   const totalPostcardsSent: number = postcardsResult.count ?? 0;
 
   if (campaigns.length === 0 || !postgridApiKey) {
-    return { total_scans: 0, unique_scans: 0, scan_rate: 0, breakdown: emptyBreakdown };
+    return { total_scans: 0, unique_scans: 0, scan_rate: 0, breakdown: buildBreakdown([], filters.period) };
   }
 
-  // dayCounts index: 0=Sun, 1=Mon, 2=Tue, 3=Wed, 4=Thu, 5=Fri, 6=Sat
-  const dayCounts = [0, 0, 0, 0, 0, 0, 0];
+  // if (isSimulatedOrg(organizationId)) {
+  //   return simulateScanTrend(totalPostcardsSent, filters.period, filters.since);
+  // }
+
+  const allVisits: Array<{ ts: string }> = [];
   let totalScans = 0;
   let uniqueScans = 0;
 
-  if (filters.since) {
-    // Time-filtered path: use /visits endpoint, filter by createdAt in-memory.
-    // unique_scans = distinct orderId values (unique postcards scanned in window).
+  if (filters.period === "all_time") {
+    // Use tracker summary for accurate aggregate totals; /visits for monthly breakdown.
+    await Promise.all(
+      campaigns.map(async (campaign) => {
+        try {
+          const [summaryRes, visitsRes] = await Promise.all([
+            fetch(`${POSTGRID_TRACKER_BASE_URL}/${campaign.postgrid_tracker_id}`, {
+              headers: { "x-api-key": postgridApiKey },
+            }),
+            fetch(`${POSTGRID_TRACKER_BASE_URL}/${campaign.postgrid_tracker_id}/visits?limit=1000&skip=0`, {
+              headers: { "x-api-key": postgridApiKey },
+            }),
+          ]);
+          if (!summaryRes.ok) {
+            console.warn(`[scan_trend] PostGrid ${summaryRes.status} for tracker ${campaign.postgrid_tracker_id}`);
+            return;
+          }
+          const summary = await summaryRes.json();
+          totalScans += summary.visitCount ?? 0;
+          uniqueScans += summary.uniqueVisitCount ?? 0;
+          if (visitsRes.ok) {
+            const result = await visitsRes.json();
+            const visits: Array<Record<string, unknown>> = Array.isArray(result.data)
+              ? (result.data as Array<Record<string, unknown>>)
+              : Array.isArray(result)
+              ? (result as Array<Record<string, unknown>>)
+              : [];
+            for (const v of visits) {
+              const ts = (v.createdAt ?? v.created_at) as string | undefined;
+              if (ts) allVisits.push({ ts });
+            }
+          }
+        } catch (err) {
+          console.error(`[scan_trend] Failed for tracker ${campaign.postgrid_tracker_id}:`, err);
+        }
+      }),
+    );
+  } else {
+    // Filtered paths (last_24hours, last_week, last_month): use /visits with since filter.
     await Promise.all(
       campaigns.map(async (campaign) => {
         try {
@@ -693,14 +1015,14 @@ async function computeScanTrend(
           );
           if (!response.ok) return;
           const result = await response.json();
-          const visits: Array<Record<string, any>> = Array.isArray(result.data)
-            ? result.data
+          const visits: Array<Record<string, unknown>> = Array.isArray(result.data)
+            ? (result.data as Array<Record<string, unknown>>)
             : Array.isArray(result)
-            ? result
+            ? (result as Array<Record<string, unknown>>)
             : [];
 
           const filtered = visits.filter((v) => {
-            const ts = v.createdAt ?? v.created_at;
+            const ts = (v.createdAt ?? v.created_at) as string | undefined;
             return ts && ts >= filters.since!;
           });
 
@@ -708,39 +1030,12 @@ async function computeScanTrend(
 
           const seenOrders = new Set<string>();
           for (const v of filtered) {
-            const ts = v.createdAt ?? v.created_at;
-            if (ts) dayCounts[new Date(ts).getDay()]++;
-            const oid = v.orderId ?? v.order_id;
+            const ts = (v.createdAt ?? v.created_at) as string | undefined;
+            const oid = (v.orderID ?? v.orderId ?? v.order_id) as string | undefined;
+            if (ts) allVisits.push({ ts });
             if (oid) seenOrders.add(oid);
           }
           uniqueScans += seenOrders.size;
-        } catch (err) {
-          console.error(`[scan_trend] Failed for tracker ${campaign.postgrid_tracker_id}:`, err);
-        }
-      }),
-    );
-  } else {
-    // No time filter: use tracker summary for totals, embedded clicks for breakdown.
-    await Promise.all(
-      campaigns.map(async (campaign) => {
-        try {
-          const response = await fetch(
-            `${POSTGRID_TRACKER_BASE_URL}/${campaign.postgrid_tracker_id}`,
-            { headers: { "x-api-key": postgridApiKey } },
-          );
-          if (!response.ok) {
-            console.warn(`[scan_trend] PostGrid ${response.status} for tracker ${campaign.postgrid_tracker_id}`);
-            return;
-          }
-          const data = await response.json();
-          totalScans += data.visitCount ?? 0;
-          uniqueScans += data.uniqueVisitCount ?? 0;
-          if (Array.isArray(data.clicks)) {
-            for (const click of data.clicks) {
-              const ts = click.createdAt ?? click.timestamp;
-              if (ts) dayCounts[new Date(ts).getDay()]++;
-            }
-          }
         } catch (err) {
           console.error(`[scan_trend] Failed for tracker ${campaign.postgrid_tracker_id}:`, err);
         }
@@ -757,15 +1052,7 @@ async function computeScanTrend(
     total_scans: totalScans,
     unique_scans: uniqueScans,
     scan_rate: scanRate,
-    breakdown: {
-      sunday_scans: dayCounts[0],
-      monday_scans: dayCounts[1],
-      tuesday_scans: dayCounts[2],
-      wednesday_scans: dayCounts[3],
-      thursday_scans: dayCounts[4],
-      friday_scans: dayCounts[5],
-      saturday_scans: dayCounts[6],
-    },
+    breakdown: buildBreakdown(allVisits, filters.period),
   };
 }
 
@@ -774,7 +1061,7 @@ async function computeScanTrend(
 // ---------------------------------------------------------------------------
 
 // Max scan events fetched from PostGrid per tracker (most recent first)
-const RECENT_SCANS_LIMIT = 5;
+const RECENT_SCANS_LIMIT = 10;
 
 /**
  * Converts an ISO timestamp to a human-readable relative string.
@@ -872,6 +1159,10 @@ async function computeRecentScans(
     numberMap.set(row.postgrid_postcard_id, n);
     if (row.address) addressMap.set(row.postgrid_postcard_id, row.address);
   }
+
+  // if (isSimulatedOrg(organizationId)) {
+  //   return simulateRecentScans(campaignList, sends ?? [], filters.since);
+  // }
 
   // 3. Fetch visits from PostGrid for each campaign in parallel
   const campaignScans: CampaignRecentScans[] = [];
@@ -1006,6 +1297,10 @@ async function computeCampaignLeaderboard(
   if (campaignList.length === 0 || !postgridApiKey) {
     return { leaderboard: [] };
   }
+
+  // if (isSimulatedOrg(organizationId)) {
+  //   return simulateCampaignLeaderboard(campaignList);
+  // }
 
   // Fetch scan counts — use visits endpoint when time filter is set, tracker summary otherwise
   const entries: Array<Omit<LeaderboardEntry, "ranking_position">> = [];
