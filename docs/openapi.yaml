@@ -10207,71 +10207,162 @@ paths:
                       daily_data:
                         date: "2026-04-22"
                         day: "Tuesday"
-                        location_zone: 0.5
-                        referral: 0.3333
-                        addresses_list: 0.1667
+                        total_scans: 12
+                        location_zone:
+                          count: 6
+                          percentage: 0.5
+                        referral:
+                          count: 4
+                          percentage: 0.3333
+                        addresses_list:
+                          count: 2
+                          percentage: 0.1667
                       weekly_data:
                         - date: "2026-04-20"
                           day: "Monday"
-                          location_zone: 0.6
-                          referral: 0.25
-                          addresses_list: 0.15
+                          total_scans: 20
+                          location_zone:
+                            count: 12
+                            percentage: 0.6
+                          referral:
+                            count: 5
+                            percentage: 0.25
+                          addresses_list:
+                            count: 3
+                            percentage: 0.15
                         - date: "2026-04-21"
                           day: "Tuesday"
-                          location_zone: 0.5
-                          referral: 0.3333
-                          addresses_list: 0.1667
+                          total_scans: 12
+                          location_zone:
+                            count: 6
+                            percentage: 0.5
+                          referral:
+                            count: 4
+                            percentage: 0.3333
+                          addresses_list:
+                            count: 2
+                            percentage: 0.1667
                         - date: "2026-04-22"
                           day: "Wednesday"
-                          location_zone: 0.0
-                          referral: 0.0
-                          addresses_list: 0.0
+                          total_scans: 0
+                          location_zone:
+                            count: 0
+                            percentage: 0.0
+                          referral:
+                            count: 0
+                            percentage: 0.0
+                          addresses_list:
+                            count: 0
+                            percentage: 0.0
                         - date: "2026-04-23"
                           day: "Thursday"
-                          location_zone: 0.0
-                          referral: 0.0
-                          addresses_list: 0.0
+                          total_scans: 0
+                          location_zone:
+                            count: 0
+                            percentage: 0.0
+                          referral:
+                            count: 0
+                            percentage: 0.0
+                          addresses_list:
+                            count: 0
+                            percentage: 0.0
                         - date: "2026-04-24"
                           day: "Friday"
-                          location_zone: 0.0
-                          referral: 0.0
-                          addresses_list: 0.0
+                          total_scans: 0
+                          location_zone:
+                            count: 0
+                            percentage: 0.0
+                          referral:
+                            count: 0
+                            percentage: 0.0
+                          addresses_list:
+                            count: 0
+                            percentage: 0.0
                         - date: "2026-04-25"
                           day: "Saturday"
-                          location_zone: 0.0
-                          referral: 0.0
-                          addresses_list: 0.0
+                          total_scans: 0
+                          location_zone:
+                            count: 0
+                            percentage: 0.0
+                          referral:
+                            count: 0
+                            percentage: 0.0
+                          addresses_list:
+                            count: 0
+                            percentage: 0.0
                         - date: "2026-04-26"
                           day: "Sunday"
-                          location_zone: 0.0
-                          referral: 0.0
-                          addresses_list: 0.0
+                          total_scans: 0
+                          location_zone:
+                            count: 0
+                            percentage: 0.0
+                          referral:
+                            count: 0
+                            percentage: 0.0
+                          addresses_list:
+                            count: 0
+                            percentage: 0.0
                       monthly_data:
                         - week: "Week 1"
                           range: "1-7"
-                          location_zone: 0.55
-                          referral: 0.3
-                          addresses_list: 0.15
+                          total_scans: 80
+                          location_zone:
+                            count: 44
+                            percentage: 0.55
+                          referral:
+                            count: 24
+                            percentage: 0.3
+                          addresses_list:
+                            count: 12
+                            percentage: 0.15
                         - week: "Week 2"
                           range: "8-14"
-                          location_zone: 0.48
-                          referral: 0.35
-                          addresses_list: 0.17
+                          total_scans: 100
+                          location_zone:
+                            count: 48
+                            percentage: 0.48
+                          referral:
+                            count: 35
+                            percentage: 0.35
+                          addresses_list:
+                            count: 17
+                            percentage: 0.17
                         - week: "Week 3"
                           range: "15-21"
-                          location_zone: 0.6
-                          referral: 0.28
-                          addresses_list: 0.12
+                          total_scans: 75
+                          location_zone:
+                            count: 45
+                            percentage: 0.6
+                          referral:
+                            count: 21
+                            percentage: 0.28
+                          addresses_list:
+                            count: 9
+                            percentage: 0.12
                         - week: "Week 4"
                           range: "22-28"
-                          location_zone: 0.5
-                          referral: 0.3333
-                          addresses_list: 0.1667
+                          total_scans: 12
+                          location_zone:
+                            count: 6
+                            percentage: 0.5
+                          referral:
+                            count: 4
+                            percentage: 0.3333
+                          addresses_list:
+                            count: 2
+                            percentage: 0.1667
                         - week: "Week 5"
                           range: "29-30"
-                          location_zone: 0.0
-                          referral: 0.0
-                          addresses_list: 0.0
+                          total_scans: 0
+                          location_zone:
+                            count: 0
+                            percentage: 0.0
+                          referral:
+                            count: 0
+                            percentage: 0.0
+                          addresses_list:
+                            count: 0
+                            percentage: 0.0
         "400":
           description: Invalid request — missing or unsupported type
           content:
@@ -18649,32 +18740,47 @@ components:
                 description: Global rank — higher number means fewer scans.
                 example: 10
 
+    ScanTypeBucket:
+      type: object
+      required:
+        - count
+        - percentage
+      properties:
+        count:
+          type: integer
+          description: Raw scan count for this campaign target type in the period.
+          example: 6
+        percentage:
+          type: number
+          format: float
+          description: Fraction of total_scans for this type (0.0–1.0, 4 decimal places).
+          example: 0.5
+
     ScanTypeBreakdown:
       type: object
       description: |
-        Fractional breakdown of QR scans by campaign target type for a given time period.
-        Values are 0.0–1.0 and sum to 1.0 when total scans > 0.
-        All three are 0.0 when no scans occurred in the period.
+        QR scan count and percentage breakdown by campaign target type for a given time period.
+        The three `percentage` values sum to 1.0 when total_scans > 0.
+        All counts are 0 and all percentages are 0.0 when no scans occurred in the period.
       required:
+        - total_scans
         - location_zone
         - referral
         - addresses_list
       properties:
+        total_scans:
+          type: integer
+          description: Total QR scans across all campaign types in this period.
+          example: 12
         location_zone:
-          type: number
-          format: float
-          description: Fraction of scans from campaigns with target type "Location Zone".
-          example: 0.5
+          $ref: "#/components/schemas/ScanTypeBucket"
+          description: Scans from campaigns with target type "Location Zone".
         referral:
-          type: number
-          format: float
-          description: Fraction of scans from campaigns with target type "Referral".
-          example: 0.3333
+          $ref: "#/components/schemas/ScanTypeBucket"
+          description: Scans from campaigns with target type "Referral".
         addresses_list:
-          type: number
-          format: float
-          description: Fraction of scans from campaigns with target type "Addresses List".
-          example: 0.1667
+          $ref: "#/components/schemas/ScanTypeBucket"
+          description: Scans from campaigns with target type "Addresses List".
 
     ScanTrendByTypeDayPoint:
       allOf:

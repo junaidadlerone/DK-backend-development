@@ -949,25 +949,44 @@ curl -X POST https://xnflihspegizweqidvow.supabase.co/functions/v1/getAnalyticsV
     "daily_data": {
       "date": "2026-04-22",
       "day": "Tuesday",
-      "location_zone": 0.5,
-      "referral": 0.3333,
-      "addresses_list": 0.1667
+      "total_scans": 12,
+      "location_zone":  { "count": 6, "percentage": 0.5    },
+      "referral":       { "count": 4, "percentage": 0.3333 },
+      "addresses_list": { "count": 2, "percentage": 0.1667 }
     },
     "weekly_data": [
-      { "date": "2026-04-20", "day": "Monday",    "location_zone": 0.6,  "referral": 0.25,   "addresses_list": 0.15   },
-      { "date": "2026-04-21", "day": "Tuesday",   "location_zone": 0.5,  "referral": 0.3333, "addresses_list": 0.1667 },
-      { "date": "2026-04-22", "day": "Wednesday", "location_zone": 0.0,  "referral": 0.0,    "addresses_list": 0.0    },
-      { "date": "2026-04-23", "day": "Thursday",  "location_zone": 0.0,  "referral": 0.0,    "addresses_list": 0.0    },
-      { "date": "2026-04-24", "day": "Friday",    "location_zone": 0.0,  "referral": 0.0,    "addresses_list": 0.0    },
-      { "date": "2026-04-25", "day": "Saturday",  "location_zone": 0.0,  "referral": 0.0,    "addresses_list": 0.0    },
-      { "date": "2026-04-26", "day": "Sunday",    "location_zone": 0.0,  "referral": 0.0,    "addresses_list": 0.0    }
+      {
+        "date": "2026-04-20", "day": "Monday", "total_scans": 20,
+        "location_zone":  { "count": 12, "percentage": 0.6  },
+        "referral":       { "count": 5,  "percentage": 0.25 },
+        "addresses_list": { "count": 3,  "percentage": 0.15 }
+      },
+      {
+        "date": "2026-04-21", "day": "Tuesday", "total_scans": 12,
+        "location_zone":  { "count": 6, "percentage": 0.5    },
+        "referral":       { "count": 4, "percentage": 0.3333 },
+        "addresses_list": { "count": 2, "percentage": 0.1667 }
+      },
+      {
+        "date": "2026-04-22", "day": "Wednesday", "total_scans": 0,
+        "location_zone":  { "count": 0, "percentage": 0.0 },
+        "referral":       { "count": 0, "percentage": 0.0 },
+        "addresses_list": { "count": 0, "percentage": 0.0 }
+      }
     ],
     "monthly_data": [
-      { "week": "Week 1", "range": "1-7",   "location_zone": 0.55, "referral": 0.3,    "addresses_list": 0.15   },
-      { "week": "Week 2", "range": "8-14",  "location_zone": 0.48, "referral": 0.35,   "addresses_list": 0.17   },
-      { "week": "Week 3", "range": "15-21", "location_zone": 0.6,  "referral": 0.28,   "addresses_list": 0.12   },
-      { "week": "Week 4", "range": "22-28", "location_zone": 0.5,  "referral": 0.3333, "addresses_list": 0.1667 },
-      { "week": "Week 5", "range": "29-30", "location_zone": 0.0,  "referral": 0.0,    "addresses_list": 0.0    }
+      {
+        "week": "Week 1", "range": "1-7", "total_scans": 80,
+        "location_zone":  { "count": 44, "percentage": 0.55 },
+        "referral":       { "count": 24, "percentage": 0.3  },
+        "addresses_list": { "count": 12, "percentage": 0.15 }
+      },
+      {
+        "week": "Week 5", "range": "29-30", "total_scans": 0,
+        "location_zone":  { "count": 0, "percentage": 0.0 },
+        "referral":       { "count": 0, "percentage": 0.0 },
+        "addresses_list": { "count": 0, "percentage": 0.0 }
+      }
     ]
   }
 }
@@ -975,12 +994,15 @@ curl -X POST https://xnflihspegizweqidvow.supabase.co/functions/v1/getAnalyticsV
 
 | Field | Type | Description |
 |---|---|---|
-| `daily_data` / `weekly_data[]` / `monthly_data[]` | `object` | Time bucket |
-| `*.location_zone` | `number` | Fraction of scans from `Location Zone` campaigns (0.0–1.0) |
-| `*.referral` | `number` | Fraction of scans from `Referral` campaigns (0.0–1.0) |
-| `*.addresses_list` | `number` | Fraction of scans from `Addresses List` campaigns (0.0–1.0) |
+| `*.total_scans` | `number` | Raw total QR scans across all types in this period |
+| `*.location_zone.count` | `number` | Raw scans from `Location Zone` campaigns |
+| `*.location_zone.percentage` | `number` | Fraction of `total_scans` (0.0–1.0) |
+| `*.referral.count` | `number` | Raw scans from `Referral` campaigns |
+| `*.referral.percentage` | `number` | Fraction of `total_scans` (0.0–1.0) |
+| `*.addresses_list.count` | `number` | Raw scans from `Addresses List` campaigns |
+| `*.addresses_list.percentage` | `number` | Fraction of `total_scans` (0.0–1.0) |
 
-The three values sum to `1.0` for any period where scans occurred. All are `0.0` for periods with no scans.
+The three percentages sum to `1.0` for any period where scans occurred. All counts are `0` and percentages are `0.0` for periods with no scans.
 
 ---
 

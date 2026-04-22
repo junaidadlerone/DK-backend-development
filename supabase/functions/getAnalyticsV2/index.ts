@@ -96,6 +96,7 @@ interface DashboardCardsData {
   in_flight_postcards: number;
   delivered: number;
   delivery_rate: number;
+  total_scans: number;
   spent_to_date: number;
   spent_to_date_display: {
     value: number;
@@ -187,10 +188,16 @@ interface CampaignPerformanceData {
   bottom_performers: LeaderboardEntry[];
 }
 
+interface ScanTypeBucket {
+  count: number;
+  percentage: number;
+}
+
 interface ScanTypeBreakdown {
-  location_zone: number;
-  referral: number;
-  addresses_list: number;
+  total_scans: number;
+  location_zone: ScanTypeBucket;
+  referral: ScanTypeBucket;
+  addresses_list: ScanTypeBucket;
 }
 
 interface ScanTrendByTypeDayPoint extends ScanTypeBreakdown {
@@ -203,10 +210,14 @@ interface ScanTrendByTypeWeekPoint extends ScanTypeBreakdown {
   range: string;
 }
 
+interface ScanTrendByTypeMonthPoint extends ScanTypeBreakdown {
+  month: string;
+}
+
 interface ScanTrendByTypeData {
-  daily_data: ScanTrendByTypeDayPoint;
-  weekly_data: ScanTrendByTypeDayPoint[];
-  monthly_data: ScanTrendByTypeWeekPoint[];
+  daily_data: ScanTrendByTypeDayPoint[];
+  weekly_data: ScanTrendByTypeWeekPoint[];
+  monthly_data: ScanTrendByTypeMonthPoint[];
 }
 
 interface PerformanceDayPoint {
@@ -225,12 +236,19 @@ interface PerformanceWeekPoint {
   total_volume: number;
 }
 
+interface PerformanceMonthPoint {
+  month: string;
+  delivery_rate: number;
+  scan_rate: number;
+  total_volume: number;
+}
+
 interface PerformanceTrendData {
   total_delivery_rate: number;
   total_scan_rate: number;
-  daily_data: PerformanceDayPoint;
-  weekly_data: PerformanceDayPoint[];
-  monthly_data: PerformanceWeekPoint[];
+  daily_data: PerformanceDayPoint[];
+  weekly_data: PerformanceWeekPoint[];
+  monthly_data: PerformanceMonthPoint[];
 }
 
 Deno.serve(async (req) => {
@@ -391,6 +409,10 @@ async function computeDashboardCards(
   preferences: any,
   filters: AnalyticsFilters,
 ): Promise<DashboardCardsData> {
+  const postgridApiKey =
+    Deno.env.get("POSTGRID_POSTCARD_API_KEY") ??
+    Deno.env.get("VITE_POSTGRID_POSTCARD_API_KEY");
+
   let postcardsQuery = supabase
     .from("postcard_sends")
     .select("postgrid_status")
@@ -399,26 +421,32 @@ async function computeDashboardCards(
     .from("payment_history")
     .select("amount_paid")
     .eq("organization_id", organizationId);
+  let campaignsQuery = supabase
+    .from("campaigns")
+    .select("postgrid_tracker_id")
+    .eq("organization_id", organizationId)
+    .not("postgrid_tracker_id", "is", null);
 
   if (filters.campaign_ids) {
     postcardsQuery = postcardsQuery.in("campaign_id", filters.campaign_ids);
     paymentsQuery = paymentsQuery.in("campaign_id", filters.campaign_ids);
+    campaignsQuery = campaignsQuery.in("id", filters.campaign_ids);
   }
   if (filters.since) {
     postcardsQuery = postcardsQuery.gte("created_at", filters.since);
     paymentsQuery = paymentsQuery.gte("created_at", filters.since);
   }
 
-  const [postcardsResult, paymentsResult] = await Promise.all([
+  const [postcardsResult, paymentsResult, campaignsResult] = await Promise.all([
     postcardsQuery,
     paymentsQuery,
+    campaignsQuery,
   ]);
 
   if (postcardsResult.error) {
     console.error("Error fetching postcard_sends:", postcardsResult.error);
     throw new Error("Failed to fetch postcard data");
   }
-
   if (paymentsResult.error) {
     console.error("Error fetching payment_history:", paymentsResult.error);
     throw new Error("Failed to fetch payment data");
@@ -426,6 +454,7 @@ async function computeDashboardCards(
 
   const postcards: Array<{ postgrid_status: string }> = postcardsResult.data ?? [];
   const payments: Array<{ amount_paid: number }> = paymentsResult.data ?? [];
+  const campaignList: Array<{ postgrid_tracker_id: string }> = campaignsResult.data ?? [];
 
   let inFlight = 0;
   let delivered = 0;
@@ -448,10 +477,33 @@ async function computeDashboardCards(
   );
   const spentRounded = Math.round(spentToDate * 100) / 100;
 
+  // Sum visitCount from each tracker's summary (all-time total scans)
+  let totalScans = 0;
+  if (postgridApiKey && campaignList.length > 0) {
+    const scanCounts = await Promise.all(
+      campaignList.map(async (c) => {
+        try {
+          const response = await fetch(
+            `${POSTGRID_TRACKER_BASE_URL}/${c.postgrid_tracker_id}`,
+            { headers: { "x-api-key": postgridApiKey } },
+          );
+          if (!response.ok) return 0;
+          const data = await response.json();
+          return data.visitCount ?? 0;
+        } catch (err) {
+          console.error(`[dashboard_cards] Failed for tracker ${c.postgrid_tracker_id}:`, err);
+          return 0;
+        }
+      }),
+    );
+    totalScans = scanCounts.reduce((sum, n) => sum + n, 0);
+  }
+
   return {
     in_flight_postcards: inFlight,
     delivered,
     delivery_rate: deliveryRate,
+    total_scans: totalScans,
     spent_to_date: spentRounded,
     spent_to_date_display: enrichCurrency(spentRounded, preferences.currency ?? "USD"),
   };
@@ -1163,6 +1215,7 @@ async function computeCampaignLeaderboard(
 // ---------------------------------------------------------------------------
 
 const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+const MONTH_NAMES = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 
 /**
  * Compute Performance Trend Analytics
@@ -1291,12 +1344,12 @@ async function computePerformanceTrend(
     };
   };
 
-  // Metrics for a range of days within a specific year/month (month is 0-based)
-  const metricsForRange = (startDay: number, endDay: number) => {
-    const monthStr = `${year}-${String(month + 1).padStart(2, "0")}`;
+  // Metrics for a day range within any given year/month (month 0-based)
+  const metricsForRange = (targetYear: number, targetMonth: number, startDay: number, endDay: number) => {
+    const mStr = `${targetYear}-${String(targetMonth + 1).padStart(2, "0")}`;
     const rangeCards = postcards.filter((p) => {
       const d = p.created_at.slice(0, 10);
-      if (!d.startsWith(monthStr)) return false;
+      if (!d.startsWith(mStr)) return false;
       const day = parseInt(d.slice(8, 10), 10);
       return day >= startDay && day <= endDay;
     });
@@ -1304,8 +1357,7 @@ async function computePerformanceTrend(
     const delivered = rangeCards.filter((p) => p.postgrid_status === "completed").length;
     let scans = 0;
     for (let day = startDay; day <= endDay; day++) {
-      const dateStr = `${monthStr}-${String(day).padStart(2, "0")}`;
-      scans += scansByDate.get(dateStr) ?? 0;
+      scans += scansByDate.get(`${mStr}-${String(day).padStart(2, "0")}`) ?? 0;
     }
     return {
       delivery_rate: rate4dp(delivered, vol),
@@ -1314,34 +1366,38 @@ async function computePerformanceTrend(
     };
   };
 
-  // --- 3. daily_data ---
-  const daily_data: PerformanceDayPoint = {
-    date: todayStr,
-    day: DAY_NAMES[now.getDay()],
-    ...metricsForDate(todayStr),
-  };
+  const todayDayOfMonth = now.getDate();
 
-  // --- 4. weekly_data (Mon–Sun) ---
-  const weekly_data: PerformanceDayPoint[] = Array.from({ length: 7 }, (_, i) => {
-    const d = new Date(weekStart);
-    d.setDate(weekStart.getDate() + i);
+  // --- daily_data: last 7 days ending today ---
+  const daily_data: PerformanceDayPoint[] = Array.from({ length: 7 }, (_, i) => {
+    const d = new Date(now);
+    d.setDate(now.getDate() - 6 + i);
     const dateStr = toDateStr(d);
     return { date: dateStr, day: DAY_NAMES[d.getDay()], ...metricsForDate(dateStr) };
   });
 
-  // --- 5. monthly_data (5 fixed weekly buckets) ---
-  const buckets = [
-    { week: "Week 1", start: 1, end: 7 },
-    { week: "Week 2", start: 8, end: 14 },
+  // --- weekly_data: week buckets of current month up to current week ---
+  const weekBuckets = [
+    { week: "Week 1", start: 1,  end: 7 },
+    { week: "Week 2", start: 8,  end: 14 },
     { week: "Week 3", start: 15, end: 21 },
     { week: "Week 4", start: 22, end: 28 },
     { week: "Week 5", start: 29, end: daysInMonth },
-  ].filter((b) => b.start <= daysInMonth);
+  ].filter((b) => b.start <= daysInMonth && b.start <= todayDayOfMonth);
 
-  const monthly_data: PerformanceWeekPoint[] = buckets.map((b) => {
+  const weekly_data: PerformanceWeekPoint[] = weekBuckets.map((b) => {
     const end = Math.min(b.end, daysInMonth);
     const range = b.start === end ? `${b.start}` : `${b.start}-${end}`;
-    return { week: b.week, range, ...metricsForRange(b.start, end) };
+    return { week: b.week, range, ...metricsForRange(year, month, b.start, end) };
+  });
+
+  // --- monthly_data: last 12 rolling months, oldest to newest ---
+  const monthly_data: PerformanceMonthPoint[] = Array.from({ length: 12 }, (_, i) => {
+    const d = new Date(year, month - 11 + i, 1);
+    const y = d.getFullYear();
+    const m = d.getMonth();
+    const daysInM = new Date(y, m + 1, 0).getDate();
+    return { month: MONTH_NAMES[m], ...metricsForRange(y, m, 1, daysInM) };
   });
 
   return {
@@ -1527,25 +1583,14 @@ async function computeScanTrendByType(
   const toDateStr = (d: Date): string => d.toISOString().slice(0, 10);
   const todayStr = toDateStr(now);
 
-  const weekStart = new Date(now);
-  const dayOfWeek = now.getDay();
-  weekStart.setDate(now.getDate() - (dayOfWeek === 0 ? 6 : dayOfWeek - 1));
-  weekStart.setHours(0, 0, 0, 0);
-
   const year = now.getFullYear();
   const month = now.getMonth();
   const daysInMonth = new Date(year, month + 1, 0).getDate();
 
-  const emptyBreakdown = (): ScanTypeBreakdown => ({
-    location_zone: 0,
-    referral: 0,
-    addresses_list: 0,
-  });
-
-  // Fetch campaigns with trackers and their target type
+  // Fetch campaigns with trackers, target type, and postcards_sent
   let campaignsQuery = supabase
     .from("campaigns")
-    .select("postgrid_tracker_id, campaign_target_type")
+    .select("postgrid_tracker_id, campaign_target_type, postcards_sent")
     .eq("organization_id", organizationId)
     .not("postgrid_tracker_id", "is", null)
     .not("campaign_target_type", "is", null);
@@ -1560,9 +1605,21 @@ async function computeScanTrendByType(
   const campaignList: Array<{
     postgrid_tracker_id: string;
     campaign_target_type: string;
+    postcards_sent: number | null;
   }> = (campaigns ?? []).filter(
     (c: any) => c.campaign_target_type in TARGET_TYPE_MAP,
   );
+
+  // Sum postcards_sent per type — used as the scan rate denominator
+  const postcardsSentByType: Record<CampaignTargetType, number> = {
+    location_zone: 0,
+    referral: 0,
+    addresses_list: 0,
+  };
+  for (const c of campaignList) {
+    const typeKey = TARGET_TYPE_MAP[c.campaign_target_type];
+    postcardsSentByType[typeKey] += c.postcards_sent ?? 0;
+  }
 
   // scansByDateByType[dateStr][typeKey] = count
   const scansByDateByType = new Map<string, Partial<Record<CampaignTargetType, number>>>();
@@ -1605,7 +1662,13 @@ async function computeScanTrendByType(
     );
   }
 
-  // Build fraction breakdown for a set of date strings
+  // percentage = scans_for_type / total_postcards_sent_for_that_type (0.0-1.0)
+  const scanRate = (count: number, typeKey: CampaignTargetType): number => {
+    const denom = postcardsSentByType[typeKey];
+    return denom > 0 ? Math.round((count / denom) * 10000) / 10000 : 0;
+  };
+
+  // Build count + scan-rate breakdown for a set of date strings
   const breakdownForDates = (dates: string[]): ScanTypeBreakdown => {
     let lz = 0, ref = 0, al = 0;
     for (const d of dates) {
@@ -1616,44 +1679,62 @@ async function computeScanTrendByType(
       al  += b.addresses_list  ?? 0;
     }
     const total = lz + ref + al;
-    if (total === 0) return emptyBreakdown();
-    const frac = (n: number) => Math.round((n / total) * 10000) / 10000;
-    return { location_zone: frac(lz), referral: frac(ref), addresses_list: frac(al) };
+    return {
+      total_scans: total,
+      location_zone:  { count: lz,  percentage: scanRate(lz,  "location_zone")  },
+      referral:       { count: ref, percentage: scanRate(ref, "referral")        },
+      addresses_list: { count: al,  percentage: scanRate(al,  "addresses_list")  },
+    };
   };
 
-  // daily_data
-  const daily_data: ScanTrendByTypeDayPoint = {
-    date: todayStr,
-    day: DAY_NAMES[now.getDay()],
-    ...breakdownForDates([todayStr]),
+  // Helper: date strings for a full month
+  const datesForMonth = (y: number, m: number): string[] => {
+    const mStr = `${y}-${String(m + 1).padStart(2, "0")}`;
+    const days = new Date(y, m + 1, 0).getDate();
+    return Array.from({ length: days }, (_, i) => `${mStr}-${String(i + 1).padStart(2, "0")}`);
   };
 
-  // weekly_data (Mon–Sun)
-  const weekly_data: ScanTrendByTypeDayPoint[] = Array.from({ length: 7 }, (_, i) => {
-    const d = new Date(weekStart);
-    d.setDate(weekStart.getDate() + i);
+  // Helper: date strings for a week bucket within a month
+  const datesForRange = (y: number, m: number, startDay: number, endDay: number): string[] => {
+    const mStr = `${y}-${String(m + 1).padStart(2, "0")}`;
+    const dates: string[] = [];
+    for (let day = startDay; day <= endDay; day++) {
+      dates.push(`${mStr}-${String(day).padStart(2, "0")}`);
+    }
+    return dates;
+  };
+
+  const todayDayOfMonth = now.getDate();
+
+  // --- daily_data: last 7 rolling days ending today ---
+  const daily_data: ScanTrendByTypeDayPoint[] = Array.from({ length: 7 }, (_, i) => {
+    const d = new Date(now);
+    d.setDate(now.getDate() - 6 + i);
     const dateStr = toDateStr(d);
     return { date: dateStr, day: DAY_NAMES[d.getDay()], ...breakdownForDates([dateStr]) };
   });
 
-  // monthly_data (5 fixed weekly buckets)
-  const monthStr = `${year}-${String(month + 1).padStart(2, "0")}`;
-  const buckets = [
+  // --- weekly_data: week buckets up to and including the current week ---
+  const weekBuckets = [
     { week: "Week 1", start: 1,  end: 7 },
     { week: "Week 2", start: 8,  end: 14 },
     { week: "Week 3", start: 15, end: 21 },
     { week: "Week 4", start: 22, end: 28 },
     { week: "Week 5", start: 29, end: daysInMonth },
-  ].filter((b) => b.start <= daysInMonth);
+  ].filter((b) => b.start <= daysInMonth && b.start <= todayDayOfMonth);
 
-  const monthly_data: ScanTrendByTypeWeekPoint[] = buckets.map((b) => {
+  const weekly_data: ScanTrendByTypeWeekPoint[] = weekBuckets.map((b) => {
     const end = Math.min(b.end, daysInMonth);
-    const dates: string[] = [];
-    for (let day = b.start; day <= end; day++) {
-      dates.push(`${monthStr}-${String(day).padStart(2, "0")}`);
-    }
     const range = b.start === end ? `${b.start}` : `${b.start}-${end}`;
-    return { week: b.week, range, ...breakdownForDates(dates) };
+    return { week: b.week, range, ...breakdownForDates(datesForRange(year, month, b.start, end)) };
+  });
+
+  // --- monthly_data: last 12 rolling months, oldest to newest ---
+  const monthly_data: ScanTrendByTypeMonthPoint[] = Array.from({ length: 12 }, (_, i) => {
+    const d = new Date(year, month - 11 + i, 1);
+    const y = d.getFullYear();
+    const m = d.getMonth();
+    return { month: MONTH_NAMES[m], ...breakdownForDates(datesForMonth(y, m)) };
   });
 
   return { daily_data, weekly_data, monthly_data };
