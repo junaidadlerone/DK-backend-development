@@ -20,9 +20,10 @@ Returns real-time delivery analytics based on individual PostGrid postcard recor
 | `scan_trend` | QR scan totals, unique scans, day-of-week breakdown |
 | `recent_scans` | 5 most recent QR scan events per campaign |
 | `campaign_leaderboard` | Top 5 campaigns ranked by total QR scans |
-| `performance_trend` | Delivery & scan rates for today, this week, and this month |
+| `performance_trend` | Delivery & scan rates for last 7 days, current month weeks, and last 12 months |
 | `campaign_performance` | Top 5 best and bottom 5 worst campaigns by QR scans |
-| `scan_trend_by_type` | QR scan fraction by campaign target type for today, this week, this month |
+| `scan_trend_by_type` | QR scan fraction by campaign target type for last 7 days, current month weeks, and last 12 months |
+| `postcard_overview` | Per-campaign breakdown: delivered+scanned, delivered-not-scanned, in-transit, returned/cancelled |
 
 ---
 
@@ -55,7 +56,7 @@ When multiple time flags are set, the most restrictive window wins: `last_24hour
 ```json
 {
   "error": "INVALID_TYPE",
-  "message": "Analytics type \"foo\" is not supported. Supported types: dashboard_cards, delivery_funnel, waste_meter, scan_trend, recent_scans, campaign_leaderboard"
+  "message": "Analytics type \"foo\" is not supported. Supported types: dashboard_cards, delivery_funnel, waste_meter, scan_trend, recent_scans, campaign_leaderboard, performance_trend, campaign_performance, scan_trend_by_type, postcard_overview"
 }
 ```
 
@@ -178,6 +179,7 @@ curl -X POST https://xnflihspegizweqidvow.supabase.co/functions/v1/getAnalyticsV
     "in_flight_postcards": 450,
     "delivered": 1200,
     "delivery_rate": 72.73,
+    "total_scans": 342,
     "spent_to_date": 4950.00,
     "spent_to_date_display": {
       "value": 4950.00,
@@ -194,6 +196,7 @@ curl -X POST https://xnflihspegizweqidvow.supabase.co/functions/v1/getAnalyticsV
 | `in_flight_postcards` | `number` | Postcards with status `ready`, `printing`, or `processed_for_delivery` |
 | `delivered` | `number` | Postcards with status `completed` (PostGrid approximation) |
 | `delivery_rate` | `number` | `(delivered / total_sent) × 100`, 2 decimal places |
+| `total_scans` | `number` | All-time total QR scans across all org campaign trackers (sum of PostGrid `visitCount`) |
 | `spent_to_date` | `number` | Sum of all `amount_paid` in `payment_history` for the org |
 | `spent_to_date_display` | `object` | Currency-formatted version using user's saved preference |
 
@@ -914,7 +917,12 @@ Shows what fraction of QR scans in each time period came from each campaign targ
 | `Referral` | `referral` |
 | `Addresses List` | `addresses_list` |
 
-Time-based filters are ignored — windows are always today / this week / this month. `campaign_ids` applies.
+Time-based filters are ignored — windows are always:
+- `daily_data` — last 7 rolling days (oldest → today), always 7 entries
+- `weekly_data` — current month split into fixed week buckets (Week 1–5) up to the current week
+- `monthly_data` — last 12 rolling months (oldest → current)
+
+`campaign_ids` filter applies.
 
 #### Curl — all campaigns
 
@@ -946,46 +954,128 @@ curl -X POST https://xnflihspegizweqidvow.supabase.co/functions/v1/getAnalyticsV
   "status": "success",
   "message": "Analytics computed successfully",
   "data": {
-    "daily_data": {
-      "date": "2026-04-22",
-      "day": "Tuesday",
-      "total_scans": 12,
-      "location_zone":  { "count": 6, "percentage": 0.5    },
-      "referral":       { "count": 4, "percentage": 0.3333 },
-      "addresses_list": { "count": 2, "percentage": 0.1667 }
-    },
+    "daily_data": [
+      { "date": "2026-04-16", "day": "Thursday",  "total_scans": 8,  "location_zone": { "count": 5, "percentage": 0.625  }, "referral": { "count": 2, "percentage": 0.25   }, "addresses_list": { "count": 1, "percentage": 0.125  } },
+      { "date": "2026-04-17", "day": "Friday",    "total_scans": 14, "location_zone": { "count": 8, "percentage": 0.5714 }, "referral": { "count": 4, "percentage": 0.2857 }, "addresses_list": { "count": 2, "percentage": 0.1429 } },
+      { "date": "2026-04-18", "day": "Saturday",  "total_scans": 3,  "location_zone": { "count": 2, "percentage": 0.6667 }, "referral": { "count": 1, "percentage": 0.3333 }, "addresses_list": { "count": 0, "percentage": 0.0    } },
+      { "date": "2026-04-19", "day": "Sunday",    "total_scans": 0,  "location_zone": { "count": 0, "percentage": 0.0    }, "referral": { "count": 0, "percentage": 0.0    }, "addresses_list": { "count": 0, "percentage": 0.0    } },
+      { "date": "2026-04-20", "day": "Monday",    "total_scans": 20, "location_zone": { "count": 12, "percentage": 0.6   }, "referral": { "count": 5,  "percentage": 0.25   }, "addresses_list": { "count": 3, "percentage": 0.15   } },
+      { "date": "2026-04-21", "day": "Tuesday",   "total_scans": 12, "location_zone": { "count": 6,  "percentage": 0.5   }, "referral": { "count": 4,  "percentage": 0.3333 }, "addresses_list": { "count": 2, "percentage": 0.1667 } },
+      { "date": "2026-04-22", "day": "Wednesday", "total_scans": 4,  "location_zone": { "count": 2,  "percentage": 0.5   }, "referral": { "count": 1,  "percentage": 0.25   }, "addresses_list": { "count": 1, "percentage": 0.25   } }
+    ],
     "weekly_data": [
-      {
-        "date": "2026-04-20", "day": "Monday", "total_scans": 20,
-        "location_zone":  { "count": 12, "percentage": 0.6  },
-        "referral":       { "count": 5,  "percentage": 0.25 },
-        "addresses_list": { "count": 3,  "percentage": 0.15 }
-      },
-      {
-        "date": "2026-04-21", "day": "Tuesday", "total_scans": 12,
-        "location_zone":  { "count": 6, "percentage": 0.5    },
-        "referral":       { "count": 4, "percentage": 0.3333 },
-        "addresses_list": { "count": 2, "percentage": 0.1667 }
-      },
-      {
-        "date": "2026-04-22", "day": "Wednesday", "total_scans": 0,
-        "location_zone":  { "count": 0, "percentage": 0.0 },
-        "referral":       { "count": 0, "percentage": 0.0 },
-        "addresses_list": { "count": 0, "percentage": 0.0 }
-      }
+      { "week": "Week 1", "range": "1-7",   "total_scans": 80,  "location_zone": { "count": 44, "percentage": 0.55 }, "referral": { "count": 24, "percentage": 0.3  }, "addresses_list": { "count": 12, "percentage": 0.15   } },
+      { "week": "Week 2", "range": "8-14",  "total_scans": 100, "location_zone": { "count": 48, "percentage": 0.48 }, "referral": { "count": 35, "percentage": 0.35 }, "addresses_list": { "count": 17, "percentage": 0.17   } },
+      { "week": "Week 3", "range": "15-21", "total_scans": 75,  "location_zone": { "count": 45, "percentage": 0.6  }, "referral": { "count": 21, "percentage": 0.28 }, "addresses_list": { "count": 9,  "percentage": 0.12   } },
+      { "week": "Week 4", "range": "22-28", "total_scans": 12,  "location_zone": { "count": 6,  "percentage": 0.5  }, "referral": { "count": 4,  "percentage": 0.3333}, "addresses_list": { "count": 2,  "percentage": 0.1667 } }
     ],
     "monthly_data": [
+      { "month": "April",     "total_scans": 210, "location_zone": { "count": 120, "percentage": 0.5714 }, "referral": { "count": 60, "percentage": 0.2857 }, "addresses_list": { "count": 30, "percentage": 0.1429 } },
+      { "month": "May",       "total_scans": 185, "location_zone": { "count": 100, "percentage": 0.5405 }, "referral": { "count": 55, "percentage": 0.2973 }, "addresses_list": { "count": 30, "percentage": 0.1622 } },
+      { "month": "June",      "total_scans": 0,   "location_zone": { "count": 0,   "percentage": 0.0    }, "referral": { "count": 0,  "percentage": 0.0    }, "addresses_list": { "count": 0,  "percentage": 0.0    } },
+      { "month": "July",      "total_scans": 0,   "location_zone": { "count": 0,   "percentage": 0.0    }, "referral": { "count": 0,  "percentage": 0.0    }, "addresses_list": { "count": 0,  "percentage": 0.0    } },
+      { "month": "August",    "total_scans": 0,   "location_zone": { "count": 0,   "percentage": 0.0    }, "referral": { "count": 0,  "percentage": 0.0    }, "addresses_list": { "count": 0,  "percentage": 0.0    } },
+      { "month": "September", "total_scans": 0,   "location_zone": { "count": 0,   "percentage": 0.0    }, "referral": { "count": 0,  "percentage": 0.0    }, "addresses_list": { "count": 0,  "percentage": 0.0    } },
+      { "month": "October",   "total_scans": 0,   "location_zone": { "count": 0,   "percentage": 0.0    }, "referral": { "count": 0,  "percentage": 0.0    }, "addresses_list": { "count": 0,  "percentage": 0.0    } },
+      { "month": "November",  "total_scans": 0,   "location_zone": { "count": 0,   "percentage": 0.0    }, "referral": { "count": 0,  "percentage": 0.0    }, "addresses_list": { "count": 0,  "percentage": 0.0    } },
+      { "month": "December",  "total_scans": 0,   "location_zone": { "count": 0,   "percentage": 0.0    }, "referral": { "count": 0,  "percentage": 0.0    }, "addresses_list": { "count": 0,  "percentage": 0.0    } },
+      { "month": "January",   "total_scans": 0,   "location_zone": { "count": 0,   "percentage": 0.0    }, "referral": { "count": 0,  "percentage": 0.0    }, "addresses_list": { "count": 0,  "percentage": 0.0    } },
+      { "month": "February",  "total_scans": 0,   "location_zone": { "count": 0,   "percentage": 0.0    }, "referral": { "count": 0,  "percentage": 0.0    }, "addresses_list": { "count": 0,  "percentage": 0.0    } },
+      { "month": "March",     "total_scans": 0,   "location_zone": { "count": 0,   "percentage": 0.0    }, "referral": { "count": 0,  "percentage": 0.0    }, "addresses_list": { "count": 0,  "percentage": 0.0    } }
+    ]
+  }
+}
+```
+
+> `monthly_data` always returns 12 entries — last 12 rolling months oldest to newest. `daily_data` always returns 7 entries — 7 rolling days ending today.
+
+| Field | Type | Description |
+|---|---|---|
+| `daily_data` | `array[7]` | Last 7 rolling days ending today, oldest first |
+| `daily_data[].date` | `string` | Date string `YYYY-MM-DD` |
+| `daily_data[].day` | `string` | Day of week name |
+| `weekly_data` | `array[1-5]` | Current month week buckets (Week 1–5) up to current week |
+| `weekly_data[].week` | `string` | `"Week 1"` … `"Week 5"` |
+| `weekly_data[].range` | `string` | Day range, e.g. `"1-7"`, `"22-28"` |
+| `monthly_data` | `array[12]` | Last 12 rolling months oldest to newest |
+| `monthly_data[].month` | `string` | Month name, e.g. `"April"` |
+| `*.total_scans` | `number` | Raw total QR scans across all types in this period |
+| `*.location_zone.count` | `number` | Raw scans from `Location Zone` campaigns |
+| `*.location_zone.percentage` | `number` | `scans / postcards_sent_for_type` (0.0–1.0, 4dp) |
+| `*.referral.count` | `number` | Raw scans from `Referral` campaigns |
+| `*.referral.percentage` | `number` | `scans / postcards_sent_for_type` (0.0–1.0, 4dp) |
+| `*.addresses_list.count` | `number` | Raw scans from `Addresses List` campaigns |
+| `*.addresses_list.percentage` | `number` | `scans / postcards_sent_for_type` (0.0–1.0, 4dp) |
+
+---
+
+### `postcard_overview`
+
+Per-campaign breakdown of how postcards ended up — delivered and scanned, delivered but not scanned, still in transit, or returned/cancelled. Also returns an aggregate `total_summary` across all campaigns.
+
+**Field definitions:**
+- `delivered_and_scanned` — `postgrid_status = completed` AND the postcard's ID appears in PostGrid scan visits (fraction of total sent, 0.0–1.0)
+- `delivered_but_not_scanned` — `postgrid_status = completed` AND QR was never scanned (fraction of total sent, 0.0–1.0)
+- `in_transit` — `postgrid_status` in `ready`, `printing`, `processed_for_delivery` (raw count)
+- `returned_cancelled` — `postgrid_status = cancelled` OR `imb_status = returned_to_sender` (raw count)
+
+Campaigns with no `postgrid_tracker_id` will have `delivered_and_scanned: 0` — all delivered postcards are treated as not-scanned since there is no scan data. `campaign_ids` filter applies.
+
+#### Curl — all campaigns
+
+```bash
+curl -X POST https://xnflihspegizweqidvow.supabase.co/functions/v1/getAnalyticsV2 \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "type": "postcard_overview"
+  }'
+```
+
+#### Curl — with `campaign_ids` filter
+
+```bash
+curl -X POST https://xnflihspegizweqidvow.supabase.co/functions/v1/getAnalyticsV2 \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "type": "postcard_overview",
+    "campaign_ids": [
+      "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      "b2c3d4e5-f6a7-8901-bcde-f12345678901"
+    ]
+  }'
+```
+
+#### Success Response `200`
+
+```json
+{
+  "status": "success",
+  "message": "Analytics computed successfully",
+  "data": {
+    "total_summary": {
+      "delivered_and_scanned": 0.0842,
+      "delivered_but_not_scanned": 0.6431,
+      "in_transit": 450,
+      "returned_cancelled": 87
+    },
+    "campaign_summary": [
       {
-        "week": "Week 1", "range": "1-7", "total_scans": 80,
-        "location_zone":  { "count": 44, "percentage": 0.55 },
-        "referral":       { "count": 24, "percentage": 0.3  },
-        "addresses_list": { "count": 12, "percentage": 0.15 }
+        "campaign_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+        "campaign_name": "Spring Promotion 2024",
+        "delivered_and_scanned": 0.11,
+        "delivered_but_not_scanned": 0.62,
+        "in_transit": 270,
+        "returned_cancelled": 42
       },
       {
-        "week": "Week 5", "range": "29-30", "total_scans": 0,
-        "location_zone":  { "count": 0, "percentage": 0.0 },
-        "referral":       { "count": 0, "percentage": 0.0 },
-        "addresses_list": { "count": 0, "percentage": 0.0 }
+        "campaign_id": "b2c3d4e5-f6a7-8901-bcde-f12345678901",
+        "campaign_name": "Summer Sale Campaign",
+        "delivered_and_scanned": 0.055,
+        "delivered_but_not_scanned": 0.67,
+        "in_transit": 180,
+        "returned_cancelled": 45
       }
     ]
   }
@@ -994,15 +1084,36 @@ curl -X POST https://xnflihspegizweqidvow.supabase.co/functions/v1/getAnalyticsV
 
 | Field | Type | Description |
 |---|---|---|
-| `*.total_scans` | `number` | Raw total QR scans across all types in this period |
-| `*.location_zone.count` | `number` | Raw scans from `Location Zone` campaigns |
-| `*.location_zone.percentage` | `number` | Fraction of `total_scans` (0.0–1.0) |
-| `*.referral.count` | `number` | Raw scans from `Referral` campaigns |
-| `*.referral.percentage` | `number` | Fraction of `total_scans` (0.0–1.0) |
-| `*.addresses_list.count` | `number` | Raw scans from `Addresses List` campaigns |
-| `*.addresses_list.percentage` | `number` | Fraction of `total_scans` (0.0–1.0) |
+| `total_summary` | `object` | Aggregate across all campaigns |
+| `total_summary.delivered_and_scanned` | `number` | Delivered + QR scanned / total sent (0.0–1.0, 4dp) |
+| `total_summary.delivered_but_not_scanned` | `number` | Delivered but QR never scanned / total sent (0.0–1.0, 4dp) |
+| `total_summary.in_transit` | `number` | Postcards still in the delivery pipeline (raw count) |
+| `total_summary.returned_cancelled` | `number` | Postcards returned or cancelled (raw count) |
+| `campaign_summary` | `array` | One entry per campaign |
+| `campaign_summary[].campaign_id` | `string` | Campaign UUID |
+| `campaign_summary[].campaign_name` | `string` | Campaign display name |
+| `campaign_summary[].delivered_and_scanned` | `number` | Fraction of this campaign's postcards delivered + scanned (0.0–1.0) |
+| `campaign_summary[].delivered_but_not_scanned` | `number` | Fraction delivered but not scanned (0.0–1.0) |
+| `campaign_summary[].in_transit` | `number` | In-flight postcard count for this campaign |
+| `campaign_summary[].returned_cancelled` | `number` | Returned/cancelled count for this campaign |
 
-The three percentages sum to `1.0` for any period where scans occurred. All counts are `0` and percentages are `0.0` for periods with no scans.
+#### Success Response — no campaigns
+
+```json
+{
+  "status": "success",
+  "message": "Analytics computed successfully",
+  "data": {
+    "total_summary": {
+      "delivered_and_scanned": 0,
+      "delivered_but_not_scanned": 0,
+      "in_transit": 0,
+      "returned_cancelled": 0
+    },
+    "campaign_summary": []
+  }
+}
+```
 
 ---
 
@@ -1012,7 +1123,12 @@ The three percentages sum to `1.0` for any period where scans occurred. All coun
 
 ### `performance_trend`
 
-Returns delivery and scan rate metrics broken down across three fixed time windows for the current calendar period. Time-based filters (`last_24hours`, `last_week`, `last_month`) are ignored for this type — the three windows are always today / this week / this month. `campaign_ids` still applies.
+Returns delivery and scan rate metrics broken down across three rolling time windows. Time-based filters (`last_24hours`, `last_week`, `last_month`) are ignored for this type. `campaign_ids` still applies.
+
+**Windows:**
+- `daily_data` — last 7 rolling days ending today, always 7 entries (oldest → today)
+- `weekly_data` — current month split into fixed week buckets (Week 1–5) up to the current week
+- `monthly_data` — last 12 rolling months ending with the current month (oldest → newest)
 
 **Rates:**
 - `delivery_rate` per period = completed postcards created in that period / total postcards created in that period
@@ -1054,28 +1170,34 @@ curl -X POST https://xnflihspegizweqidvow.supabase.co/functions/v1/getAnalyticsV
   "data": {
     "total_delivery_rate": 0.7273,
     "total_scan_rate": 0.0631,
-    "daily_data": {
-      "date": "2026-04-22",
-      "day": "Tuesday",
-      "delivery_rate": 0.8,
-      "scan_rate": 0.002,
-      "total_volume": 50
-    },
-    "weekly_data": [
-      { "date": "2026-04-20", "day": "Monday",    "delivery_rate": 0.75, "scan_rate": 0.0015, "total_volume": 80 },
-      { "date": "2026-04-21", "day": "Tuesday",   "delivery_rate": 0.8,  "scan_rate": 0.002,  "total_volume": 50 },
-      { "date": "2026-04-22", "day": "Wednesday", "delivery_rate": 0.0,  "scan_rate": 0.0,    "total_volume": 0 },
-      { "date": "2026-04-23", "day": "Thursday",  "delivery_rate": 0.0,  "scan_rate": 0.0,    "total_volume": 0 },
-      { "date": "2026-04-24", "day": "Friday",    "delivery_rate": 0.0,  "scan_rate": 0.0,    "total_volume": 0 },
-      { "date": "2026-04-25", "day": "Saturday",  "delivery_rate": 0.0,  "scan_rate": 0.0,    "total_volume": 0 },
-      { "date": "2026-04-26", "day": "Sunday",    "delivery_rate": 0.0,  "scan_rate": 0.0,    "total_volume": 0 }
+    "daily_data": [
+      { "date": "2026-04-16", "day": "Thursday",  "delivery_rate": 0.85, "scan_rate": 0.0018, "total_volume": 120 },
+      { "date": "2026-04-17", "day": "Friday",    "delivery_rate": 0.80, "scan_rate": 0.0021, "total_volume": 95  },
+      { "date": "2026-04-18", "day": "Saturday",  "delivery_rate": 0.0,  "scan_rate": 0.0003, "total_volume": 0   },
+      { "date": "2026-04-19", "day": "Sunday",    "delivery_rate": 0.0,  "scan_rate": 0.0,    "total_volume": 0   },
+      { "date": "2026-04-20", "day": "Monday",    "delivery_rate": 0.75, "scan_rate": 0.0015, "total_volume": 80  },
+      { "date": "2026-04-21", "day": "Tuesday",   "delivery_rate": 0.80, "scan_rate": 0.0020, "total_volume": 50  },
+      { "date": "2026-04-22", "day": "Wednesday", "delivery_rate": 0.60, "scan_rate": 0.0008, "total_volume": 30  }
     ],
-    "monthly_data": [
+    "weekly_data": [
       { "week": "Week 1", "range": "1-7",   "delivery_rate": 0.82, "scan_rate": 0.018, "total_volume": 220 },
       { "week": "Week 2", "range": "8-14",  "delivery_rate": 0.79, "scan_rate": 0.022, "total_volume": 310 },
       { "week": "Week 3", "range": "15-21", "delivery_rate": 0.71, "scan_rate": 0.019, "total_volume": 180 },
-      { "week": "Week 4", "range": "22-28", "delivery_rate": 0.8,  "scan_rate": 0.004, "total_volume": 50  },
-      { "week": "Week 5", "range": "29-30", "delivery_rate": 0.0,  "scan_rate": 0.0,   "total_volume": 0   }
+      { "week": "Week 4", "range": "22-28", "delivery_rate": 0.80, "scan_rate": 0.004, "total_volume": 50  }
+    ],
+    "monthly_data": [
+      { "month": "April",     "delivery_rate": 0.68, "scan_rate": 0.041, "total_volume": 580 },
+      { "month": "May",       "delivery_rate": 0.72, "scan_rate": 0.038, "total_volume": 620 },
+      { "month": "June",      "delivery_rate": 0.0,  "scan_rate": 0.0,   "total_volume": 0   },
+      { "month": "July",      "delivery_rate": 0.0,  "scan_rate": 0.0,   "total_volume": 0   },
+      { "month": "August",    "delivery_rate": 0.0,  "scan_rate": 0.0,   "total_volume": 0   },
+      { "month": "September", "delivery_rate": 0.0,  "scan_rate": 0.0,   "total_volume": 0   },
+      { "month": "October",   "delivery_rate": 0.0,  "scan_rate": 0.0,   "total_volume": 0   },
+      { "month": "November",  "delivery_rate": 0.0,  "scan_rate": 0.0,   "total_volume": 0   },
+      { "month": "December",  "delivery_rate": 0.0,  "scan_rate": 0.0,   "total_volume": 0   },
+      { "month": "January",   "delivery_rate": 0.0,  "scan_rate": 0.0,   "total_volume": 0   },
+      { "month": "February",  "delivery_rate": 0.0,  "scan_rate": 0.0,   "total_volume": 0   },
+      { "month": "March",     "delivery_rate": 0.0,  "scan_rate": 0.0,   "total_volume": 0   }
     ]
   }
 }
@@ -1085,16 +1207,17 @@ curl -X POST https://xnflihspegizweqidvow.supabase.co/functions/v1/getAnalyticsV
 |---|---|---|
 | `total_delivery_rate` | `number` | Overall delivery rate, all time (0.0–1.0) |
 | `total_scan_rate` | `number` | Overall scan rate = total scans / total postcards sent (0.0–1.0) |
-| `daily_data` | `object` | Today's metrics |
-| `daily_data.date` | `string` | Date string `YYYY-MM-DD` |
-| `daily_data.day` | `string` | Day of week name (`"Monday"` … `"Sunday"`) |
-| `daily_data.delivery_rate` | `number` | Completed / sent today (0.0–1.0) |
-| `daily_data.scan_rate` | `number` | Scans today / total postcards sent all time (0.0–1.0) |
-| `daily_data.total_volume` | `number` | Postcards created today |
-| `weekly_data` | `array[7]` | One entry per day of the current Mon–Sun calendar week |
-| `monthly_data` | `array[4-5]` | Current month in 5 weekly buckets (Week 1: 1–7 … Week 5: 29–end) |
-
-> Future days within `weekly_data` and future week buckets in `monthly_data` will always return `delivery_rate: 0`, `scan_rate: 0`, `total_volume: 0`.
+| `daily_data` | `array[7]` | Last 7 rolling days ending today, oldest first |
+| `daily_data[].date` | `string` | Date string `YYYY-MM-DD` |
+| `daily_data[].day` | `string` | Day of week name (`"Monday"` … `"Sunday"`) |
+| `daily_data[].delivery_rate` | `number` | Completed / sent on that day (0.0–1.0) |
+| `daily_data[].scan_rate` | `number` | Scans on that day / total postcards sent all time (0.0–1.0) |
+| `daily_data[].total_volume` | `number` | Postcards created on that day |
+| `weekly_data` | `array[1-5]` | Current month week buckets up to current week |
+| `weekly_data[].week` | `string` | `"Week 1"` … `"Week 5"` |
+| `weekly_data[].range` | `string` | Day range, e.g. `"1-7"`, `"22-28"` |
+| `monthly_data` | `array[12]` | Last 12 rolling months, oldest to newest |
+| `monthly_data[].month` | `string` | Month name, e.g. `"April"` |
 
 ---
 
