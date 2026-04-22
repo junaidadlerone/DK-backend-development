@@ -9780,6 +9780,7 @@ paths:
                     - recent_scans
                     - campaign_leaderboard
                     - performance_trend
+                    - campaign_performance
                   description: |
                     The analytics view to retrieve.
                     - `dashboard_cards` — high-level summary card metrics
@@ -9789,6 +9790,7 @@ paths:
                     - `recent_scans` — 5 most recent QR scans per campaign with address and timestamp
                     - `campaign_leaderboard` — top 5 campaigns ranked by total QR scans
                     - `performance_trend` — delivery & scan rates for today, this week, and this month
+                    - `campaign_performance` — top 5 best and bottom 5 worst performing campaigns by QR scans
                 campaign_ids:
                   type: array
                   items:
@@ -9877,6 +9879,16 @@ paths:
                 value:
                   type: "performance_trend"
                   campaign_ids: ["a1b2c3d4-e5f6-7890-abcd-ef1234567890"]
+              campaign_performance:
+                summary: "campaign_performance — top 5 and bottom 5 by QR scans"
+                value:
+                  type: "campaign_performance"
+              campaign_performance_filtered:
+                summary: "campaign_performance — specific campaigns, last month"
+                value:
+                  type: "campaign_performance"
+                  campaign_ids: ["a1b2c3d4-e5f6-7890-abcd-ef1234567890", "b2c3d4e5-f6a7-8901-bcde-f12345678901"]
+                  last_month: true
       responses:
         "200":
           description: Analytics computed successfully
@@ -9904,6 +9916,7 @@ paths:
                       - $ref: "#/components/schemas/RecentScansAnalytics"
                       - $ref: "#/components/schemas/CampaignLeaderboardAnalytics"
                       - $ref: "#/components/schemas/PerformanceTrendAnalytics"
+                      - $ref: "#/components/schemas/CampaignPerformanceAnalytics"
                     discriminator:
                       propertyName: _type
               examples:
@@ -10115,6 +10128,64 @@ paths:
                           delivery_rate: 0.0
                           scan_rate: 0.0
                           total_volume: 0
+                campaign_performance:
+                  summary: "campaign_performance response"
+                  value:
+                    status: "success"
+                    message: "Analytics computed successfully"
+                    data:
+                      top_performers:
+                        - campaign_name: "Campaign Awesome"
+                          total_scans: 55
+                          total_postcards_sent: 5000
+                          scan_rate: 0.011
+                          ranking_position: 1
+                        - campaign_name: "Spring Promo 2024"
+                          total_scans: 38
+                          total_postcards_sent: 2000
+                          scan_rate: 0.019
+                          ranking_position: 2
+                        - campaign_name: "Summer Sale"
+                          total_scans: 21
+                          total_postcards_sent: 1500
+                          scan_rate: 0.014
+                          ranking_position: 3
+                        - campaign_name: "Fall Outreach"
+                          total_scans: 15
+                          total_postcards_sent: 1000
+                          scan_rate: 0.015
+                          ranking_position: 4
+                        - campaign_name: "Q4 Push"
+                          total_scans: 7
+                          total_postcards_sent: 800
+                          scan_rate: 0.00875
+                          ranking_position: 5
+                      bottom_performers:
+                        - campaign_name: "Winter Blast"
+                          total_scans: 4
+                          total_postcards_sent: 600
+                          scan_rate: 0.0067
+                          ranking_position: 6
+                        - campaign_name: "Early Bird"
+                          total_scans: 2
+                          total_postcards_sent: 400
+                          scan_rate: 0.005
+                          ranking_position: 7
+                        - campaign_name: "Referral Drive"
+                          total_scans: 1
+                          total_postcards_sent: 250
+                          scan_rate: 0.004
+                          ranking_position: 8
+                        - campaign_name: "Local Blitz"
+                          total_scans: 1
+                          total_postcards_sent: 100
+                          scan_rate: 0.01
+                          ranking_position: 9
+                        - campaign_name: "Test Campaign"
+                          total_scans: 0
+                          total_postcards_sent: 50
+                          scan_rate: 0.0
+                          ranking_position: 10
         "400":
           description: Invalid request — missing or unsupported type
           content:
@@ -18407,6 +18478,90 @@ components:
             Months shorter than 29 days omit Week 5.
           items:
             $ref: "#/components/schemas/PerformanceWeekPoint"
+
+    CampaignPerformanceAnalytics:
+      type: object
+      description: |
+        Top 5 best and bottom 5 worst performing campaigns ranked by total QR scans.
+
+        All campaigns with a PostGrid tracker are ranked globally (1 = most scans, N = least).
+        Unlike `campaign_leaderboard`, campaigns with 0 scans are included so that
+        the true worst performers are always surfaced.
+
+        **top_performers** — ranks 1–5 (up to 5 entries)
+        **bottom_performers** — last 5 ranks, never overlapping with top_performers.
+        If there are 5 or fewer campaigns total, `bottom_performers` is empty.
+
+        `scan_rate` = `(total_scans / total_postcards_sent)` as a fraction (0.0–1.0, 4 decimal places).
+      required:
+        - top_performers
+        - bottom_performers
+      properties:
+        top_performers:
+          type: array
+          maxItems: 5
+          description: Up to 5 best-performing campaigns, ranked 1–5 by total QR scans.
+          items:
+            type: object
+            required:
+              - campaign_name
+              - total_scans
+              - total_postcards_sent
+              - scan_rate
+              - ranking_position
+            properties:
+              campaign_name:
+                type: string
+                example: "Campaign Awesome"
+              total_scans:
+                type: integer
+                example: 55
+              total_postcards_sent:
+                type: integer
+                example: 5000
+              scan_rate:
+                type: number
+                format: float
+                description: total_scans / total_postcards_sent (0.0–1.0).
+                example: 0.011
+              ranking_position:
+                type: integer
+                minimum: 1
+                description: Global rank across all org campaigns (1 = most scans).
+                example: 1
+        bottom_performers:
+          type: array
+          maxItems: 5
+          description: |
+            Up to 5 worst-performing campaigns. Empty when there are 5 or fewer
+            campaigns total (they are all in top_performers). Ranking positions
+            continue from where top_performers ends (e.g. 6–10).
+          items:
+            type: object
+            required:
+              - campaign_name
+              - total_scans
+              - total_postcards_sent
+              - scan_rate
+              - ranking_position
+            properties:
+              campaign_name:
+                type: string
+                example: "Test Campaign"
+              total_scans:
+                type: integer
+                example: 0
+              total_postcards_sent:
+                type: integer
+                example: 50
+              scan_rate:
+                type: number
+                format: float
+                example: 0.0
+              ranking_position:
+                type: integer
+                description: Global rank — higher number means fewer scans.
+                example: 10
 
     GlobalExclusionsAnalytics:
       type: object

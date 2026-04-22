@@ -182,6 +182,11 @@ interface CampaignLeaderboardData {
   leaderboard: LeaderboardEntry[];
 }
 
+interface CampaignPerformanceData {
+  top_performers: LeaderboardEntry[];
+  bottom_performers: LeaderboardEntry[];
+}
+
 interface PerformanceDayPoint {
   date: string;
   day: string;
@@ -314,10 +319,19 @@ Deno.serve(async (req) => {
         }, 200);
       }
 
+      case "campaign_performance": {
+        const data = await computeCampaignPerformance(supabase, organizationId, filters);
+        return successResponse({
+          status: "success",
+          message: "Analytics computed successfully",
+          data,
+        }, 200);
+      }
+
       default:
         return errorResponse(
           "INVALID_TYPE",
-          `Analytics type "${type}" is not supported. Supported types: dashboard_cards, delivery_funnel, waste_meter, scan_trend, recent_scans, campaign_leaderboard, performance_trend`,
+          `Analytics type "${type}" is not supported. Supported types: dashboard_cards, delivery_funnel, waste_meter, scan_trend, recent_scans, campaign_leaderboard, performance_trend, campaign_performance`,
           400,
         );
     }
@@ -1306,4 +1320,132 @@ async function computePerformanceTrend(
     weekly_data,
     monthly_data,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Campaign Performance
+// ---------------------------------------------------------------------------
+
+const PERFORMANCE_SIZE = 5;
+
+/**
+ * Compute Campaign Performance Analytics
+ *
+ * Ranks ALL campaigns with a PostGrid tracker by total QR scans and returns:
+ *   top_performers    — top 5 ranked 1–5  (most scans)
+ *   bottom_performers — bottom 5 ranked 6–10 (least scans)
+ *
+ * ranking_position is global across all campaigns (1 = most scans, N = least).
+ * If there are 5 or fewer campaigns total, all go into top_performers and
+ * bottom_performers is empty (no overlap).
+ *
+ * Unlike campaign_leaderboard, campaigns with 0 scans are included so that
+ * the worst performers are always visible.
+ */
+async function computeCampaignPerformance(
+  supabase: any,
+  organizationId: string,
+  filters: AnalyticsFilters,
+): Promise<CampaignPerformanceData> {
+  const postgridApiKey =
+    Deno.env.get("POSTGRID_POSTCARD_API_KEY") ??
+    Deno.env.get("VITE_POSTGRID_POSTCARD_API_KEY");
+
+  let campaignsQuery = supabase
+    .from("campaigns")
+    .select("id, campaign_name, postgrid_tracker_id, postcards_sent")
+    .eq("organization_id", organizationId)
+    .not("postgrid_tracker_id", "is", null);
+  if (filters.campaign_ids) campaignsQuery = campaignsQuery.in("id", filters.campaign_ids);
+  const { data: campaigns, error: campaignsError } = await campaignsQuery;
+
+  if (campaignsError) {
+    console.error("Error fetching campaigns for campaign_performance:", campaignsError);
+    throw new Error("Failed to fetch campaign data");
+  }
+
+  const campaignList: Array<{
+    id: string;
+    campaign_name: string;
+    postgrid_tracker_id: string;
+    postcards_sent: number | null;
+  }> = campaigns ?? [];
+
+  if (campaignList.length === 0 || !postgridApiKey) {
+    return { top_performers: [], bottom_performers: [] };
+  }
+
+  const entries: Array<Omit<LeaderboardEntry, "ranking_position">> = [];
+
+  await Promise.all(
+    campaignList.map(async (campaign) => {
+      try {
+        let totalScans = 0;
+
+        if (filters.since) {
+          const response = await fetch(
+            `${POSTGRID_TRACKER_BASE_URL}/${campaign.postgrid_tracker_id}/visits?limit=1000&skip=0`,
+            { headers: { "x-api-key": postgridApiKey } },
+          );
+          if (!response.ok) return;
+          const result = await response.json();
+          const visits: Array<Record<string, any>> = Array.isArray(result.data)
+            ? result.data
+            : Array.isArray(result)
+            ? result
+            : [];
+          totalScans = visits.filter((v) => {
+            const ts = v.createdAt ?? v.created_at;
+            return ts && ts >= filters.since!;
+          }).length;
+        } else {
+          const response = await fetch(
+            `${POSTGRID_TRACKER_BASE_URL}/${campaign.postgrid_tracker_id}`,
+            { headers: { "x-api-key": postgridApiKey } },
+          );
+          if (!response.ok) {
+            console.warn(
+              `[campaign_performance] PostGrid ${response.status} for tracker ${campaign.postgrid_tracker_id}`,
+            );
+            return;
+          }
+          const data = await response.json();
+          totalScans = data.visitCount ?? 0;
+        }
+
+        const totalPostcardsSent = campaign.postcards_sent ?? 0;
+        const scanRate =
+          totalPostcardsSent > 0
+            ? Math.round((totalScans / totalPostcardsSent) * 10000) / 10000
+            : 0;
+
+        entries.push({
+          campaign_name: campaign.campaign_name,
+          total_scans: totalScans,
+          total_postcards_sent: totalPostcardsSent,
+          scan_rate: scanRate,
+        });
+      } catch (err) {
+        console.error(
+          `[campaign_performance] Failed for tracker ${campaign.postgrid_tracker_id}:`,
+          err,
+        );
+      }
+    }),
+  );
+
+  // Sort descending, assign global ranking_position 1..N
+  entries.sort((a, b) => b.total_scans - a.total_scans);
+  const ranked: LeaderboardEntry[] = entries.map((entry, index) => ({
+    ...entry,
+    ranking_position: index + 1,
+  }));
+
+  const top_performers = ranked.slice(0, PERFORMANCE_SIZE);
+  // Bottom 5 only from entries beyond the top 5 — no overlap
+  const bottom_performers = ranked.length > PERFORMANCE_SIZE
+    ? ranked.slice(-PERFORMANCE_SIZE)
+    : [];
+
+  return { top_performers, bottom_performers };
 }

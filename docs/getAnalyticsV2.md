@@ -21,6 +21,7 @@ Returns real-time delivery analytics based on individual PostGrid postcard recor
 | `recent_scans` | 5 most recent QR scan events per campaign |
 | `campaign_leaderboard` | Top 5 campaigns ranked by total QR scans |
 | `performance_trend` | Delivery & scan rates for today, this week, and this month |
+| `campaign_performance` | Top 5 best and bottom 5 worst campaigns by QR scans |
 
 ---
 
@@ -988,6 +989,119 @@ curl -X POST https://xnflihspegizweqidvow.supabase.co/functions/v1/getAnalyticsV
 | `monthly_data` | `array[4-5]` | Current month in 5 weekly buckets (Week 1: 1–7 … Week 5: 29–end) |
 
 > Future days within `weekly_data` and future week buckets in `monthly_data` will always return `delivery_rate: 0`, `scan_rate: 0`, `total_volume: 0`.
+
+---
+
+---
+
+### `campaign_performance`
+
+Ranks ALL campaigns that have a PostGrid tracker by total QR scans and returns the top 5 (best) and bottom 5 (worst). Rankings are global — rank 1 = most scans, rank N = least. Campaigns with 0 scans are included so that the true worst performers always appear.
+
+If there are 5 or fewer campaigns total, all go into `top_performers` and `bottom_performers` is empty (no overlap).
+
+`scan_rate` is a fraction (0.0–1.0), same as other types.
+
+#### Curl — all campaigns
+
+```bash
+curl -X POST https://xnflihspegizweqidvow.supabase.co/functions/v1/getAnalyticsV2 \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "type": "campaign_performance"
+  }'
+```
+
+#### Curl — with `campaign_ids` filter
+
+```bash
+curl -X POST https://xnflihspegizweqidvow.supabase.co/functions/v1/getAnalyticsV2 \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "type": "campaign_performance",
+    "campaign_ids": [
+      "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      "b2c3d4e5-f6a7-8901-bcde-f12345678901"
+    ]
+  }'
+```
+
+#### Curl — with `last_month` filter
+
+```bash
+curl -X POST https://xnflihspegizweqidvow.supabase.co/functions/v1/getAnalyticsV2 \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "type": "campaign_performance",
+    "last_month": true
+  }'
+```
+
+#### Curl — combined: specific campaigns + last week
+
+```bash
+curl -X POST https://xnflihspegizweqidvow.supabase.co/functions/v1/getAnalyticsV2 \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "type": "campaign_performance",
+    "campaign_ids": ["a1b2c3d4-e5f6-7890-abcd-ef1234567890"],
+    "last_week": true
+  }'
+```
+
+#### Success Response `200`
+
+```json
+{
+  "status": "success",
+  "message": "Analytics computed successfully",
+  "data": {
+    "top_performers": [
+      { "campaign_name": "Campaign Awesome",  "total_scans": 55, "total_postcards_sent": 5000, "scan_rate": 0.011,   "ranking_position": 1 },
+      { "campaign_name": "Spring Promo 2024", "total_scans": 38, "total_postcards_sent": 2000, "scan_rate": 0.019,   "ranking_position": 2 },
+      { "campaign_name": "Summer Sale",       "total_scans": 21, "total_postcards_sent": 1500, "scan_rate": 0.014,   "ranking_position": 3 },
+      { "campaign_name": "Fall Outreach",     "total_scans": 15, "total_postcards_sent": 1000, "scan_rate": 0.015,   "ranking_position": 4 },
+      { "campaign_name": "Q4 Push",           "total_scans": 7,  "total_postcards_sent": 800,  "scan_rate": 0.00875, "ranking_position": 5 }
+    ],
+    "bottom_performers": [
+      { "campaign_name": "Winter Blast",  "total_scans": 4, "total_postcards_sent": 600, "scan_rate": 0.0067, "ranking_position": 6  },
+      { "campaign_name": "Early Bird",    "total_scans": 2, "total_postcards_sent": 400, "scan_rate": 0.005,  "ranking_position": 7  },
+      { "campaign_name": "Referral Drive","total_scans": 1, "total_postcards_sent": 250, "scan_rate": 0.004,  "ranking_position": 8  },
+      { "campaign_name": "Local Blitz",   "total_scans": 1, "total_postcards_sent": 100, "scan_rate": 0.01,   "ranking_position": 9  },
+      { "campaign_name": "Test Campaign", "total_scans": 0, "total_postcards_sent": 50,  "scan_rate": 0.0,    "ranking_position": 10 }
+    ]
+  }
+}
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `top_performers` | `array` | Up to 5 best campaigns, ranked 1–5 |
+| `bottom_performers` | `array` | Up to 5 worst campaigns, ranked 6–10. Empty if ≤5 campaigns total |
+| `[].campaign_name` | `string` | Campaign display name |
+| `[].total_scans` | `number` | Total QR scans from PostGrid |
+| `[].total_postcards_sent` | `number` | Total postcards sent for this campaign |
+| `[].scan_rate` | `number` | `total_scans / total_postcards_sent` (0.0–1.0) |
+| `[].ranking_position` | `number` | Global rank — 1 = most scans, 10 = least |
+
+#### Success Response — 5 or fewer campaigns (no bottom performers)
+
+```json
+{
+  "status": "success",
+  "message": "Analytics computed successfully",
+  "data": {
+    "top_performers": [
+      { "campaign_name": "Only Campaign", "total_scans": 12, "total_postcards_sent": 200, "scan_rate": 0.06, "ranking_position": 1 }
+    ],
+    "bottom_performers": []
+  }
+}
+```
 
 ---
 
