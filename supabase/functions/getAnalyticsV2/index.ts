@@ -251,6 +251,23 @@ interface PerformanceTrendData {
   monthly_data: PerformanceMonthPoint[];
 }
 
+interface PostcardOverviewSummary {
+  delivered_and_scanned: number;
+  delivered_but_not_scanned: number;
+  in_transit: number;
+  returned_cancelled: number;
+}
+
+interface CampaignOverviewEntry extends PostcardOverviewSummary {
+  campaign_id: string;
+  campaign_name: string;
+}
+
+interface PostcardOverviewData {
+  total_summary: PostcardOverviewSummary;
+  campaign_summary: CampaignOverviewEntry[];
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return corsResponse();
@@ -377,10 +394,19 @@ Deno.serve(async (req) => {
         }, 200);
       }
 
+      case "postcard_overview": {
+        const data = await computePostcardOverview(supabase, organizationId, filters);
+        return successResponse({
+          status: "success",
+          message: "Analytics computed successfully",
+          data,
+        }, 200);
+      }
+
       default:
         return errorResponse(
           "INVALID_TYPE",
-          `Analytics type "${type}" is not supported. Supported types: dashboard_cards, delivery_funnel, waste_meter, scan_trend, recent_scans, campaign_leaderboard, performance_trend, campaign_performance, scan_trend_by_type`,
+          `Analytics type "${type}" is not supported. Supported types: dashboard_cards, delivery_funnel, waste_meter, scan_trend, recent_scans, campaign_leaderboard, performance_trend, campaign_performance, scan_trend_by_type, postcard_overview`,
           400,
         );
     }
@@ -1738,4 +1764,176 @@ async function computeScanTrendByType(
   });
 
   return { daily_data, weekly_data, monthly_data };
+}
+
+// ---------------------------------------------------------------------------
+// Postcard Overview
+// ---------------------------------------------------------------------------
+
+/**
+ * Compute Postcard Overview Analytics
+ *
+ * For every campaign in the org, breaks down postcards into four buckets:
+ *   delivered_and_scanned     — delivered (completed) AND QR was scanned (fraction of total sent)
+ *   delivered_but_not_scanned — delivered (completed) but QR never scanned (fraction of total sent)
+ *   in_transit                — still in the delivery pipeline (ready/printing/processed_for_delivery)
+ *   returned_cancelled        — returned to sender (imb_status) OR cancelled (postgrid_status)
+ *
+ * Percentages are 0.0–1.0 (4 decimal places), counts are integers.
+ * total_summary aggregates the same fields across all campaigns.
+ * campaign_ids filter limits which campaigns are included.
+ */
+async function computePostcardOverview(
+  supabase: any,
+  organizationId: string,
+  filters: AnalyticsFilters,
+): Promise<PostcardOverviewData> {
+  const postgridApiKey =
+    Deno.env.get("POSTGRID_POSTCARD_API_KEY") ??
+    Deno.env.get("VITE_POSTGRID_POSTCARD_API_KEY");
+
+  const emptySummary: PostcardOverviewSummary = {
+    delivered_and_scanned: 0,
+    delivered_but_not_scanned: 0,
+    in_transit: 0,
+    returned_cancelled: 0,
+  };
+
+  // 1. Fetch campaigns
+  let campaignsQuery = supabase
+    .from("campaigns")
+    .select("id, campaign_name, postgrid_tracker_id")
+    .eq("organization_id", organizationId);
+  if (filters.campaign_ids) campaignsQuery = campaignsQuery.in("id", filters.campaign_ids);
+  const { data: campaigns, error: campaignsError } = await campaignsQuery;
+
+  if (campaignsError) {
+    console.error("Error fetching campaigns for postcard_overview:", campaignsError);
+    throw new Error("Failed to fetch campaign data");
+  }
+
+  const campaignList: Array<{
+    id: string;
+    campaign_name: string;
+    postgrid_tracker_id: string | null;
+  }> = campaigns ?? [];
+
+  if (campaignList.length === 0) {
+    return { total_summary: emptySummary, campaign_summary: [] };
+  }
+
+  // 2. Fetch postcard_sends for all campaigns in one query
+  const campaignIds = campaignList.map((c) => c.id);
+  let sendsQuery = supabase
+    .from("postcard_sends")
+    .select("postgrid_postcard_id, postgrid_status, imb_status, campaign_id")
+    .eq("organization_id", organizationId)
+    .in("campaign_id", campaignIds);
+  if (filters.since) sendsQuery = sendsQuery.gte("created_at", filters.since);
+  const { data: sends, error: sendsError } = await sendsQuery;
+
+  if (sendsError) {
+    console.error("Error fetching postcard_sends for postcard_overview:", sendsError);
+    throw new Error("Failed to fetch postcard data");
+  }
+
+  type SendRow = { postgrid_postcard_id: string; postgrid_status: string; imb_status: string | null; campaign_id: string };
+  const sendRows: SendRow[] = sends ?? [];
+
+  // Group sends by campaign_id
+  const sendsByCampaign = new Map<string, SendRow[]>();
+  for (const row of sendRows) {
+    if (!sendsByCampaign.has(row.campaign_id)) sendsByCampaign.set(row.campaign_id, []);
+    sendsByCampaign.get(row.campaign_id)!.push(row);
+  }
+
+  // 3. Fetch scanned postcard IDs per campaign from PostGrid visits
+  const scannedIdsByCampaign = new Map<string, Set<string>>();
+
+  if (postgridApiKey) {
+    await Promise.all(
+      campaignList
+        .filter((c) => c.postgrid_tracker_id)
+        .map(async (campaign) => {
+          try {
+            const response = await fetch(
+              `${POSTGRID_TRACKER_BASE_URL}/${campaign.postgrid_tracker_id}/visits?limit=1000&skip=0`,
+              { headers: { "x-api-key": postgridApiKey } },
+            );
+            if (!response.ok) return;
+            const result = await response.json();
+            const visits: Array<Record<string, any>> = Array.isArray(result.data)
+              ? result.data
+              : Array.isArray(result)
+              ? result
+              : [];
+
+            const scannedIds = new Set<string>();
+            for (const v of visits) {
+              const oid: string | undefined = v.orderId ?? v.order_id ?? v.order;
+              if (oid) scannedIds.add(oid);
+            }
+            scannedIdsByCampaign.set(campaign.id, scannedIds);
+          } catch (err) {
+            console.error(`[postcard_overview] Failed for tracker ${campaign.postgrid_tracker_id}:`, err);
+          }
+        }),
+    );
+  }
+
+  // 4. Compute per-campaign buckets
+  const rate4dp = (n: number, d: number): number =>
+    d > 0 ? Math.round((n / d) * 10000) / 10000 : 0;
+
+  let totalSent = 0;
+  let totalDeliveredAndScanned = 0;
+  let totalDeliveredNotScanned = 0;
+  let totalInTransit = 0;
+  let totalReturnedCancelled = 0;
+
+  const campaign_summary: CampaignOverviewEntry[] = campaignList.map((campaign) => {
+    const rows = sendsByCampaign.get(campaign.id) ?? [];
+    const scannedIds = scannedIdsByCampaign.get(campaign.id) ?? new Set<string>();
+    const sent = rows.length;
+
+    let deliveredAndScanned = 0;
+    let deliveredNotScanned = 0;
+    let inTransit = 0;
+    let returnedCancelled = 0;
+
+    for (const row of rows) {
+      const isDelivered = row.postgrid_status === "completed";
+      const isScanned = scannedIds.has(row.postgrid_postcard_id);
+
+      if (isDelivered && isScanned) deliveredAndScanned++;
+      else if (isDelivered && !isScanned) deliveredNotScanned++;
+      if (IN_FLIGHT_STATUSES.includes(row.postgrid_status)) inTransit++;
+      if (row.postgrid_status === "cancelled" || row.imb_status === "returned_to_sender") returnedCancelled++;
+    }
+
+    totalSent += sent;
+    totalDeliveredAndScanned += deliveredAndScanned;
+    totalDeliveredNotScanned += deliveredNotScanned;
+    totalInTransit += inTransit;
+    totalReturnedCancelled += returnedCancelled;
+
+    return {
+      campaign_id: campaign.id,
+      campaign_name: campaign.campaign_name,
+      delivered_and_scanned: rate4dp(deliveredAndScanned, sent),
+      delivered_but_not_scanned: rate4dp(deliveredNotScanned, sent),
+      in_transit: inTransit,
+      returned_cancelled: returnedCancelled,
+    };
+  });
+
+  return {
+    total_summary: {
+      delivered_and_scanned: rate4dp(totalDeliveredAndScanned, totalSent),
+      delivered_but_not_scanned: rate4dp(totalDeliveredNotScanned, totalSent),
+      in_transit: totalInTransit,
+      returned_cancelled: totalReturnedCancelled,
+    },
+    campaign_summary,
+  };
 }
