@@ -9781,6 +9781,7 @@ paths:
                     - campaign_leaderboard
                     - performance_trend
                     - campaign_performance
+                    - scan_trend_by_type
                   description: |
                     The analytics view to retrieve.
                     - `dashboard_cards` — high-level summary card metrics
@@ -9791,6 +9792,7 @@ paths:
                     - `campaign_leaderboard` — top 5 campaigns ranked by total QR scans
                     - `performance_trend` — delivery & scan rates for today, this week, and this month
                     - `campaign_performance` — top 5 best and bottom 5 worst performing campaigns by QR scans
+                    - `scan_trend_by_type` — QR scan fraction per campaign target type (Location Zone / Referral / Addresses List) for today, this week, this month
                 campaign_ids:
                   type: array
                   items:
@@ -9889,6 +9891,15 @@ paths:
                   type: "campaign_performance"
                   campaign_ids: ["a1b2c3d4-e5f6-7890-abcd-ef1234567890", "b2c3d4e5-f6a7-8901-bcde-f12345678901"]
                   last_month: true
+              scan_trend_by_type:
+                summary: "scan_trend_by_type — scan fraction by campaign target type"
+                value:
+                  type: "scan_trend_by_type"
+              scan_trend_by_type_filtered:
+                summary: "scan_trend_by_type — specific campaigns only"
+                value:
+                  type: "scan_trend_by_type"
+                  campaign_ids: ["a1b2c3d4-e5f6-7890-abcd-ef1234567890"]
       responses:
         "200":
           description: Analytics computed successfully
@@ -9917,6 +9928,7 @@ paths:
                       - $ref: "#/components/schemas/CampaignLeaderboardAnalytics"
                       - $ref: "#/components/schemas/PerformanceTrendAnalytics"
                       - $ref: "#/components/schemas/CampaignPerformanceAnalytics"
+                      - $ref: "#/components/schemas/ScanTrendByTypeAnalytics"
                     discriminator:
                       propertyName: _type
               examples:
@@ -10186,6 +10198,80 @@ paths:
                           total_postcards_sent: 50
                           scan_rate: 0.0
                           ranking_position: 10
+                scan_trend_by_type:
+                  summary: "scan_trend_by_type response"
+                  value:
+                    status: "success"
+                    message: "Analytics computed successfully"
+                    data:
+                      daily_data:
+                        date: "2026-04-22"
+                        day: "Tuesday"
+                        location_zone: 0.5
+                        referral: 0.3333
+                        addresses_list: 0.1667
+                      weekly_data:
+                        - date: "2026-04-20"
+                          day: "Monday"
+                          location_zone: 0.6
+                          referral: 0.25
+                          addresses_list: 0.15
+                        - date: "2026-04-21"
+                          day: "Tuesday"
+                          location_zone: 0.5
+                          referral: 0.3333
+                          addresses_list: 0.1667
+                        - date: "2026-04-22"
+                          day: "Wednesday"
+                          location_zone: 0.0
+                          referral: 0.0
+                          addresses_list: 0.0
+                        - date: "2026-04-23"
+                          day: "Thursday"
+                          location_zone: 0.0
+                          referral: 0.0
+                          addresses_list: 0.0
+                        - date: "2026-04-24"
+                          day: "Friday"
+                          location_zone: 0.0
+                          referral: 0.0
+                          addresses_list: 0.0
+                        - date: "2026-04-25"
+                          day: "Saturday"
+                          location_zone: 0.0
+                          referral: 0.0
+                          addresses_list: 0.0
+                        - date: "2026-04-26"
+                          day: "Sunday"
+                          location_zone: 0.0
+                          referral: 0.0
+                          addresses_list: 0.0
+                      monthly_data:
+                        - week: "Week 1"
+                          range: "1-7"
+                          location_zone: 0.55
+                          referral: 0.3
+                          addresses_list: 0.15
+                        - week: "Week 2"
+                          range: "8-14"
+                          location_zone: 0.48
+                          referral: 0.35
+                          addresses_list: 0.17
+                        - week: "Week 3"
+                          range: "15-21"
+                          location_zone: 0.6
+                          referral: 0.28
+                          addresses_list: 0.12
+                        - week: "Week 4"
+                          range: "22-28"
+                          location_zone: 0.5
+                          referral: 0.3333
+                          addresses_list: 0.1667
+                        - week: "Week 5"
+                          range: "29-30"
+                          location_zone: 0.0
+                          referral: 0.0
+                          addresses_list: 0.0
         "400":
           description: Invalid request — missing or unsupported type
           content:
@@ -18562,6 +18648,99 @@ components:
                 type: integer
                 description: Global rank — higher number means fewer scans.
                 example: 10
+
+    ScanTypeBreakdown:
+      type: object
+      description: |
+        Fractional breakdown of QR scans by campaign target type for a given time period.
+        Values are 0.0–1.0 and sum to 1.0 when total scans > 0.
+        All three are 0.0 when no scans occurred in the period.
+      required:
+        - location_zone
+        - referral
+        - addresses_list
+      properties:
+        location_zone:
+          type: number
+          format: float
+          description: Fraction of scans from campaigns with target type "Location Zone".
+          example: 0.5
+        referral:
+          type: number
+          format: float
+          description: Fraction of scans from campaigns with target type "Referral".
+          example: 0.3333
+        addresses_list:
+          type: number
+          format: float
+          description: Fraction of scans from campaigns with target type "Addresses List".
+          example: 0.1667
+
+    ScanTrendByTypeDayPoint:
+      allOf:
+        - $ref: "#/components/schemas/ScanTypeBreakdown"
+        - type: object
+          required:
+            - date
+            - day
+          properties:
+            date:
+              type: string
+              format: date
+              example: "2026-04-22"
+            day:
+              type: string
+              example: "Tuesday"
+
+    ScanTrendByTypeWeekPoint:
+      allOf:
+        - $ref: "#/components/schemas/ScanTypeBreakdown"
+        - type: object
+          required:
+            - week
+            - range
+          properties:
+            week:
+              type: string
+              example: "Week 1"
+            range:
+              type: string
+              example: "1-7"
+
+    ScanTrendByTypeAnalytics:
+      type: object
+      description: |
+        QR scan fraction broken down by campaign target type across three fixed time windows.
+
+        For each period:
+          `location_zone + referral + addresses_list = 1.0` (when total scans > 0)
+          All three are `0.0` when no scans occurred in that period.
+
+        **Data source:** PostGrid GET /trackers/{id}/visits per campaign (up to 1000 visits per tracker).
+        Campaigns are grouped by `campaigns.campaign_target_type`.
+
+        `campaign_ids` filter scopes which campaigns are included.
+        Time-based filters are ignored — windows are always today / this week / this month.
+      required:
+        - daily_data
+        - weekly_data
+        - monthly_data
+      properties:
+        daily_data:
+          $ref: "#/components/schemas/ScanTrendByTypeDayPoint"
+          description: Today's type breakdown (single object).
+        weekly_data:
+          type: array
+          description: One entry per day of the current Mon–Sun calendar week (always 7 entries).
+          items:
+            $ref: "#/components/schemas/ScanTrendByTypeDayPoint"
+        monthly_data:
+          type: array
+          description: |
+            Current month in up to 5 weekly buckets:
+            Week 1 (1–7), Week 2 (8–14), Week 3 (15–21), Week 4 (22–28), Week 5 (29–end).
+          items:
+            $ref: "#/components/schemas/ScanTrendByTypeWeekPoint"
 
     GlobalExclusionsAnalytics:
       type: object

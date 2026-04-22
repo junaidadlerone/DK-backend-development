@@ -187,6 +187,28 @@ interface CampaignPerformanceData {
   bottom_performers: LeaderboardEntry[];
 }
 
+interface ScanTypeBreakdown {
+  location_zone: number;
+  referral: number;
+  addresses_list: number;
+}
+
+interface ScanTrendByTypeDayPoint extends ScanTypeBreakdown {
+  date: string;
+  day: string;
+}
+
+interface ScanTrendByTypeWeekPoint extends ScanTypeBreakdown {
+  week: string;
+  range: string;
+}
+
+interface ScanTrendByTypeData {
+  daily_data: ScanTrendByTypeDayPoint;
+  weekly_data: ScanTrendByTypeDayPoint[];
+  monthly_data: ScanTrendByTypeWeekPoint[];
+}
+
 interface PerformanceDayPoint {
   date: string;
   day: string;
@@ -328,10 +350,19 @@ Deno.serve(async (req) => {
         }, 200);
       }
 
+      case "scan_trend_by_type": {
+        const data = await computeScanTrendByType(supabase, organizationId, filters);
+        return successResponse({
+          status: "success",
+          message: "Analytics computed successfully",
+          data,
+        }, 200);
+      }
+
       default:
         return errorResponse(
           "INVALID_TYPE",
-          `Analytics type "${type}" is not supported. Supported types: dashboard_cards, delivery_funnel, waste_meter, scan_trend, recent_scans, campaign_leaderboard, performance_trend, campaign_performance`,
+          `Analytics type "${type}" is not supported. Supported types: dashboard_cards, delivery_funnel, waste_meter, scan_trend, recent_scans, campaign_leaderboard, performance_trend, campaign_performance, scan_trend_by_type`,
           400,
         );
     }
@@ -1448,4 +1479,182 @@ async function computeCampaignPerformance(
     : [];
 
   return { top_performers, bottom_performers };
+}
+
+// ---------------------------------------------------------------------------
+// Scan Trend By Type
+// ---------------------------------------------------------------------------
+
+type CampaignTargetType = "location_zone" | "referral" | "addresses_list";
+
+const TARGET_TYPE_MAP: Record<string, CampaignTargetType> = {
+  "Location Zone": "location_zone",
+  "Referral": "referral",
+  "Addresses List": "addresses_list",
+};
+
+/**
+ * Compute Scan Trend By Campaign Target Type
+ *
+ * Shows what fraction of QR scans in each time period came from each
+ * campaign_target_type (Location Zone / Referral / Addresses List).
+ *
+ * Structure mirrors performance_trend:
+ *   daily_data   — today (single object)
+ *   weekly_data  — Mon–Sun of current calendar week (7 entries)
+ *   monthly_data — current month in 5 weekly buckets (1–7, 8–14, 15–21, 22–28, 29–end)
+ *
+ * For each period:
+ *   location_zone  = scans from Location Zone campaigns  / total scans in period
+ *   referral       = scans from Referral campaigns        / total scans in period
+ *   addresses_list = scans from Addresses List campaigns  / total scans in period
+ *   (the three fractions sum to 1.0 when total > 0, all 0.0 when no scans)
+ *
+ * Scans are sourced from PostGrid GET /trackers/{id}/visits per campaign.
+ * campaign_ids filter scopes which campaigns are included.
+ * Time-based filters are ignored — the windows are always today / this week / this month.
+ */
+async function computeScanTrendByType(
+  supabase: any,
+  organizationId: string,
+  filters: AnalyticsFilters,
+): Promise<ScanTrendByTypeData> {
+  const postgridApiKey =
+    Deno.env.get("POSTGRID_POSTCARD_API_KEY") ??
+    Deno.env.get("VITE_POSTGRID_POSTCARD_API_KEY");
+
+  const now = new Date();
+  const toDateStr = (d: Date): string => d.toISOString().slice(0, 10);
+  const todayStr = toDateStr(now);
+
+  const weekStart = new Date(now);
+  const dayOfWeek = now.getDay();
+  weekStart.setDate(now.getDate() - (dayOfWeek === 0 ? 6 : dayOfWeek - 1));
+  weekStart.setHours(0, 0, 0, 0);
+
+  const year = now.getFullYear();
+  const month = now.getMonth();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+
+  const emptyBreakdown = (): ScanTypeBreakdown => ({
+    location_zone: 0,
+    referral: 0,
+    addresses_list: 0,
+  });
+
+  // Fetch campaigns with trackers and their target type
+  let campaignsQuery = supabase
+    .from("campaigns")
+    .select("postgrid_tracker_id, campaign_target_type")
+    .eq("organization_id", organizationId)
+    .not("postgrid_tracker_id", "is", null)
+    .not("campaign_target_type", "is", null);
+  if (filters.campaign_ids) campaignsQuery = campaignsQuery.in("id", filters.campaign_ids);
+  const { data: campaigns, error: campaignsError } = await campaignsQuery;
+
+  if (campaignsError) {
+    console.error("Error fetching campaigns for scan_trend_by_type:", campaignsError);
+    throw new Error("Failed to fetch campaign data");
+  }
+
+  const campaignList: Array<{
+    postgrid_tracker_id: string;
+    campaign_target_type: string;
+  }> = (campaigns ?? []).filter(
+    (c: any) => c.campaign_target_type in TARGET_TYPE_MAP,
+  );
+
+  // scansByDateByType[dateStr][typeKey] = count
+  const scansByDateByType = new Map<string, Partial<Record<CampaignTargetType, number>>>();
+
+  const addScan = (dateStr: string, typeKey: CampaignTargetType) => {
+    if (!scansByDateByType.has(dateStr)) scansByDateByType.set(dateStr, {});
+    const bucket = scansByDateByType.get(dateStr)!;
+    bucket[typeKey] = (bucket[typeKey] ?? 0) + 1;
+  };
+
+  if (postgridApiKey && campaignList.length > 0) {
+    await Promise.all(
+      campaignList.map(async (campaign) => {
+        const typeKey = TARGET_TYPE_MAP[campaign.campaign_target_type];
+        try {
+          const response = await fetch(
+            `${POSTGRID_TRACKER_BASE_URL}/${campaign.postgrid_tracker_id}/visits?limit=1000&skip=0`,
+            { headers: { "x-api-key": postgridApiKey } },
+          );
+          if (!response.ok) return;
+          const result = await response.json();
+          const visits: Array<Record<string, any>> = Array.isArray(result.data)
+            ? result.data
+            : Array.isArray(result)
+            ? result
+            : [];
+
+          for (const v of visits) {
+            const ts: string | undefined = v.createdAt ?? v.created_at;
+            if (!ts) continue;
+            addScan(ts.slice(0, 10), typeKey);
+          }
+        } catch (err) {
+          console.error(
+            `[scan_trend_by_type] Failed for tracker ${campaign.postgrid_tracker_id}:`,
+            err,
+          );
+        }
+      }),
+    );
+  }
+
+  // Build fraction breakdown for a set of date strings
+  const breakdownForDates = (dates: string[]): ScanTypeBreakdown => {
+    let lz = 0, ref = 0, al = 0;
+    for (const d of dates) {
+      const b = scansByDateByType.get(d);
+      if (!b) continue;
+      lz  += b.location_zone  ?? 0;
+      ref += b.referral        ?? 0;
+      al  += b.addresses_list  ?? 0;
+    }
+    const total = lz + ref + al;
+    if (total === 0) return emptyBreakdown();
+    const frac = (n: number) => Math.round((n / total) * 10000) / 10000;
+    return { location_zone: frac(lz), referral: frac(ref), addresses_list: frac(al) };
+  };
+
+  // daily_data
+  const daily_data: ScanTrendByTypeDayPoint = {
+    date: todayStr,
+    day: DAY_NAMES[now.getDay()],
+    ...breakdownForDates([todayStr]),
+  };
+
+  // weekly_data (Mon–Sun)
+  const weekly_data: ScanTrendByTypeDayPoint[] = Array.from({ length: 7 }, (_, i) => {
+    const d = new Date(weekStart);
+    d.setDate(weekStart.getDate() + i);
+    const dateStr = toDateStr(d);
+    return { date: dateStr, day: DAY_NAMES[d.getDay()], ...breakdownForDates([dateStr]) };
+  });
+
+  // monthly_data (5 fixed weekly buckets)
+  const monthStr = `${year}-${String(month + 1).padStart(2, "0")}`;
+  const buckets = [
+    { week: "Week 1", start: 1,  end: 7 },
+    { week: "Week 2", start: 8,  end: 14 },
+    { week: "Week 3", start: 15, end: 21 },
+    { week: "Week 4", start: 22, end: 28 },
+    { week: "Week 5", start: 29, end: daysInMonth },
+  ].filter((b) => b.start <= daysInMonth);
+
+  const monthly_data: ScanTrendByTypeWeekPoint[] = buckets.map((b) => {
+    const end = Math.min(b.end, daysInMonth);
+    const dates: string[] = [];
+    for (let day = b.start; day <= end; day++) {
+      dates.push(`${monthStr}-${String(day).padStart(2, "0")}`);
+    }
+    const range = b.start === end ? `${b.start}` : `${b.start}-${end}`;
+    return { week: b.week, range, ...breakdownForDates(dates) };
+  });
+
+  return { daily_data, weekly_data, monthly_data };
 }

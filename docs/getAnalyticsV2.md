@@ -22,6 +22,7 @@ Returns real-time delivery analytics based on individual PostGrid postcard recor
 | `campaign_leaderboard` | Top 5 campaigns ranked by total QR scans |
 | `performance_trend` | Delivery & scan rates for today, this week, and this month |
 | `campaign_performance` | Top 5 best and bottom 5 worst campaigns by QR scans |
+| `scan_trend_by_type` | QR scan fraction by campaign target type for today, this week, this month |
 
 ---
 
@@ -897,6 +898,89 @@ curl -X POST https://xnflihspegizweqidvow.supabase.co/functions/v1/getAnalyticsV
   }
 }
 ```
+
+---
+
+---
+
+### `scan_trend_by_type`
+
+Shows what fraction of QR scans in each time period came from each campaign target type. The three fractions always sum to 1.0 when at least one scan occurred in that period. All three are 0.0 when there were no scans.
+
+**Campaign target types:**
+| DB value | Response key |
+|---|---|
+| `Location Zone` | `location_zone` |
+| `Referral` | `referral` |
+| `Addresses List` | `addresses_list` |
+
+Time-based filters are ignored — windows are always today / this week / this month. `campaign_ids` applies.
+
+#### Curl — all campaigns
+
+```bash
+curl -X POST https://xnflihspegizweqidvow.supabase.co/functions/v1/getAnalyticsV2 \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "type": "scan_trend_by_type"
+  }'
+```
+
+#### Curl — with `campaign_ids` filter
+
+```bash
+curl -X POST https://xnflihspegizweqidvow.supabase.co/functions/v1/getAnalyticsV2 \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "type": "scan_trend_by_type",
+    "campaign_ids": ["a1b2c3d4-e5f6-7890-abcd-ef1234567890"]
+  }'
+```
+
+#### Success Response `200`
+
+```json
+{
+  "status": "success",
+  "message": "Analytics computed successfully",
+  "data": {
+    "daily_data": {
+      "date": "2026-04-22",
+      "day": "Tuesday",
+      "location_zone": 0.5,
+      "referral": 0.3333,
+      "addresses_list": 0.1667
+    },
+    "weekly_data": [
+      { "date": "2026-04-20", "day": "Monday",    "location_zone": 0.6,  "referral": 0.25,   "addresses_list": 0.15   },
+      { "date": "2026-04-21", "day": "Tuesday",   "location_zone": 0.5,  "referral": 0.3333, "addresses_list": 0.1667 },
+      { "date": "2026-04-22", "day": "Wednesday", "location_zone": 0.0,  "referral": 0.0,    "addresses_list": 0.0    },
+      { "date": "2026-04-23", "day": "Thursday",  "location_zone": 0.0,  "referral": 0.0,    "addresses_list": 0.0    },
+      { "date": "2026-04-24", "day": "Friday",    "location_zone": 0.0,  "referral": 0.0,    "addresses_list": 0.0    },
+      { "date": "2026-04-25", "day": "Saturday",  "location_zone": 0.0,  "referral": 0.0,    "addresses_list": 0.0    },
+      { "date": "2026-04-26", "day": "Sunday",    "location_zone": 0.0,  "referral": 0.0,    "addresses_list": 0.0    }
+    ],
+    "monthly_data": [
+      { "week": "Week 1", "range": "1-7",   "location_zone": 0.55, "referral": 0.3,    "addresses_list": 0.15   },
+      { "week": "Week 2", "range": "8-14",  "location_zone": 0.48, "referral": 0.35,   "addresses_list": 0.17   },
+      { "week": "Week 3", "range": "15-21", "location_zone": 0.6,  "referral": 0.28,   "addresses_list": 0.12   },
+      { "week": "Week 4", "range": "22-28", "location_zone": 0.5,  "referral": 0.3333, "addresses_list": 0.1667 },
+      { "week": "Week 5", "range": "29-30", "location_zone": 0.0,  "referral": 0.0,    "addresses_list": 0.0    }
+    ]
+  }
+}
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `daily_data` / `weekly_data[]` / `monthly_data[]` | `object` | Time bucket |
+| `*.location_zone` | `number` | Fraction of scans from `Location Zone` campaigns (0.0–1.0) |
+| `*.referral` | `number` | Fraction of scans from `Referral` campaigns (0.0–1.0) |
+| `*.addresses_list` | `number` | Fraction of scans from `Addresses List` campaigns (0.0–1.0) |
+
+The three values sum to `1.0` for any period where scans occurred. All are `0.0` for periods with no scans.
 
 ---
 
