@@ -9779,6 +9779,7 @@ paths:
                     - scan_trend
                     - recent_scans
                     - campaign_leaderboard
+                    - performance_trend
                   description: |
                     The analytics view to retrieve.
                     - `dashboard_cards` — high-level summary card metrics
@@ -9787,6 +9788,7 @@ paths:
                     - `scan_trend` — QR scan totals, unique scans, scan rate, day-of-week breakdown
                     - `recent_scans` — 5 most recent QR scans per campaign with address and timestamp
                     - `campaign_leaderboard` — top 5 campaigns ranked by total QR scans
+                    - `performance_trend` — delivery & scan rates for today, this week, and this month
                 campaign_ids:
                   type: array
                   items:
@@ -9866,6 +9868,15 @@ paths:
                 value:
                   type: "campaign_leaderboard"
                   last_month: true
+              performance_trend:
+                summary: "performance_trend — today / this week / this month"
+                value:
+                  type: "performance_trend"
+              performance_trend_filtered:
+                summary: "performance_trend — specific campaigns only"
+                value:
+                  type: "performance_trend"
+                  campaign_ids: ["a1b2c3d4-e5f6-7890-abcd-ef1234567890"]
       responses:
         "200":
           description: Analytics computed successfully
@@ -9892,6 +9903,7 @@ paths:
                       - $ref: "#/components/schemas/ScanTrendAnalytics"
                       - $ref: "#/components/schemas/RecentScansAnalytics"
                       - $ref: "#/components/schemas/CampaignLeaderboardAnalytics"
+                      - $ref: "#/components/schemas/PerformanceTrendAnalytics"
                     discriminator:
                       propertyName: _type
               examples:
@@ -10027,6 +10039,82 @@ paths:
                           total_postcards_sent: 800
                           scan_rate: 0.88
                           ranking_position: 5
+                performance_trend:
+                  summary: "performance_trend response"
+                  value:
+                    status: "success"
+                    message: "Analytics computed successfully"
+                    data:
+                      total_delivery_rate: 0.7273
+                      total_scan_rate: 0.0631
+                      daily_data:
+                        date: "2026-04-22"
+                        day: "Tuesday"
+                        delivery_rate: 0.8
+                        scan_rate: 0.002
+                        total_volume: 50
+                      weekly_data:
+                        - date: "2026-04-20"
+                          day: "Monday"
+                          delivery_rate: 0.75
+                          scan_rate: 0.0015
+                          total_volume: 80
+                        - date: "2026-04-21"
+                          day: "Tuesday"
+                          delivery_rate: 0.8
+                          scan_rate: 0.002
+                          total_volume: 50
+                        - date: "2026-04-22"
+                          day: "Wednesday"
+                          delivery_rate: 0.0
+                          scan_rate: 0.0
+                          total_volume: 0
+                        - date: "2026-04-23"
+                          day: "Thursday"
+                          delivery_rate: 0.0
+                          scan_rate: 0.0
+                          total_volume: 0
+                        - date: "2026-04-24"
+                          day: "Friday"
+                          delivery_rate: 0.0
+                          scan_rate: 0.0
+                          total_volume: 0
+                        - date: "2026-04-25"
+                          day: "Saturday"
+                          delivery_rate: 0.0
+                          scan_rate: 0.0
+                          total_volume: 0
+                        - date: "2026-04-26"
+                          day: "Sunday"
+                          delivery_rate: 0.0
+                          scan_rate: 0.0
+                          total_volume: 0
+                      monthly_data:
+                        - week: "Week 1"
+                          range: "1-7"
+                          delivery_rate: 0.82
+                          scan_rate: 0.018
+                          total_volume: 220
+                        - week: "Week 2"
+                          range: "8-14"
+                          delivery_rate: 0.79
+                          scan_rate: 0.022
+                          total_volume: 310
+                        - week: "Week 3"
+                          range: "15-21"
+                          delivery_rate: 0.71
+                          scan_rate: 0.019
+                          total_volume: 180
+                        - week: "Week 4"
+                          range: "22-28"
+                          delivery_rate: 0.8
+                          scan_rate: 0.004
+                          total_volume: 50
+                        - week: "Week 5"
+                          range: "29-30"
+                          delivery_rate: 0.0
+                          scan_rate: 0.0
+                          total_volume: 0
         "400":
           description: Invalid request — missing or unsupported type
           content:
@@ -18206,6 +18294,119 @@ components:
                 description: |
                   Rank within the leaderboard. `1` = campaign with the most scans.
                 example: 1
+
+    PerformanceDayPoint:
+      type: object
+      required:
+        - date
+        - day
+        - delivery_rate
+        - scan_rate
+        - total_volume
+      properties:
+        date:
+          type: string
+          format: date
+          description: Calendar date (YYYY-MM-DD).
+          example: "2026-04-22"
+        day:
+          type: string
+          description: Day of week name.
+          example: "Tuesday"
+        delivery_rate:
+          type: number
+          format: float
+          description: Fraction of postcards created on this date that reached `completed` status (0.0–1.0).
+          example: 0.8
+        scan_rate:
+          type: number
+          format: float
+          description: Scans that occurred on this date divided by total postcards sent org-wide (0.0–1.0).
+          example: 0.002
+        total_volume:
+          type: integer
+          description: Number of postcards created on this date.
+          example: 50
+
+    PerformanceWeekPoint:
+      type: object
+      required:
+        - week
+        - range
+        - delivery_rate
+        - scan_rate
+        - total_volume
+      properties:
+        week:
+          type: string
+          description: Week label within the month.
+          example: "Week 1"
+        range:
+          type: string
+          description: Day range within the month (e.g. "1-7", "29-30").
+          example: "1-7"
+        delivery_rate:
+          type: number
+          format: float
+          description: Fraction of postcards created in this week bucket that reached `completed` status (0.0–1.0).
+          example: 0.82
+        scan_rate:
+          type: number
+          format: float
+          description: Scans that occurred in this week bucket divided by total postcards sent org-wide (0.0–1.0).
+          example: 0.018
+        total_volume:
+          type: integer
+          description: Number of postcards created in this week bucket.
+          example: 220
+
+    PerformanceTrendAnalytics:
+      type: object
+      description: |
+        Delivery and scan rate performance across three fixed time windows for the current period.
+
+        **delivery_rate** per period = completed postcards created in that period / total postcards in that period
+        **scan_rate** per period     = scans that occurred in that period / total postcards sent org-wide (all time)
+        **total_volume**             = postcards created in that period
+
+        `campaign_ids` filter scopes both postcard and tracker data. Time-based filters are ignored
+        for this type — the three windows (today / this week / this month) are always fixed.
+
+        Future days in `weekly_data` and `monthly_data` will have `delivery_rate: 0`, `scan_rate: 0`,
+        `total_volume: 0` as no data exists yet.
+      required:
+        - total_delivery_rate
+        - total_scan_rate
+        - daily_data
+        - weekly_data
+        - monthly_data
+      properties:
+        total_delivery_rate:
+          type: number
+          format: float
+          description: Overall delivery rate across all postcards (all time). 0.0–1.0.
+          example: 0.7273
+        total_scan_rate:
+          type: number
+          format: float
+          description: Overall scan rate — total scans / total postcards sent. 0.0–1.0.
+          example: 0.0631
+        daily_data:
+          $ref: "#/components/schemas/PerformanceDayPoint"
+          description: Today's metrics (single object).
+        weekly_data:
+          type: array
+          description: One entry per day of the current Mon–Sun calendar week (always 7 entries).
+          items:
+            $ref: "#/components/schemas/PerformanceDayPoint"
+        monthly_data:
+          type: array
+          description: |
+            Current month split into up to 5 weekly buckets:
+            Week 1 (1–7), Week 2 (8–14), Week 3 (15–21), Week 4 (22–28), Week 5 (29–end of month).
+            Months shorter than 29 days omit Week 5.
+          items:
+            $ref: "#/components/schemas/PerformanceWeekPoint"
 
     GlobalExclusionsAnalytics:
       type: object

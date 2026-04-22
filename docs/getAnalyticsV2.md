@@ -20,6 +20,7 @@ Returns real-time delivery analytics based on individual PostGrid postcard recor
 | `scan_trend` | QR scan totals, unique scans, day-of-week breakdown |
 | `recent_scans` | 5 most recent QR scan events per campaign |
 | `campaign_leaderboard` | Top 5 campaigns ranked by total QR scans |
+| `performance_trend` | Delivery & scan rates for today, this week, and this month |
 
 ---
 
@@ -899,6 +900,96 @@ curl -X POST https://xnflihspegizweqidvow.supabase.co/functions/v1/getAnalyticsV
 ---
 
 ## Filter Behaviour Notes
+
+---
+
+### `performance_trend`
+
+Returns delivery and scan rate metrics broken down across three fixed time windows for the current calendar period. Time-based filters (`last_24hours`, `last_week`, `last_month`) are ignored for this type — the three windows are always today / this week / this month. `campaign_ids` still applies.
+
+**Rates:**
+- `delivery_rate` per period = completed postcards created in that period / total postcards created in that period
+- `scan_rate` per period = scans that occurred in that period / total postcards sent org-wide (all time)
+- `total_volume` = postcards created in that period
+
+#### Curl — all campaigns
+
+```bash
+curl -X POST https://xnflihspegizweqidvow.supabase.co/functions/v1/getAnalyticsV2 \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "type": "performance_trend"
+  }'
+```
+
+#### Curl — with `campaign_ids` filter
+
+```bash
+curl -X POST https://xnflihspegizweqidvow.supabase.co/functions/v1/getAnalyticsV2 \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "type": "performance_trend",
+    "campaign_ids": [
+      "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      "b2c3d4e5-f6a7-8901-bcde-f12345678901"
+    ]
+  }'
+```
+
+#### Success Response `200`
+
+```json
+{
+  "status": "success",
+  "message": "Analytics computed successfully",
+  "data": {
+    "total_delivery_rate": 0.7273,
+    "total_scan_rate": 0.0631,
+    "daily_data": {
+      "date": "2026-04-22",
+      "day": "Tuesday",
+      "delivery_rate": 0.8,
+      "scan_rate": 0.002,
+      "total_volume": 50
+    },
+    "weekly_data": [
+      { "date": "2026-04-20", "day": "Monday",    "delivery_rate": 0.75, "scan_rate": 0.0015, "total_volume": 80 },
+      { "date": "2026-04-21", "day": "Tuesday",   "delivery_rate": 0.8,  "scan_rate": 0.002,  "total_volume": 50 },
+      { "date": "2026-04-22", "day": "Wednesday", "delivery_rate": 0.0,  "scan_rate": 0.0,    "total_volume": 0 },
+      { "date": "2026-04-23", "day": "Thursday",  "delivery_rate": 0.0,  "scan_rate": 0.0,    "total_volume": 0 },
+      { "date": "2026-04-24", "day": "Friday",    "delivery_rate": 0.0,  "scan_rate": 0.0,    "total_volume": 0 },
+      { "date": "2026-04-25", "day": "Saturday",  "delivery_rate": 0.0,  "scan_rate": 0.0,    "total_volume": 0 },
+      { "date": "2026-04-26", "day": "Sunday",    "delivery_rate": 0.0,  "scan_rate": 0.0,    "total_volume": 0 }
+    ],
+    "monthly_data": [
+      { "week": "Week 1", "range": "1-7",   "delivery_rate": 0.82, "scan_rate": 0.018, "total_volume": 220 },
+      { "week": "Week 2", "range": "8-14",  "delivery_rate": 0.79, "scan_rate": 0.022, "total_volume": 310 },
+      { "week": "Week 3", "range": "15-21", "delivery_rate": 0.71, "scan_rate": 0.019, "total_volume": 180 },
+      { "week": "Week 4", "range": "22-28", "delivery_rate": 0.8,  "scan_rate": 0.004, "total_volume": 50  },
+      { "week": "Week 5", "range": "29-30", "delivery_rate": 0.0,  "scan_rate": 0.0,   "total_volume": 0   }
+    ]
+  }
+}
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `total_delivery_rate` | `number` | Overall delivery rate, all time (0.0–1.0) |
+| `total_scan_rate` | `number` | Overall scan rate = total scans / total postcards sent (0.0–1.0) |
+| `daily_data` | `object` | Today's metrics |
+| `daily_data.date` | `string` | Date string `YYYY-MM-DD` |
+| `daily_data.day` | `string` | Day of week name (`"Monday"` … `"Sunday"`) |
+| `daily_data.delivery_rate` | `number` | Completed / sent today (0.0–1.0) |
+| `daily_data.scan_rate` | `number` | Scans today / total postcards sent all time (0.0–1.0) |
+| `daily_data.total_volume` | `number` | Postcards created today |
+| `weekly_data` | `array[7]` | One entry per day of the current Mon–Sun calendar week |
+| `monthly_data` | `array[4-5]` | Current month in 5 weekly buckets (Week 1: 1–7 … Week 5: 29–end) |
+
+> Future days within `weekly_data` and future week buckets in `monthly_data` will always return `delivery_rate: 0`, `scan_rate: 0`, `total_volume: 0`.
+
+---
 
 ### `campaign_ids` with PostGrid-based types
 

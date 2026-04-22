@@ -182,6 +182,30 @@ interface CampaignLeaderboardData {
   leaderboard: LeaderboardEntry[];
 }
 
+interface PerformanceDayPoint {
+  date: string;
+  day: string;
+  delivery_rate: number;
+  scan_rate: number;
+  total_volume: number;
+}
+
+interface PerformanceWeekPoint {
+  week: string;
+  range: string;
+  delivery_rate: number;
+  scan_rate: number;
+  total_volume: number;
+}
+
+interface PerformanceTrendData {
+  total_delivery_rate: number;
+  total_scan_rate: number;
+  daily_data: PerformanceDayPoint;
+  weekly_data: PerformanceDayPoint[];
+  monthly_data: PerformanceWeekPoint[];
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return corsResponse();
@@ -281,10 +305,19 @@ Deno.serve(async (req) => {
         }, 200);
       }
 
+      case "performance_trend": {
+        const data = await computePerformanceTrend(supabase, organizationId, filters);
+        return successResponse({
+          status: "success",
+          message: "Analytics computed successfully",
+          data,
+        }, 200);
+      }
+
       default:
         return errorResponse(
           "INVALID_TYPE",
-          `Analytics type "${type}" is not supported. Supported types: dashboard_cards, delivery_funnel, waste_meter, scan_trend, recent_scans, campaign_leaderboard`,
+          `Analytics type "${type}" is not supported. Supported types: dashboard_cards, delivery_funnel, waste_meter, scan_trend, recent_scans, campaign_leaderboard, performance_trend`,
           400,
         );
     }
@@ -1078,4 +1111,199 @@ async function computeCampaignLeaderboard(
     .map((entry, index) => ({ ...entry, ranking_position: index + 1 }));
 
   return { leaderboard };
+}
+
+// ---------------------------------------------------------------------------
+// Performance Trend
+// ---------------------------------------------------------------------------
+
+const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+
+/**
+ * Compute Performance Trend Analytics
+ *
+ * Returns delivery and scan rate metrics broken down across three time windows
+ * for the current calendar period:
+ *
+ *   daily_data   — today only (single object)
+ *   weekly_data  — each day of the current Mon–Sun calendar week (7 entries)
+ *   monthly_data — current month split into fixed weekly buckets:
+ *                  Week 1: 1–7, Week 2: 8–14, Week 3: 15–21,
+ *                  Week 4: 22–28, Week 5: 29–end of month
+ *
+ * delivery_rate per period = completed postcards created in that period / total postcards created in that period
+ * scan_rate per period     = scans that occurred in that period / total postcards sent (org-wide, all time)
+ * total_volume             = postcards created in that period
+ *
+ * campaign_ids filter scopes both postcard_sends and PostGrid tracker queries.
+ * Time-based filters (last_24hours etc.) are ignored — the structure is fixed to today/this week/this month.
+ */
+async function computePerformanceTrend(
+  supabase: any,
+  organizationId: string,
+  filters: AnalyticsFilters,
+): Promise<PerformanceTrendData> {
+  const postgridApiKey =
+    Deno.env.get("POSTGRID_POSTCARD_API_KEY") ??
+    Deno.env.get("VITE_POSTGRID_POSTCARD_API_KEY");
+
+  const now = new Date();
+  const toDateStr = (d: Date): string => d.toISOString().slice(0, 10);
+  const todayStr = toDateStr(now);
+
+  // Start of current Mon–Sun week
+  const weekStart = new Date(now);
+  const dayOfWeek = now.getDay(); // 0 = Sun
+  weekStart.setDate(now.getDate() - (dayOfWeek === 0 ? 6 : dayOfWeek - 1));
+  weekStart.setHours(0, 0, 0, 0);
+
+  const year = now.getFullYear();
+  const month = now.getMonth();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+
+  // --- 1. Fetch all postcard_sends ---
+  let postcardsQuery = supabase
+    .from("postcard_sends")
+    .select("created_at, postgrid_status")
+    .eq("organization_id", organizationId);
+  if (filters.campaign_ids) postcardsQuery = postcardsQuery.in("campaign_id", filters.campaign_ids);
+  const { data: postcardsRaw, error: postcardsError } = await postcardsQuery;
+
+  if (postcardsError) {
+    console.error("Error fetching postcard_sends for performance_trend:", postcardsError);
+    throw new Error("Failed to fetch postcard data");
+  }
+
+  const postcards: Array<{ created_at: string; postgrid_status: string }> = postcardsRaw ?? [];
+  const totalSent = postcards.length;
+  const totalDelivered = postcards.filter((p) => p.postgrid_status === "completed").length;
+  const totalDeliveryRate = totalSent > 0
+    ? Math.round((totalDelivered / totalSent) * 10000) / 10000
+    : 0;
+
+  // --- 2. Fetch PostGrid visits, bucket by date ---
+  const scansByDate = new Map<string, number>();
+  let totalScans = 0;
+
+  if (postgridApiKey) {
+    let campaignsQuery = supabase
+      .from("campaigns")
+      .select("postgrid_tracker_id")
+      .eq("organization_id", organizationId)
+      .not("postgrid_tracker_id", "is", null);
+    if (filters.campaign_ids) campaignsQuery = campaignsQuery.in("id", filters.campaign_ids);
+    const { data: campaigns } = await campaignsQuery;
+
+    if (campaigns && campaigns.length > 0) {
+      await Promise.all(
+        (campaigns as Array<{ postgrid_tracker_id: string }>).map(async (c) => {
+          try {
+            const response = await fetch(
+              `${POSTGRID_TRACKER_BASE_URL}/${c.postgrid_tracker_id}/visits?limit=1000&skip=0`,
+              { headers: { "x-api-key": postgridApiKey } },
+            );
+            if (!response.ok) return;
+            const result = await response.json();
+            const visits: Array<Record<string, any>> = Array.isArray(result.data)
+              ? result.data
+              : Array.isArray(result)
+              ? result
+              : [];
+
+            for (const v of visits) {
+              const ts: string | undefined = v.createdAt ?? v.created_at;
+              if (!ts) continue;
+              const dateStr = ts.slice(0, 10);
+              scansByDate.set(dateStr, (scansByDate.get(dateStr) ?? 0) + 1);
+              totalScans++;
+            }
+          } catch (err) {
+            console.error(`[performance_trend] Failed for tracker ${c.postgrid_tracker_id}:`, err);
+          }
+        }),
+      );
+    }
+  }
+
+  const totalScanRate = totalSent > 0
+    ? Math.round((totalScans / totalSent) * 10000) / 10000
+    : 0;
+
+  // --- Helpers ---
+  const rate4dp = (n: number, d: number): number =>
+    d > 0 ? Math.round((n / d) * 10000) / 10000 : 0;
+
+  // Metrics for a single calendar date (YYYY-MM-DD)
+  const metricsForDate = (dateStr: string) => {
+    const dayCards = postcards.filter((p) => p.created_at.slice(0, 10) === dateStr);
+    const vol = dayCards.length;
+    const delivered = dayCards.filter((p) => p.postgrid_status === "completed").length;
+    const scans = scansByDate.get(dateStr) ?? 0;
+    return {
+      delivery_rate: rate4dp(delivered, vol),
+      scan_rate: rate4dp(scans, totalSent),
+      total_volume: vol,
+    };
+  };
+
+  // Metrics for a range of days within a specific year/month (month is 0-based)
+  const metricsForRange = (startDay: number, endDay: number) => {
+    const monthStr = `${year}-${String(month + 1).padStart(2, "0")}`;
+    const rangeCards = postcards.filter((p) => {
+      const d = p.created_at.slice(0, 10);
+      if (!d.startsWith(monthStr)) return false;
+      const day = parseInt(d.slice(8, 10), 10);
+      return day >= startDay && day <= endDay;
+    });
+    const vol = rangeCards.length;
+    const delivered = rangeCards.filter((p) => p.postgrid_status === "completed").length;
+    let scans = 0;
+    for (let day = startDay; day <= endDay; day++) {
+      const dateStr = `${monthStr}-${String(day).padStart(2, "0")}`;
+      scans += scansByDate.get(dateStr) ?? 0;
+    }
+    return {
+      delivery_rate: rate4dp(delivered, vol),
+      scan_rate: rate4dp(scans, totalSent),
+      total_volume: vol,
+    };
+  };
+
+  // --- 3. daily_data ---
+  const daily_data: PerformanceDayPoint = {
+    date: todayStr,
+    day: DAY_NAMES[now.getDay()],
+    ...metricsForDate(todayStr),
+  };
+
+  // --- 4. weekly_data (Mon–Sun) ---
+  const weekly_data: PerformanceDayPoint[] = Array.from({ length: 7 }, (_, i) => {
+    const d = new Date(weekStart);
+    d.setDate(weekStart.getDate() + i);
+    const dateStr = toDateStr(d);
+    return { date: dateStr, day: DAY_NAMES[d.getDay()], ...metricsForDate(dateStr) };
+  });
+
+  // --- 5. monthly_data (5 fixed weekly buckets) ---
+  const buckets = [
+    { week: "Week 1", start: 1, end: 7 },
+    { week: "Week 2", start: 8, end: 14 },
+    { week: "Week 3", start: 15, end: 21 },
+    { week: "Week 4", start: 22, end: 28 },
+    { week: "Week 5", start: 29, end: daysInMonth },
+  ].filter((b) => b.start <= daysInMonth);
+
+  const monthly_data: PerformanceWeekPoint[] = buckets.map((b) => {
+    const end = Math.min(b.end, daysInMonth);
+    const range = b.start === end ? `${b.start}` : `${b.start}-${end}`;
+    return { week: b.week, range, ...metricsForRange(b.start, end) };
+  });
+
+  return {
+    total_delivery_rate: totalDeliveryRate,
+    total_scan_rate: totalScanRate,
+    daily_data,
+    weekly_data,
+    monthly_data,
+  };
 }
