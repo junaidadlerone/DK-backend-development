@@ -9784,6 +9784,7 @@ paths:
                     - campaign_performance
                     - scan_trend_by_type
                     - postcard_overview
+                    - active_campaigns
                   description: |
                     The analytics view to retrieve.
                     - `dashboard_cards` — high-level summary cards including total QR scans
@@ -9792,10 +9793,11 @@ paths:
                     - `scan_trend` — QR scan totals, unique scans, scan rate, day-of-week breakdown
                     - `recent_scans` — 5 most recent QR scans per campaign with address and timestamp
                     - `campaign_leaderboard` — top 5 campaigns ranked by total QR scans
-                    - `performance_trend` — delivery & scan rates for last 7 days, current month weeks, and last 12 months
+                    - `performance_trend` — per-day delivery & scan rate for the past 6 months (180 entries, oldest → today)
                     - `campaign_performance` — top 5 best and bottom 5 worst performing campaigns by QR scans
-                    - `scan_trend_by_type` — QR scan fraction per campaign target type for last 7 days, current month weeks, and last 12 months
+                    - `scan_trend_by_type` — per-day QR scan breakdown by campaign target type for the past 6 months (180 entries, oldest → today)
                     - `postcard_overview` — per-campaign breakdown: delivered+scanned, delivered-not-scanned, in-transit, returned/cancelled
+                    - `active_campaigns` — live status card for every Active campaign: days running, in-flight, scans, delivery rate, status
                 campaign_ids:
                   type: array
                   items:
@@ -9912,6 +9914,15 @@ paths:
                 value:
                   type: "postcard_overview"
                   campaign_ids: ["a1b2c3d4-e5f6-7890-abcd-ef1234567890", "b2c3d4e5-f6a7-8901-bcde-f12345678901"]
+              active_campaigns:
+                summary: "active_campaigns — all active campaigns"
+                value:
+                  type: "active_campaigns"
+              active_campaigns_filtered:
+                summary: "active_campaigns — specific campaigns only"
+                value:
+                  type: "active_campaigns"
+                  campaign_ids: ["a1b2c3d4-e5f6-7890-abcd-ef1234567890"]
       responses:
         "200":
           description: Analytics computed successfully
@@ -9942,6 +9953,7 @@ paths:
                       - $ref: "#/components/schemas/CampaignPerformanceAnalytics"
                       - $ref: "#/components/schemas/ScanTrendByTypeAnalytics"
                       - $ref: "#/components/schemas/PostcardOverviewAnalytics"
+                      - $ref: "#/components/schemas/ActiveCampaignsAnalytics"
                     discriminator:
                       propertyName: _type
               examples:
@@ -10079,119 +10091,36 @@ paths:
                           scan_rate: 0.88
                           ranking_position: 5
                 performance_trend:
-                  summary: "performance_trend response"
+                  summary: "performance_trend response (truncated — 180 entries total)"
                   value:
                     status: "success"
                     message: "Analytics computed successfully"
                     data:
-                      total_delivery_rate: 0.7273
-                      total_scan_rate: 0.0631
-                      daily_data:
-                        - date: "2026-04-16"
-                          day: "Thursday"
-                          delivery_rate: 0.85
-                          scan_rate: 0.0018
-                          total_volume: 120
-                        - date: "2026-04-17"
-                          day: "Friday"
-                          delivery_rate: 0.80
-                          scan_rate: 0.0021
-                          total_volume: 95
-                        - date: "2026-04-18"
-                          day: "Saturday"
-                          delivery_rate: 0.0
-                          scan_rate: 0.0003
-                          total_volume: 0
-                        - date: "2026-04-19"
-                          day: "Sunday"
-                          delivery_rate: 0.0
-                          scan_rate: 0.0
-                          total_volume: 0
-                        - date: "2026-04-20"
-                          day: "Monday"
-                          delivery_rate: 0.75
-                          scan_rate: 0.0015
-                          total_volume: 80
-                        - date: "2026-04-21"
-                          day: "Tuesday"
-                          delivery_rate: 0.80
-                          scan_rate: 0.0020
-                          total_volume: 50
-                        - date: "2026-04-22"
-                          day: "Wednesday"
-                          delivery_rate: 0.60
-                          scan_rate: 0.0008
-                          total_volume: 30
-                      weekly_data:
-                        - week: "Week 1"
-                          range: "1-7"
-                          delivery_rate: 0.82
-                          scan_rate: 0.018
-                          total_volume: 220
-                        - week: "Week 2"
-                          range: "8-14"
-                          delivery_rate: 0.79
-                          scan_rate: 0.022
-                          total_volume: 310
-                        - week: "Week 3"
-                          range: "15-21"
-                          delivery_rate: 0.71
-                          scan_rate: 0.019
-                          total_volume: 180
-                        - week: "Week 4"
-                          range: "22-28"
-                          delivery_rate: 0.80
-                          scan_rate: 0.004
-                          total_volume: 50
-                      monthly_data:
-                        - month: "April"
-                          delivery_rate: 0.68
-                          scan_rate: 0.041
-                          total_volume: 580
-                        - month: "May"
-                          delivery_rate: 0.72
-                          scan_rate: 0.038
-                          total_volume: 620
-                        - month: "June"
-                          delivery_rate: 0.0
-                          scan_rate: 0.0
-                          total_volume: 0
-                        - month: "July"
-                          delivery_rate: 0.0
-                          scan_rate: 0.0
-                          total_volume: 0
-                        - month: "August"
-                          delivery_rate: 0.0
-                          scan_rate: 0.0
-                          total_volume: 0
-                        - month: "September"
-                          delivery_rate: 0.0
-                          scan_rate: 0.0
-                          total_volume: 0
-                        - month: "October"
-                          delivery_rate: 0.0
-                          scan_rate: 0.0
-                          total_volume: 0
-                        - month: "November"
-                          delivery_rate: 0.0
-                          scan_rate: 0.0
-                          total_volume: 0
-                        - month: "December"
-                          delivery_rate: 0.0
-                          scan_rate: 0.0
-                          total_volume: 0
-                        - month: "January"
-                          delivery_rate: 0.0
-                          scan_rate: 0.0
-                          total_volume: 0
-                        - month: "February"
-                          delivery_rate: 0.0
-                          scan_rate: 0.0
-                          total_volume: 0
-                        - month: "March"
-                          delivery_rate: 0.0
-                          scan_rate: 0.0
-                          total_volume: 0
+                      - date: "2025-10-24"
+                        day: "Friday"
+                        delivery_rate: 0.0
+                        scan_rate: 0.0
+                        total_volume: 0
+                      - date: "2025-10-25"
+                        day: "Saturday"
+                        delivery_rate: 0.0
+                        scan_rate: 0.0
+                        total_volume: 0
+                      - date: "2026-04-20"
+                        day: "Monday"
+                        delivery_rate: 0.75
+                        scan_rate: 0.0015
+                        total_volume: 80
+                      - date: "2026-04-21"
+                        day: "Tuesday"
+                        delivery_rate: 0.80
+                        scan_rate: 0.0020
+                        total_volume: 50
+                      - date: "2026-04-22"
+                        day: "Wednesday"
+                        delivery_rate: 0.60
+                        scan_rate: 0.0008
+                        total_volume: 30
                 campaign_performance:
                   summary: "campaign_performance response"
                   value:
@@ -10251,140 +10180,41 @@ paths:
                           scan_rate: 0.0
                           ranking_position: 10
                 scan_trend_by_type:
-                  summary: "scan_trend_by_type response"
+                  summary: "scan_trend_by_type response (truncated — 180 entries total)"
                   value:
                     status: "success"
                     message: "Analytics computed successfully"
                     data:
-                      daily_data:
-                        - date: "2026-04-16"
-                          day: "Thursday"
-                          total_scans: 8
-                          location_zone: { count: 5, percentage: 0.625 }
-                          referral: { count: 2, percentage: 0.25 }
-                          addresses_list: { count: 1, percentage: 0.125 }
-                        - date: "2026-04-17"
-                          day: "Friday"
-                          total_scans: 14
-                          location_zone: { count: 8, percentage: 0.5714 }
-                          referral: { count: 4, percentage: 0.2857 }
-                          addresses_list: { count: 2, percentage: 0.1429 }
-                        - date: "2026-04-18"
-                          day: "Saturday"
-                          total_scans: 3
-                          location_zone: { count: 2, percentage: 0.6667 }
-                          referral: { count: 1, percentage: 0.3333 }
-                          addresses_list: { count: 0, percentage: 0.0 }
-                        - date: "2026-04-19"
-                          day: "Sunday"
-                          total_scans: 0
-                          location_zone: { count: 0, percentage: 0.0 }
-                          referral: { count: 0, percentage: 0.0 }
-                          addresses_list: { count: 0, percentage: 0.0 }
-                        - date: "2026-04-20"
-                          day: "Monday"
-                          total_scans: 20
-                          location_zone: { count: 12, percentage: 0.6 }
-                          referral: { count: 5, percentage: 0.25 }
-                          addresses_list: { count: 3, percentage: 0.15 }
-                        - date: "2026-04-21"
-                          day: "Tuesday"
-                          total_scans: 12
-                          location_zone: { count: 6, percentage: 0.5 }
-                          referral: { count: 4, percentage: 0.3333 }
-                          addresses_list: { count: 2, percentage: 0.1667 }
-                        - date: "2026-04-22"
-                          day: "Wednesday"
-                          total_scans: 4
-                          location_zone: { count: 2, percentage: 0.5 }
-                          referral: { count: 1, percentage: 0.25 }
-                          addresses_list: { count: 1, percentage: 0.25 }
-                      weekly_data:
-                        - week: "Week 1"
-                          range: "1-7"
-                          total_scans: 80
-                          location_zone: { count: 44, percentage: 0.55 }
-                          referral: { count: 24, percentage: 0.3 }
-                          addresses_list: { count: 12, percentage: 0.15 }
-                        - week: "Week 2"
-                          range: "8-14"
-                          total_scans: 100
-                          location_zone: { count: 48, percentage: 0.48 }
-                          referral: { count: 35, percentage: 0.35 }
-                          addresses_list: { count: 17, percentage: 0.17 }
-                        - week: "Week 3"
-                          range: "15-21"
-                          total_scans: 75
-                          location_zone: { count: 45, percentage: 0.6 }
-                          referral: { count: 21, percentage: 0.28 }
-                          addresses_list: { count: 9, percentage: 0.12 }
-                        - week: "Week 4"
-                          range: "22-28"
-                          total_scans: 12
-                          location_zone: { count: 6, percentage: 0.5 }
-                          referral: { count: 4, percentage: 0.3333 }
-                          addresses_list: { count: 2, percentage: 0.1667 }
-                      monthly_data:
-                        - month: "April"
-                          total_scans: 210
-                          location_zone: { count: 120, percentage: 0.5714 }
-                          referral: { count: 60, percentage: 0.2857 }
-                          addresses_list: { count: 30, percentage: 0.1429 }
-                        - month: "May"
-                          total_scans: 185
-                          location_zone: { count: 100, percentage: 0.5405 }
-                          referral: { count: 55, percentage: 0.2973 }
-                          addresses_list: { count: 30, percentage: 0.1622 }
-                        - month: "June"
-                          total_scans: 0
-                          location_zone: { count: 0, percentage: 0.0 }
-                          referral: { count: 0, percentage: 0.0 }
-                          addresses_list: { count: 0, percentage: 0.0 }
-                        - month: "July"
-                          total_scans: 0
-                          location_zone: { count: 0, percentage: 0.0 }
-                          referral: { count: 0, percentage: 0.0 }
-                          addresses_list: { count: 0, percentage: 0.0 }
-                        - month: "August"
-                          total_scans: 0
-                          location_zone: { count: 0, percentage: 0.0 }
-                          referral: { count: 0, percentage: 0.0 }
-                          addresses_list: { count: 0, percentage: 0.0 }
-                        - month: "September"
-                          total_scans: 0
-                          location_zone: { count: 0, percentage: 0.0 }
-                          referral: { count: 0, percentage: 0.0 }
-                          addresses_list: { count: 0, percentage: 0.0 }
-                        - month: "October"
-                          total_scans: 0
-                          location_zone: { count: 0, percentage: 0.0 }
-                          referral: { count: 0, percentage: 0.0 }
-                          addresses_list: { count: 0, percentage: 0.0 }
-                        - month: "November"
-                          total_scans: 0
-                          location_zone: { count: 0, percentage: 0.0 }
-                          referral: { count: 0, percentage: 0.0 }
-                          addresses_list: { count: 0, percentage: 0.0 }
-                        - month: "December"
-                          total_scans: 0
-                          location_zone: { count: 0, percentage: 0.0 }
-                          referral: { count: 0, percentage: 0.0 }
-                          addresses_list: { count: 0, percentage: 0.0 }
-                        - month: "January"
-                          total_scans: 0
-                          location_zone: { count: 0, percentage: 0.0 }
-                          referral: { count: 0, percentage: 0.0 }
-                          addresses_list: { count: 0, percentage: 0.0 }
-                        - month: "February"
-                          total_scans: 0
-                          location_zone: { count: 0, percentage: 0.0 }
-                          referral: { count: 0, percentage: 0.0 }
-                          addresses_list: { count: 0, percentage: 0.0 }
-                        - month: "March"
-                          total_scans: 0
-                          location_zone: { count: 0, percentage: 0.0 }
-                          referral: { count: 0, percentage: 0.0 }
-                          addresses_list: { count: 0, percentage: 0.0 }
+                      - date: "2025-10-24"
+                        day: "Friday"
+                        total_scans: 0
+                        location_zone: { count: 0, percentage: 0.0 }
+                        referral: { count: 0, percentage: 0.0 }
+                        addresses_list: { count: 0, percentage: 0.0 }
+                      - date: "2025-10-25"
+                        day: "Saturday"
+                        total_scans: 0
+                        location_zone: { count: 0, percentage: 0.0 }
+                        referral: { count: 0, percentage: 0.0 }
+                        addresses_list: { count: 0, percentage: 0.0 }
+                      - date: "2026-04-20"
+                        day: "Monday"
+                        total_scans: 20
+                        location_zone: { count: 12, percentage: 0.6 }
+                        referral: { count: 5, percentage: 0.25 }
+                        addresses_list: { count: 3, percentage: 0.15 }
+                      - date: "2026-04-21"
+                        day: "Tuesday"
+                        total_scans: 12
+                        location_zone: { count: 6, percentage: 0.5 }
+                        referral: { count: 4, percentage: 0.3333 }
+                        addresses_list: { count: 2, percentage: 0.1667 }
+                      - date: "2026-04-22"
+                        day: "Wednesday"
+                        total_scans: 4
+                        location_zone: { count: 2, percentage: 0.5 }
+                        referral: { count: 1, percentage: 0.25 }
+                        addresses_list: { count: 1, percentage: 0.25 }
                 postcard_overview:
                   summary: "postcard_overview response"
                   value:
@@ -10409,6 +10239,26 @@ paths:
                           delivered_but_not_scanned: 0.67
                           in_transit: 180
                           returned_cancelled: 45
+                active_campaigns:
+                  summary: "active_campaigns response"
+                  value:
+                    status: "success"
+                    message: "Analytics computed successfully"
+                    data:
+                      - campaign_id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+                        campaign_name: "Spring Promotion 2024"
+                        days_running: 14
+                        in_flight: 270
+                        scans: 42
+                        delivery_rate: 0.82
+                        status: "On Track"
+                      - campaign_id: "b2c3d4e5-f6a7-8901-bcde-f12345678901"
+                        campaign_name: "Summer Sale Campaign"
+                        days_running: 3
+                        in_flight: 480
+                        scans: 7
+                        delivery_rate: 0.45
+                        status: "At Risk"
         "400":
           description: Invalid request — missing or unsupported type
           content:
@@ -10425,7 +10275,7 @@ paths:
                   summary: Unsupported analytics type
                   value:
                     error: "INVALID_TYPE"
-                    message: "Analytics type \"foo\" is not supported. Supported types: dashboard_cards, delivery_funnel, waste_meter, scan_trend, recent_scans, campaign_leaderboard, performance_trend, campaign_performance, scan_trend_by_type, postcard_overview"
+                    message: "Analytics type \"foo\" is not supported. Supported types: dashboard_cards, delivery_funnel, waste_meter, scan_trend, recent_scans, campaign_leaderboard, performance_trend, campaign_performance, scan_trend_by_type, postcard_overview, active_campaigns"
         "401":
           description: Unauthorized — missing or invalid Bearer token
           content:
@@ -18659,64 +18509,17 @@ components:
           example: 220
 
     PerformanceTrendAnalytics:
-      type: object
+      type: array
       description: |
-        Delivery and scan rate performance across three rolling time windows.
+        180 consecutive day entries covering the past 6 months (oldest → today).
 
-        **delivery_rate** per period = completed postcards created in that period / total postcards in that period
-        **scan_rate** per period     = scans that occurred in that period / total postcards sent org-wide (all time)
-        **total_volume**             = postcards created in that period
+        **delivery_rate** = completed postcards created that day / total postcards created that day (0.0–1.0)
+        **scan_rate**     = scans that occurred that day / total postcards sent org-wide all time (0.0–1.0)
+        **total_volume**  = postcards created that day
 
         `campaign_ids` filter scopes both postcard and tracker data. Time-based filters are ignored.
-        Windows: daily = last 7 rolling days, weekly = current month week buckets, monthly = last 12 rolling months.
-      required:
-        - total_delivery_rate
-        - total_scan_rate
-        - daily_data
-        - weekly_data
-        - monthly_data
-      properties:
-        total_delivery_rate:
-          type: number
-          format: float
-          description: Overall delivery rate across all postcards (all time). 0.0–1.0.
-          example: 0.7273
-        total_scan_rate:
-          type: number
-          format: float
-          description: Overall scan rate — total scans / total postcards sent. 0.0–1.0.
-          example: 0.0631
-        daily_data:
-          type: array
-          description: Last 7 rolling days ending today, always 7 entries, oldest first.
-          items:
-            $ref: "#/components/schemas/PerformanceDayPoint"
-        weekly_data:
-          type: array
-          description: Current month week buckets (Week 1–5) up to and including the current week.
-          items:
-            $ref: "#/components/schemas/PerformanceWeekPoint"
-        monthly_data:
-          type: array
-          description: Last 12 rolling months, oldest to newest. Always 12 entries.
-          items:
-            type: object
-            properties:
-              month:
-                type: string
-                description: Month name.
-                example: "April"
-              delivery_rate:
-                type: number
-                format: float
-                example: 0.72
-              scan_rate:
-                type: number
-                format: float
-                example: 0.038
-              total_volume:
-                type: integer
-                example: 620
+      items:
+        $ref: "#/components/schemas/PerformanceDayPoint"
 
     CampaignPerformanceAnalytics:
       type: object
@@ -18876,55 +18679,19 @@ components:
               example: "1-7"
 
     ScanTrendByTypeAnalytics:
-      type: object
+      type: array
       description: |
-        QR scan fraction broken down by campaign target type across three fixed time windows.
+        180 consecutive day entries covering the past 6 months (oldest → today), showing QR scan
+        counts and rates broken down by campaign target type per day.
 
-        For each period:
-          `location_zone + referral + addresses_list = 1.0` (when total scans > 0)
-          All three are `0.0` when no scans occurred in that period.
+        `percentage` = scans_for_type / total_postcards_sent_for_that_type (0.0–1.0, 4dp).
 
         **Data source:** PostGrid GET /trackers/{id}/visits per campaign (up to 1000 visits per tracker).
         Campaigns are grouped by `campaigns.campaign_target_type`.
 
-        `campaign_ids` filter scopes which campaigns are included.
-        Time-based filters are ignored — windows are:
-          `daily_data` = last 7 rolling days ending today,
-          `weekly_data` = current month week buckets up to current week,
-          `monthly_data` = last 12 rolling months.
-      required:
-        - daily_data
-        - weekly_data
-        - monthly_data
-      properties:
-        daily_data:
-          type: array
-          description: Last 7 rolling days ending today, always 7 entries, oldest first.
-          items:
-            $ref: "#/components/schemas/ScanTrendByTypeDayPoint"
-        weekly_data:
-          type: array
-          description: Current month week buckets (Week 1–5) up to and including the current week.
-          items:
-            $ref: "#/components/schemas/ScanTrendByTypeWeekPoint"
-        monthly_data:
-          type: array
-          description: Last 12 rolling months, oldest to newest. Each entry uses a month name string.
-          items:
-            type: object
-            properties:
-              month:
-                type: string
-                example: "April"
-              total_scans:
-                type: integer
-                example: 210
-              location_zone:
-                $ref: "#/components/schemas/ScanTypeBucket"
-              referral:
-                $ref: "#/components/schemas/ScanTypeBucket"
-              addresses_list:
-                $ref: "#/components/schemas/ScanTypeBucket"
+        `campaign_ids` filter scopes which campaigns are included. Time-based filters are ignored.
+      items:
+        $ref: "#/components/schemas/ScanTrendByTypeDayPoint"
 
     PostcardOverviewSummary:
       type: object
@@ -18991,6 +18758,63 @@ components:
           description: One entry per campaign.
           items:
             $ref: "#/components/schemas/CampaignOverviewEntry"
+
+    ActiveCampaignEntry:
+      type: object
+      required:
+        - campaign_id
+        - campaign_name
+        - days_running
+        - in_flight
+        - scans
+        - delivery_rate
+        - status
+      properties:
+        campaign_id:
+          type: string
+          format: uuid
+          example: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+        campaign_name:
+          type: string
+          example: "Spring Promotion 2024"
+        days_running:
+          type: integer
+          description: Number of days since campaign.created_at.
+          example: 14
+        in_flight:
+          type: integer
+          description: Postcards with postgrid_status in ready, printing, processed_for_delivery.
+          example: 270
+        scans:
+          type: integer
+          description: Total QR scans from PostGrid tracker summary (visitCount).
+          example: 42
+        delivery_rate:
+          type: number
+          format: float
+          description: "completed / total_sent (0.0–1.0, 4 decimal places)."
+          example: 0.82
+        status:
+          type: string
+          enum:
+            - "On Track"
+            - "Delayed"
+            - "At Risk"
+          description: |
+            Derived from delivery_rate:
+              On Track — delivery_rate ≥ 0.80
+              Delayed  — 0.60 ≤ delivery_rate < 0.80
+              At Risk  — delivery_rate < 0.60
+          example: "On Track"
+
+    ActiveCampaignsAnalytics:
+      type: array
+      description: |
+        One entry per campaign with status = "Active" in the org.
+        Returns an empty array when there are no active campaigns.
+        campaign_ids filter limits to active campaigns in that list.
+      items:
+        $ref: "#/components/schemas/ActiveCampaignEntry"
 
     GlobalExclusionsAnalytics:
       type: object
