@@ -9885,6 +9885,7 @@ paths:
         | `in_flight_postcards` | `postgrid_status` | Count of postcards with status `ready`, `printing`, or `processed_for_delivery` |
         | `delivered` | `postgrid_status = completed` | Count of postcards most likely delivered (PostGrid approximation) |
         | `delivery_rate` | derived | `(delivered / total_sent) * 100` — percentage, 2 decimal places |
+        | `total_scans` | PostGrid tracker API | All-time total QR scans — sum of `visitCount` across all org campaign trackers |
         | `spent_to_date` | `payment_history` | Sum of `amount_paid` for this organization across all campaigns |
         | `spent_to_date_display` | derived | Currency-formatted `spent_to_date` using the user's saved currency preference |
 
@@ -9972,7 +9973,7 @@ paths:
         ---
 
         ### `recent_scans`
-        Returns the **10 most recent QR code scan events per campaign**, enriched with delivery
+        Returns the **5 most recent QR code scan events per campaign**, enriched with delivery
         address and a human-readable relative timestamp. Campaigns with zero scans are excluded.
 
         **Data sources:**
@@ -10060,14 +10061,24 @@ paths:
                     - scan_trend
                     - recent_scans
                     - campaign_leaderboard
+                    - performance_trend
+                    - campaign_performance
+                    - scan_trend_by_type
+                    - postcard_overview
+                    - active_campaigns
                   description: |
                     The analytics view to retrieve.
-                    - `dashboard_cards` — high-level summary card metrics
+                    - `dashboard_cards` — high-level summary cards including total QR scans
                     - `delivery_funnel` — full PostGrid status breakdown as percentages
                     - `waste_meter` — wasted/delayed postcard counts + dollar costs + risk status
                     - `scan_trend` — QR scan totals, unique scans, scan rate, day-of-week breakdown
                     - `recent_scans` — 5 most recent QR scans per campaign with address and timestamp
                     - `campaign_leaderboard` — top 5 campaigns ranked by total QR scans
+                    - `performance_trend` — per-day delivery & scan rate for the past 6 months (180 entries, oldest → today)
+                    - `campaign_performance` — top 5 best and bottom 5 worst performing campaigns by QR scans
+                    - `scan_trend_by_type` — per-day QR scan breakdown by campaign target type for the past 6 months (180 entries, oldest → today)
+                    - `postcard_overview` — per-campaign breakdown: delivered+scanned, delivered-not-scanned, in-transit, returned/cancelled
+                    - `active_campaigns` — live status card for every Active campaign: days running, in-flight, scans, delivery rate, status
                 campaign_ids:
                   type: array
                   items:
@@ -10147,6 +10158,52 @@ paths:
                 value:
                   type: "campaign_leaderboard"
                   last_month: true
+              performance_trend:
+                summary: "performance_trend — last 7 days / current month weeks / last 12 months"
+                value:
+                  type: "performance_trend"
+              performance_trend_filtered:
+                summary: "performance_trend — specific campaigns only"
+                value:
+                  type: "performance_trend"
+                  campaign_ids: ["a1b2c3d4-e5f6-7890-abcd-ef1234567890"]
+              campaign_performance:
+                summary: "campaign_performance — top 5 and bottom 5 by QR scans"
+                value:
+                  type: "campaign_performance"
+              campaign_performance_filtered:
+                summary: "campaign_performance — specific campaigns, last month"
+                value:
+                  type: "campaign_performance"
+                  campaign_ids: ["a1b2c3d4-e5f6-7890-abcd-ef1234567890", "b2c3d4e5-f6a7-8901-bcde-f12345678901"]
+                  last_month: true
+              scan_trend_by_type:
+                summary: "scan_trend_by_type — scan fraction by campaign target type"
+                value:
+                  type: "scan_trend_by_type"
+              scan_trend_by_type_filtered:
+                summary: "scan_trend_by_type — specific campaigns only"
+                value:
+                  type: "scan_trend_by_type"
+                  campaign_ids: ["a1b2c3d4-e5f6-7890-abcd-ef1234567890"]
+              postcard_overview:
+                summary: "postcard_overview — all campaigns"
+                value:
+                  type: "postcard_overview"
+              postcard_overview_filtered:
+                summary: "postcard_overview — specific campaigns only"
+                value:
+                  type: "postcard_overview"
+                  campaign_ids: ["a1b2c3d4-e5f6-7890-abcd-ef1234567890", "b2c3d4e5-f6a7-8901-bcde-f12345678901"]
+              active_campaigns:
+                summary: "active_campaigns — all active campaigns"
+                value:
+                  type: "active_campaigns"
+              active_campaigns_filtered:
+                summary: "active_campaigns — specific campaigns only"
+                value:
+                  type: "active_campaigns"
+                  campaign_ids: ["a1b2c3d4-e5f6-7890-abcd-ef1234567890"]
       responses:
         "200":
           description: Analytics computed successfully
@@ -10173,6 +10230,11 @@ paths:
                       - $ref: "#/components/schemas/ScanTrendAnalytics"
                       - $ref: "#/components/schemas/RecentScansAnalytics"
                       - $ref: "#/components/schemas/CampaignLeaderboardAnalytics"
+                      - $ref: "#/components/schemas/PerformanceTrendAnalytics"
+                      - $ref: "#/components/schemas/CampaignPerformanceAnalytics"
+                      - $ref: "#/components/schemas/ScanTrendByTypeAnalytics"
+                      - $ref: "#/components/schemas/PostcardOverviewAnalytics"
+                      - $ref: "#/components/schemas/ActiveCampaignsAnalytics"
                     discriminator:
                       propertyName: _type
               examples:
@@ -10185,6 +10247,7 @@ paths:
                       in_flight_postcards: 450
                       delivered: 1200
                       delivery_rate: 72.73
+                      total_scans: 342
                       spent_to_date: 4950.00
                       spent_to_date_display:
                         value: 4950.00
@@ -10372,6 +10435,175 @@ paths:
                           total_postcards_sent: 800
                           scan_rate: 0.88
                           ranking_position: 5
+                performance_trend:
+                  summary: "performance_trend response (truncated — 180 entries total)"
+                  value:
+                    status: "success"
+                    message: "Analytics computed successfully"
+                    data:
+                      - date: "2025-10-24"
+                        day: "Friday"
+                        delivery_rate: 0.0
+                        scan_rate: 0.0
+                        total_volume: 0
+                      - date: "2025-10-25"
+                        day: "Saturday"
+                        delivery_rate: 0.0
+                        scan_rate: 0.0
+                        total_volume: 0
+                      - date: "2026-04-20"
+                        day: "Monday"
+                        delivery_rate: 0.75
+                        scan_rate: 0.0015
+                        total_volume: 80
+                      - date: "2026-04-21"
+                        day: "Tuesday"
+                        delivery_rate: 0.80
+                        scan_rate: 0.0020
+                        total_volume: 50
+                      - date: "2026-04-22"
+                        day: "Wednesday"
+                        delivery_rate: 0.60
+                        scan_rate: 0.0008
+                        total_volume: 30
+                campaign_performance:
+                  summary: "campaign_performance response"
+                  value:
+                    status: "success"
+                    message: "Analytics computed successfully"
+                    data:
+                      top_performers:
+                        - campaign_name: "Campaign Awesome"
+                          total_scans: 55
+                          total_postcards_sent: 5000
+                          scan_rate: 0.011
+                          ranking_position: 1
+                        - campaign_name: "Spring Promo 2024"
+                          total_scans: 38
+                          total_postcards_sent: 2000
+                          scan_rate: 0.019
+                          ranking_position: 2
+                        - campaign_name: "Summer Sale"
+                          total_scans: 21
+                          total_postcards_sent: 1500
+                          scan_rate: 0.014
+                          ranking_position: 3
+                        - campaign_name: "Fall Outreach"
+                          total_scans: 15
+                          total_postcards_sent: 1000
+                          scan_rate: 0.015
+                          ranking_position: 4
+                        - campaign_name: "Q4 Push"
+                          total_scans: 7
+                          total_postcards_sent: 800
+                          scan_rate: 0.00875
+                          ranking_position: 5
+                      bottom_performers:
+                        - campaign_name: "Winter Blast"
+                          total_scans: 4
+                          total_postcards_sent: 600
+                          scan_rate: 0.0067
+                          ranking_position: 6
+                        - campaign_name: "Early Bird"
+                          total_scans: 2
+                          total_postcards_sent: 400
+                          scan_rate: 0.005
+                          ranking_position: 7
+                        - campaign_name: "Referral Drive"
+                          total_scans: 1
+                          total_postcards_sent: 250
+                          scan_rate: 0.004
+                          ranking_position: 8
+                        - campaign_name: "Local Blitz"
+                          total_scans: 1
+                          total_postcards_sent: 100
+                          scan_rate: 0.01
+                          ranking_position: 9
+                        - campaign_name: "Test Campaign"
+                          total_scans: 0
+                          total_postcards_sent: 50
+                          scan_rate: 0.0
+                          ranking_position: 10
+                scan_trend_by_type:
+                  summary: "scan_trend_by_type response (truncated — 180 entries total)"
+                  value:
+                    status: "success"
+                    message: "Analytics computed successfully"
+                    data:
+                      - date: "2025-10-24"
+                        day: "Friday"
+                        total_scans: 0
+                        location_zone: { count: 0, percentage: 0.0 }
+                        referral: { count: 0, percentage: 0.0 }
+                        addresses_list: { count: 0, percentage: 0.0 }
+                      - date: "2025-10-25"
+                        day: "Saturday"
+                        total_scans: 0
+                        location_zone: { count: 0, percentage: 0.0 }
+                        referral: { count: 0, percentage: 0.0 }
+                        addresses_list: { count: 0, percentage: 0.0 }
+                      - date: "2026-04-20"
+                        day: "Monday"
+                        total_scans: 20
+                        location_zone: { count: 12, percentage: 0.6 }
+                        referral: { count: 5, percentage: 0.25 }
+                        addresses_list: { count: 3, percentage: 0.15 }
+                      - date: "2026-04-21"
+                        day: "Tuesday"
+                        total_scans: 12
+                        location_zone: { count: 6, percentage: 0.5 }
+                        referral: { count: 4, percentage: 0.3333 }
+                        addresses_list: { count: 2, percentage: 0.1667 }
+                      - date: "2026-04-22"
+                        day: "Wednesday"
+                        total_scans: 4
+                        location_zone: { count: 2, percentage: 0.5 }
+                        referral: { count: 1, percentage: 0.25 }
+                        addresses_list: { count: 1, percentage: 0.25 }
+                postcard_overview:
+                  summary: "postcard_overview response"
+                  value:
+                    status: "success"
+                    message: "Analytics computed successfully"
+                    data:
+                      total_summary:
+                        delivered_and_scanned: 0.0842
+                        delivered_but_not_scanned: 0.6431
+                        in_transit: 450
+                        returned_cancelled: 87
+                      campaign_summary:
+                        - campaign_id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+                          campaign_name: "Spring Promotion 2024"
+                          delivered_and_scanned: 0.11
+                          delivered_but_not_scanned: 0.62
+                          in_transit: 270
+                          returned_cancelled: 42
+                        - campaign_id: "b2c3d4e5-f6a7-8901-bcde-f12345678901"
+                          campaign_name: "Summer Sale Campaign"
+                          delivered_and_scanned: 0.055
+                          delivered_but_not_scanned: 0.67
+                          in_transit: 180
+                          returned_cancelled: 45
+                active_campaigns:
+                  summary: "active_campaigns response"
+                  value:
+                    status: "success"
+                    message: "Analytics computed successfully"
+                    data:
+                      - campaign_id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+                        campaign_name: "Spring Promotion 2024"
+                        days_running: 14
+                        in_flight: 270
+                        scans: 42
+                        delivery_rate: 0.82
+                        status: "On Track"
+                      - campaign_id: "b2c3d4e5-f6a7-8901-bcde-f12345678901"
+                        campaign_name: "Summer Sale Campaign"
+                        days_running: 3
+                        in_flight: 480
+                        scans: 7
+                        delivery_rate: 0.45
+                        status: "At Risk"
         "400":
           description: Invalid request — missing or unsupported type
           content:
@@ -10388,7 +10620,7 @@ paths:
                   summary: Unsupported analytics type
                   value:
                     error: "INVALID_TYPE"
-                    message: "Analytics type \"foo\" is not supported. Supported types: dashboard_cards, delivery_funnel, waste_meter, scan_trend, recent_scans, campaign_leaderboard"
+                    message: "Analytics type \"foo\" is not supported. Supported types: dashboard_cards, delivery_funnel, waste_meter, scan_trend, recent_scans, campaign_leaderboard, performance_trend, campaign_performance, scan_trend_by_type, postcard_overview, active_campaigns"
         "401":
           description: Unauthorized — missing or invalid Bearer token
           content:
@@ -18137,6 +18369,10 @@ components:
           format: float
           description: "Percentage of sent postcards that have been delivered: (delivered / total_sent) * 100"
           example: 72.73
+        total_scans:
+          type: integer
+          description: "All-time total QR scans across all org campaign trackers — sum of PostGrid visitCount per tracker"
+          example: 342
         spent_to_date:
           type: number
           format: float
@@ -18559,6 +18795,379 @@ components:
                 description: |
                   Rank within the leaderboard. `1` = campaign with the most scans.
                 example: 1
+
+    PerformanceDayPoint:
+      type: object
+      required:
+        - date
+        - day
+        - delivery_rate
+        - scan_rate
+        - total_volume
+      properties:
+        date:
+          type: string
+          format: date
+          description: Calendar date (YYYY-MM-DD).
+          example: "2026-04-22"
+        day:
+          type: string
+          description: Day of week name.
+          example: "Tuesday"
+        delivery_rate:
+          type: number
+          format: float
+          description: Fraction of postcards created on this date that reached `completed` status (0.0–1.0).
+          example: 0.8
+        scan_rate:
+          type: number
+          format: float
+          description: Scans that occurred on this date divided by total postcards sent org-wide (0.0–1.0).
+          example: 0.002
+        total_volume:
+          type: integer
+          description: Number of postcards created on this date.
+          example: 50
+
+    PerformanceWeekPoint:
+      type: object
+      required:
+        - week
+        - range
+        - delivery_rate
+        - scan_rate
+        - total_volume
+      properties:
+        week:
+          type: string
+          description: Week label within the month.
+          example: "Week 1"
+        range:
+          type: string
+          description: Day range within the month (e.g. "1-7", "29-30").
+          example: "1-7"
+        delivery_rate:
+          type: number
+          format: float
+          description: Fraction of postcards created in this week bucket that reached `completed` status (0.0–1.0).
+          example: 0.82
+        scan_rate:
+          type: number
+          format: float
+          description: Scans that occurred in this week bucket divided by total postcards sent org-wide (0.0–1.0).
+          example: 0.018
+        total_volume:
+          type: integer
+          description: Number of postcards created in this week bucket.
+          example: 220
+
+    PerformanceTrendAnalytics:
+      type: array
+      description: |
+        180 consecutive day entries covering the past 6 months (oldest → today).
+
+        **delivery_rate** = completed postcards created that day / total postcards created that day (0.0–1.0)
+        **scan_rate**     = scans that occurred that day / total postcards sent org-wide all time (0.0–1.0)
+        **total_volume**  = postcards created that day
+
+        `campaign_ids` filter scopes both postcard and tracker data. Time-based filters are ignored.
+      items:
+        $ref: "#/components/schemas/PerformanceDayPoint"
+
+    CampaignPerformanceAnalytics:
+      type: object
+      description: |
+        Top 5 best and bottom 5 worst performing campaigns ranked by total QR scans.
+
+        All campaigns with a PostGrid tracker are ranked globally (1 = most scans, N = least).
+        Unlike `campaign_leaderboard`, campaigns with 0 scans are included so that
+        the true worst performers are always surfaced.
+
+        **top_performers** — ranks 1–5 (up to 5 entries)
+        **bottom_performers** — last 5 ranks, never overlapping with top_performers.
+        If there are 5 or fewer campaigns total, `bottom_performers` is empty.
+
+        `scan_rate` = `(total_scans / total_postcards_sent)` as a fraction (0.0–1.0, 4 decimal places).
+      required:
+        - top_performers
+        - bottom_performers
+      properties:
+        top_performers:
+          type: array
+          maxItems: 5
+          description: Up to 5 best-performing campaigns, ranked 1–5 by total QR scans.
+          items:
+            type: object
+            required:
+              - campaign_name
+              - total_scans
+              - total_postcards_sent
+              - scan_rate
+              - ranking_position
+            properties:
+              campaign_name:
+                type: string
+                example: "Campaign Awesome"
+              total_scans:
+                type: integer
+                example: 55
+              total_postcards_sent:
+                type: integer
+                example: 5000
+              scan_rate:
+                type: number
+                format: float
+                description: total_scans / total_postcards_sent (0.0–1.0).
+                example: 0.011
+              ranking_position:
+                type: integer
+                minimum: 1
+                description: Global rank across all org campaigns (1 = most scans).
+                example: 1
+        bottom_performers:
+          type: array
+          maxItems: 5
+          description: |
+            Up to 5 worst-performing campaigns. Empty when there are 5 or fewer
+            campaigns total (they are all in top_performers). Ranking positions
+            continue from where top_performers ends (e.g. 6–10).
+          items:
+            type: object
+            required:
+              - campaign_name
+              - total_scans
+              - total_postcards_sent
+              - scan_rate
+              - ranking_position
+            properties:
+              campaign_name:
+                type: string
+                example: "Test Campaign"
+              total_scans:
+                type: integer
+                example: 0
+              total_postcards_sent:
+                type: integer
+                example: 50
+              scan_rate:
+                type: number
+                format: float
+                example: 0.0
+              ranking_position:
+                type: integer
+                description: Global rank — higher number means fewer scans.
+                example: 10
+
+    ScanTypeBucket:
+      type: object
+      required:
+        - count
+        - percentage
+      properties:
+        count:
+          type: integer
+          description: Raw scan count for this campaign target type in the period.
+          example: 6
+        percentage:
+          type: number
+          format: float
+          description: Fraction of total_scans for this type (0.0–1.0, 4 decimal places).
+          example: 0.5
+
+    ScanTypeBreakdown:
+      type: object
+      description: |
+        QR scan count and percentage breakdown by campaign target type for a given time period.
+        The three `percentage` values sum to 1.0 when total_scans > 0.
+        All counts are 0 and all percentages are 0.0 when no scans occurred in the period.
+      required:
+        - total_scans
+        - location_zone
+        - referral
+        - addresses_list
+      properties:
+        total_scans:
+          type: integer
+          description: Total QR scans across all campaign types in this period.
+          example: 12
+        location_zone:
+          $ref: "#/components/schemas/ScanTypeBucket"
+          description: Scans from campaigns with target type "Location Zone".
+        referral:
+          $ref: "#/components/schemas/ScanTypeBucket"
+          description: Scans from campaigns with target type "Referral".
+        addresses_list:
+          $ref: "#/components/schemas/ScanTypeBucket"
+          description: Scans from campaigns with target type "Addresses List".
+
+    ScanTrendByTypeDayPoint:
+      allOf:
+        - $ref: "#/components/schemas/ScanTypeBreakdown"
+        - type: object
+          required:
+            - date
+            - day
+          properties:
+            date:
+              type: string
+              format: date
+              example: "2026-04-22"
+            day:
+              type: string
+              example: "Tuesday"
+
+    ScanTrendByTypeWeekPoint:
+      allOf:
+        - $ref: "#/components/schemas/ScanTypeBreakdown"
+        - type: object
+          required:
+            - week
+            - range
+          properties:
+            week:
+              type: string
+              example: "Week 1"
+            range:
+              type: string
+              example: "1-7"
+
+    ScanTrendByTypeAnalytics:
+      type: array
+      description: |
+        180 consecutive day entries covering the past 6 months (oldest → today), showing QR scan
+        counts and rates broken down by campaign target type per day.
+
+        `percentage` = scans_for_type / total_postcards_sent_for_that_type (0.0–1.0, 4dp).
+
+        **Data source:** PostGrid GET /trackers/{id}/visits per campaign (up to 1000 visits per tracker).
+        Campaigns are grouped by `campaigns.campaign_target_type`.
+
+        `campaign_ids` filter scopes which campaigns are included. Time-based filters are ignored.
+      items:
+        $ref: "#/components/schemas/ScanTrendByTypeDayPoint"
+
+    PostcardOverviewSummary:
+      type: object
+      required:
+        - delivered_and_scanned
+        - delivered_but_not_scanned
+        - in_transit
+        - returned_cancelled
+      properties:
+        delivered_and_scanned:
+          type: number
+          format: float
+          description: "Fraction of total postcards sent that were delivered (postgrid_status=completed) AND had their QR code scanned. 0.0–1.0, 4 decimal places."
+          example: 0.0842
+        delivered_but_not_scanned:
+          type: number
+          format: float
+          description: "Fraction of total postcards sent that were delivered but QR was never scanned. 0.0–1.0, 4 decimal places."
+          example: 0.6431
+        in_transit:
+          type: integer
+          description: "Count of postcards still in the delivery pipeline (postgrid_status in ready, printing, processed_for_delivery)."
+          example: 450
+        returned_cancelled:
+          type: integer
+          description: "Count of postcards that were returned to sender (imb_status=returned_to_sender) or cancelled (postgrid_status=cancelled)."
+          example: 87
+
+    CampaignOverviewEntry:
+      allOf:
+        - $ref: "#/components/schemas/PostcardOverviewSummary"
+        - type: object
+          required:
+            - campaign_id
+            - campaign_name
+          properties:
+            campaign_id:
+              type: string
+              format: uuid
+              example: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+            campaign_name:
+              type: string
+              example: "Spring Promotion 2024"
+
+    PostcardOverviewAnalytics:
+      type: object
+      description: |
+        Per-campaign breakdown of how postcards ended up, plus an aggregate total_summary.
+
+        Percentages are fractions of that campaign's total postcards sent (0.0–1.0, 4dp).
+        Counts are raw integers.
+
+        Campaigns without a PostGrid tracker will show delivered_and_scanned=0 (no scan data available).
+        campaign_ids filter limits which campaigns are included.
+      required:
+        - total_summary
+        - campaign_summary
+      properties:
+        total_summary:
+          $ref: "#/components/schemas/PostcardOverviewSummary"
+          description: Aggregated metrics across all campaigns.
+        campaign_summary:
+          type: array
+          description: One entry per campaign.
+          items:
+            $ref: "#/components/schemas/CampaignOverviewEntry"
+
+    ActiveCampaignEntry:
+      type: object
+      required:
+        - campaign_id
+        - campaign_name
+        - days_running
+        - in_flight
+        - scans
+        - delivery_rate
+        - status
+      properties:
+        campaign_id:
+          type: string
+          format: uuid
+          example: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+        campaign_name:
+          type: string
+          example: "Spring Promotion 2024"
+        days_running:
+          type: integer
+          description: Number of days since campaign.created_at.
+          example: 14
+        in_flight:
+          type: integer
+          description: Postcards with postgrid_status in ready, printing, processed_for_delivery.
+          example: 270
+        scans:
+          type: integer
+          description: Total QR scans from PostGrid tracker summary (visitCount).
+          example: 42
+        delivery_rate:
+          type: number
+          format: float
+          description: "completed / total_sent (0.0–1.0, 4 decimal places)."
+          example: 0.82
+        status:
+          type: string
+          enum:
+            - "On Track"
+            - "Delayed"
+            - "At Risk"
+          description: |
+            Derived from delivery_rate:
+              On Track — delivery_rate ≥ 0.80
+              Delayed  — 0.60 ≤ delivery_rate < 0.80
+              At Risk  — delivery_rate < 0.60
+          example: "On Track"
+
+    ActiveCampaignsAnalytics:
+      type: array
+      description: |
+        One entry per campaign with status = "Active" in the org.
+        Returns an empty array when there are no active campaigns.
+        campaign_ids filter limits to active campaigns in that list.
+      items:
+        $ref: "#/components/schemas/ActiveCampaignEntry"
 
     GlobalExclusionsAnalytics:
       type: object

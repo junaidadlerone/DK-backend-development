@@ -676,12 +676,6 @@ wss.on('connection', (ws) => {
             const data = JSON.parse(message);
             console.log('Received:', data);
 
-            // Validate required fields
-            if (!data.zone_id) {
-                ws.send(JSON.stringify({ status: 'error', message: 'Missing zone_id' }));
-                return;
-            }
-
             if (!POSTGRID_API_KEY) {
                 ws.send(JSON.stringify({ status: 'error', message: 'Server misconfiguration: POSTGRID_API_KEY not set.' }));
                 return;
@@ -694,7 +688,13 @@ wss.on('connection', (ws) => {
 
             const showOnlyVerified = data.showOnlyVerified !== undefined ? data.showOnlyVerified : false;
 
-            await verifyAddresses(ws, data.zone_id, POSTGRID_API_KEY, SUPABASE_SERVICE_ROLE_KEY, showOnlyVerified);
+            if (data.csv_address_list_id) {
+                await verifyCSVAddresses(ws, data.csv_address_list_id, POSTGRID_API_KEY, SUPABASE_SERVICE_ROLE_KEY, showOnlyVerified);
+            } else if (data.zone_id) {
+                await verifyAddresses(ws, data.zone_id, POSTGRID_API_KEY, SUPABASE_SERVICE_ROLE_KEY, showOnlyVerified);
+            } else {
+                ws.send(JSON.stringify({ status: 'error', message: 'Neither zone_id nor csv_address_list_id provided' }));
+            }
         } catch (error) {
             console.error('Error processing message:', error);
             ws.send(JSON.stringify({ status: 'error', message: 'Invalid JSON or server error' }));
@@ -769,10 +769,28 @@ function parseAddress(formattedAddress) {
     };
 }
 
+function mapPostgridStatusToReachability(postgridStatus) {
+    if (!postgridStatus) return false;
+    return ['verified', 'corrected'].includes(postgridStatus.toLowerCase());
+}
+
+function enrichCSVAddressWithReachability(address, postgridStatus) {
+    const isReachable = mapPostgridStatusToReachability(postgridStatus);
+    const verified = isReachable;
+    return {
+        ...address,
+        is_reachable: isReachable,
+        verified,
+        status: verified ? 'Valid' : 'Unverified'
+    };
+}
+
 async function verifyAddress(address, apiKey) {
     try {
-        const addressComponents = parseAddress(address.address);
-        console.log(`Verifying address: ${address.address}`);
+        const addressText = address.address ||
+            `${address.address_line1 || ''}, ${address.city || ''}, ${address.state || ''} ${address.zip || ''}`.trim().replace(/^,|,$/g, '');
+        const addressComponents = parseAddress(addressText);
+        console.log(`Verifying address: ${addressText}`);
 
         const response = await fetch(VERIFICATION_API_URL, {
             method: 'POST',
@@ -785,7 +803,7 @@ async function verifyAddress(address, apiKey) {
 
         if (!response.ok) {
             const errorText = await response.text();
-            console.error(`Verification failed for address: ${address.address}`, {
+            console.error(`Verification failed for address: ${addressText}`, {
                 status: response.status,
                 error: errorText
             });
@@ -804,6 +822,20 @@ async function verifyAddress(address, apiKey) {
 
         const result = await response.json();
         const data = result.data;
+        const isCsv = address.address_line1 !== undefined;
+
+        if (isCsv) {
+            return {
+                ...enrichCSVAddressWithReachability(address, data.status),
+                verification_details: {
+                    ...(address.verification_details || {}),
+                    status: data.status,
+                    details: data
+                }
+            };
+        }
+
+        // Zone address (unchanged)
         // Accept both 'verified' and 'corrected' as valid
         const verified = data.status === 'verified' || data.status === 'corrected';
         const verifiedAddress = `${data.line1}, ${data.city}, ${data.provinceOrState} ${data.postalOrZip}`;
@@ -961,6 +993,138 @@ async function verifyAddresses(ws, zoneId, apiKey, supabaseAnonKey, showOnlyVeri
 
     } catch (error) {
         console.error('Address verification failed:', error);
+        ws.send(JSON.stringify({ status: 'error', message: error.message }));
+    }
+}
+
+// =============================================================================
+// CSV ADDRESS VERIFICATION
+// =============================================================================
+
+async function verifyCSVAddresses(ws, list_id, apiKey, supabaseAnonKey, showOnlyVerified) {
+    const startTime = Date.now();
+    try {
+        const table = 'campaign_csv_address_lists';
+        const fetchUrl = `${SUPABASE_URL}/rest/v1/${table}?id=eq.${list_id}&select=*`;
+        ws.send(JSON.stringify({ status: 'started', message: 'Fetching CSV address list...', csv_address_list_id: list_id }));
+
+        const response = await fetch(fetchUrl, {
+            method: 'GET',
+            headers: {
+                'apikey': supabaseAnonKey,
+                'Authorization': `Bearer ${supabaseAnonKey}`,
+                'Content-Type': 'application/json'
+            }
+        });
+
+        if (!response.ok) throw new Error(`Failed to fetch data: ${response.statusText}`);
+
+        const results = await response.json();
+        if (!results || results.length === 0) throw new Error(`Record not found in ${table}`);
+
+        const record = results[0];
+        const allAddresses = record.addresses || [];
+        const addresses = allAddresses.filter(addr => !addr.is_deleted);
+
+        if (addresses.length === 0) {
+            ws.send(JSON.stringify({ status: 'error', message: 'List has no addresses to verify' }));
+            return;
+        }
+
+        console.log(`Starting processing for ${addresses.length} addresses in ${table} ${list_id}`);
+        ws.send(JSON.stringify({
+            status: 'processing',
+            message: `Found ${addresses.length} addresses to process`,
+            total_addresses: addresses.length,
+            verified_count: 0,
+            processed_count: 0
+        }));
+
+        const BATCH_SIZE = 20;
+        const verifiedAddresses = [];
+        let verifiedCount = 0;
+        let processedCount = 0;
+
+        for (let i = 0; i < addresses.length; i += BATCH_SIZE) {
+            const batch = addresses.slice(i, i + BATCH_SIZE);
+            const batchPromises = batch.map(addr => verifyAddress(addr, apiKey));
+            const batchResults = await Promise.all(batchPromises);
+            verifiedAddresses.push(...batchResults);
+
+            processedCount += batchResults.length;
+            verifiedCount = verifiedAddresses.filter(addr => addr.verified === true).length;
+
+            ws.send(JSON.stringify({
+                status: 'processing',
+                message: `Processed ${processedCount} of ${addresses.length} addresses`,
+                total_addresses: addresses.length,
+                verified_count: verifiedCount,
+                unverified_count: processedCount - verifiedCount,
+                processed_count: processedCount,
+                progress_percentage: Math.round((processedCount / addresses.length) * 100)
+            }));
+
+            if (i + BATCH_SIZE < addresses.length) {
+                await new Promise(resolve => setTimeout(resolve, 100));
+            }
+        }
+
+        const unverifiedCount = verifiedAddresses.length - verifiedCount;
+        const processingTimeMs = Date.now() - startTime;
+
+        ws.send(JSON.stringify({ status: 'processing', message: `Updating ${table} with processed addresses...` }));
+
+        // Merge back into allAddresses to preserve deleted entries
+        const finalAddresses = allAddresses.map(orig => {
+            const updated = verifiedAddresses.find(v => v.id === orig.id);
+            return updated ? updated : orig;
+        });
+
+        const updateResponse = await fetch(fetchUrl, {
+            method: 'PATCH',
+            headers: {
+                'apikey': supabaseAnonKey,
+                'Authorization': `Bearer ${supabaseAnonKey}`,
+                'Content-Type': 'application/json',
+                'Prefer': 'return=minimal'
+            },
+            body: JSON.stringify({
+                addresses: finalAddresses,
+                skip_address_verification: false,
+                updated_at: new Date().toISOString()
+            })
+        });
+
+        if (!updateResponse.ok) console.error(`Error updating list with verified addresses: ${updateResponse.statusText}`);
+
+        const addressesToReturn = showOnlyVerified
+            ? verifiedAddresses.filter(addr => addr.verified === true)
+            : verifiedAddresses;
+
+        ws.send(JSON.stringify({
+            status: 'success',
+            message: showOnlyVerified
+                ? `Returning ${addressesToReturn.length} verified addresses`
+                : `Verified ${verifiedCount} of ${addresses.length} addresses`,
+            center: record.center || null,
+            mode: null,
+            searchType: null,
+            metadata: {
+                ...(record.metadata || {}),
+                skip_verification: false,
+                verified_count: verifiedCount,
+                unverified_count: unverifiedCount,
+                total_addresses: addresses.length,
+                returned_addresses: addressesToReturn.length,
+                reachable_count: verifiedAddresses.filter(addr => addr.is_reachable === true).length,
+                showing_only_verified: showOnlyVerified,
+                processingTimeMs
+            },
+            addresses: addressesToReturn
+        }));
+
+    } catch (error) {
+        console.error('CSV verification failed:', error);
         ws.send(JSON.stringify({ status: 'error', message: error.message }));
     }
 }

@@ -145,11 +145,23 @@ async function processCampaign(ws, campaignId, postgridApiKey)
 
         const { launch_data, campaign_templates, business_data, offer_data } = campaignData;
 
-        // Filter out addresses with status "Opt-out"
         const allAddresses = launch_data.verified_addresses || [];
-        const addresses = allAddresses.filter(addr => addr.status !== 'Opt-out');
+        const isCsvCampaign = !!launch_data.csv_address_list_id;
+        const skipVerification = isCsvCampaign ? (launch_data.skip_verification || false) : false;
 
-        console.log(`Found ${addresses.length} addresses to process (filtered out ${allAddresses.length - addresses.length} Opt-out addresses).`);
+        console.log(`Campaign type: ${isCsvCampaign ? 'CSV' : 'Zone'}, Skip verification: ${skipVerification}`);
+
+        const addresses = allAddresses.filter(addr => {
+            if (addr.is_deleted === true) return false;
+            if (addr.status === 'Opt-out' || addr.is_duplicate === true) return false;
+            if (addr.is_valid !== true && addr.verified !== true) return false;
+            if (isCsvCampaign) {
+                return skipVerification ? true : addr.is_reachable === true;
+            }
+            return true;
+        });
+
+        console.log(`Found ${addresses.length} addresses to process (filtered out ${allAddresses.length - addresses.length} addresses).`);
 
         // Send progress update
         ws.send(JSON.stringify({
@@ -233,10 +245,19 @@ async function sendPostcard(addressObj, templates, businessData, offerData, post
     };
     const size = sizeMap[rawSize] || "6x4";
 
+    const addressLine1 = addressObj.address || addressObj.address_line1 || "";
+    const city = addressObj.city || "";
+    const state = addressObj.state || addressObj.provinceOrState || "";
+    const zip = addressObj.zip || addressObj.postalOrZip || "";
+
     const payload = {
         to: {
-            addressLine1: addressObj.address,
-            firstName: "Current Resident",
+            addressLine1: addressLine1,
+            city: city,
+            provinceOrState: state,
+            postalOrZip: zip,
+            firstName: addressObj.full_name || addressObj.first_name || "Current Resident",
+            lastName: addressObj.last_name || "",
             countryCode: 'US'
         },
         size: size,

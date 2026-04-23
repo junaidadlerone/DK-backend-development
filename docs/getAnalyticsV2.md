@@ -20,6 +20,11 @@ Returns real-time delivery analytics based on individual PostGrid postcard recor
 | `scan_trend` | QR scan totals, unique scans, day-of-week breakdown |
 | `recent_scans` | 5 most recent QR scan events per campaign |
 | `campaign_leaderboard` | Top 5 campaigns ranked by total QR scans |
+| `performance_trend` | Per-day delivery & scan rate for the past 6 months (180 entries, oldest → today) |
+| `campaign_performance` | Top 5 best and bottom 5 worst campaigns by QR scans |
+| `scan_trend_by_type` | Per-day QR scan breakdown by campaign target type for the past 6 months (180 entries, oldest → today) |
+| `postcard_overview` | Per-campaign breakdown: delivered+scanned, delivered-not-scanned, in-transit, returned/cancelled |
+| `active_campaigns` | Live status card for every Active campaign: days running, in-flight count, scans, delivery rate, status |
 
 ---
 
@@ -52,7 +57,7 @@ When multiple time flags are set, the most restrictive window wins: `last_24hour
 ```json
 {
   "error": "INVALID_TYPE",
-  "message": "Analytics type \"foo\" is not supported. Supported types: dashboard_cards, delivery_funnel, waste_meter, scan_trend, recent_scans, campaign_leaderboard"
+  "message": "Analytics type \"foo\" is not supported. Supported types: dashboard_cards, delivery_funnel, waste_meter, scan_trend, recent_scans, campaign_leaderboard, performance_trend, campaign_performance, scan_trend_by_type, postcard_overview, active_campaigns"
 }
 ```
 
@@ -175,6 +180,7 @@ curl -X POST https://xnflihspegizweqidvow.supabase.co/functions/v1/getAnalyticsV
     "in_flight_postcards": 450,
     "delivered": 1200,
     "delivery_rate": 72.73,
+    "total_scans": 342,
     "spent_to_date": 4950.00,
     "spent_to_date_display": {
       "value": 4950.00,
@@ -191,6 +197,7 @@ curl -X POST https://xnflihspegizweqidvow.supabase.co/functions/v1/getAnalyticsV
 | `in_flight_postcards` | `number` | Postcards with status `ready`, `printing`, or `processed_for_delivery` |
 | `delivered` | `number` | Postcards with status `completed` (PostGrid approximation) |
 | `delivery_rate` | `number` | `(delivered / total_sent) × 100`, 2 decimal places |
+| `total_scans` | `number` | All-time total QR scans across all org campaign trackers (sum of PostGrid `visitCount`) |
 | `spent_to_date` | `number` | Sum of all `amount_paid` in `payment_history` for the org |
 | `spent_to_date_display` | `object` | Currency-formatted version using user's saved preference |
 
@@ -898,7 +905,451 @@ curl -X POST https://xnflihspegizweqidvow.supabase.co/functions/v1/getAnalyticsV
 
 ---
 
+---
+
+### `scan_trend_by_type`
+
+Returns **180 consecutive day entries** (past 6 months ending today, oldest first) showing how many QR scans each campaign target type produced per day. The frontend handles any filtering/aggregation.
+
+**Campaign target types:**
+| DB value | Response key |
+|---|---|
+| `Location Zone` | `location_zone` |
+| `Referral` | `referral` |
+| `Addresses List` | `addresses_list` |
+
+`percentage` = `scans_for_type / total_postcards_sent_for_that_type` (0.0–1.0, 4dp). `campaign_ids` filter applies. Time-based filters (`last_24hours` etc.) are ignored for this type.
+
+#### Curl — all campaigns
+
+```bash
+curl -X POST https://xnflihspegizweqidvow.supabase.co/functions/v1/getAnalyticsV2 \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "type": "scan_trend_by_type"
+  }'
+```
+
+#### Curl — with `campaign_ids` filter
+
+```bash
+curl -X POST https://xnflihspegizweqidvow.supabase.co/functions/v1/getAnalyticsV2 \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "type": "scan_trend_by_type",
+    "campaign_ids": ["a1b2c3d4-e5f6-7890-abcd-ef1234567890"]
+  }'
+```
+
+#### Success Response `200` (truncated — full response has 180 entries)
+
+```json
+{
+  "status": "success",
+  "message": "Analytics computed successfully",
+  "data": [
+    { "date": "2025-10-24", "day": "Friday",    "total_scans": 0,  "location_zone": { "count": 0, "percentage": 0.0    }, "referral": { "count": 0, "percentage": 0.0    }, "addresses_list": { "count": 0, "percentage": 0.0    } },
+    { "date": "2025-10-25", "day": "Saturday",  "total_scans": 0,  "location_zone": { "count": 0, "percentage": 0.0    }, "referral": { "count": 0, "percentage": 0.0    }, "addresses_list": { "count": 0, "percentage": 0.0    } },
+    "...",
+    { "date": "2026-04-20", "day": "Monday",    "total_scans": 20, "location_zone": { "count": 12, "percentage": 0.6   }, "referral": { "count": 5, "percentage": 0.25   }, "addresses_list": { "count": 3, "percentage": 0.15   } },
+    { "date": "2026-04-21", "day": "Tuesday",   "total_scans": 12, "location_zone": { "count": 6,  "percentage": 0.5   }, "referral": { "count": 4, "percentage": 0.3333 }, "addresses_list": { "count": 2, "percentage": 0.1667 } },
+    { "date": "2026-04-22", "day": "Wednesday", "total_scans": 4,  "location_zone": { "count": 2,  "percentage": 0.5   }, "referral": { "count": 1, "percentage": 0.25   }, "addresses_list": { "count": 1, "percentage": 0.25   } }
+  ]
+}
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `data` | `array[180]` | 180 day entries, day 1 = 179 days ago, day 180 = today |
+| `[].date` | `string` | Date string `YYYY-MM-DD` |
+| `[].day` | `string` | Day of week name |
+| `[].total_scans` | `number` | Raw total QR scans across all types that day |
+| `[].location_zone.count` | `number` | Raw scans from `Location Zone` campaigns that day |
+| `[].location_zone.percentage` | `number` | `scans / postcards_sent_for_type` (0.0–1.0, 4dp) |
+| `[].referral.count` | `number` | Raw scans from `Referral` campaigns that day |
+| `[].referral.percentage` | `number` | `scans / postcards_sent_for_type` (0.0–1.0, 4dp) |
+| `[].addresses_list.count` | `number` | Raw scans from `Addresses List` campaigns that day |
+| `[].addresses_list.percentage` | `number` | `scans / postcards_sent_for_type` (0.0–1.0, 4dp) |
+
+---
+
+### `postcard_overview`
+
+Per-campaign breakdown of how postcards ended up — delivered and scanned, delivered but not scanned, still in transit, or returned/cancelled. Also returns an aggregate `total_summary` across all campaigns.
+
+**Field definitions:**
+- `delivered_and_scanned` — `postgrid_status = completed` AND the postcard's ID appears in PostGrid scan visits (fraction of total sent, 0.0–1.0)
+- `delivered_but_not_scanned` — `postgrid_status = completed` AND QR was never scanned (fraction of total sent, 0.0–1.0)
+- `in_transit` — `postgrid_status` in `ready`, `printing`, `processed_for_delivery` (raw count)
+- `returned_cancelled` — `postgrid_status = cancelled` OR `imb_status = returned_to_sender` (raw count)
+
+Campaigns with no `postgrid_tracker_id` will have `delivered_and_scanned: 0` — all delivered postcards are treated as not-scanned since there is no scan data. `campaign_ids` filter applies.
+
+#### Curl — all campaigns
+
+```bash
+curl -X POST https://xnflihspegizweqidvow.supabase.co/functions/v1/getAnalyticsV2 \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "type": "postcard_overview"
+  }'
+```
+
+#### Curl — with `campaign_ids` filter
+
+```bash
+curl -X POST https://xnflihspegizweqidvow.supabase.co/functions/v1/getAnalyticsV2 \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "type": "postcard_overview",
+    "campaign_ids": [
+      "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      "b2c3d4e5-f6a7-8901-bcde-f12345678901"
+    ]
+  }'
+```
+
+#### Success Response `200`
+
+```json
+{
+  "status": "success",
+  "message": "Analytics computed successfully",
+  "data": {
+    "total_summary": {
+      "delivered_and_scanned": 0.0842,
+      "delivered_but_not_scanned": 0.6431,
+      "in_transit": 450,
+      "returned_cancelled": 87
+    },
+    "campaign_summary": [
+      {
+        "campaign_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+        "campaign_name": "Spring Promotion 2024",
+        "delivered_and_scanned": 0.11,
+        "delivered_but_not_scanned": 0.62,
+        "in_transit": 270,
+        "returned_cancelled": 42
+      },
+      {
+        "campaign_id": "b2c3d4e5-f6a7-8901-bcde-f12345678901",
+        "campaign_name": "Summer Sale Campaign",
+        "delivered_and_scanned": 0.055,
+        "delivered_but_not_scanned": 0.67,
+        "in_transit": 180,
+        "returned_cancelled": 45
+      }
+    ]
+  }
+}
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `total_summary` | `object` | Aggregate across all campaigns |
+| `total_summary.delivered_and_scanned` | `number` | Delivered + QR scanned / total sent (0.0–1.0, 4dp) |
+| `total_summary.delivered_but_not_scanned` | `number` | Delivered but QR never scanned / total sent (0.0–1.0, 4dp) |
+| `total_summary.in_transit` | `number` | Postcards still in the delivery pipeline (raw count) |
+| `total_summary.returned_cancelled` | `number` | Postcards returned or cancelled (raw count) |
+| `campaign_summary` | `array` | One entry per campaign |
+| `campaign_summary[].campaign_id` | `string` | Campaign UUID |
+| `campaign_summary[].campaign_name` | `string` | Campaign display name |
+| `campaign_summary[].delivered_and_scanned` | `number` | Fraction of this campaign's postcards delivered + scanned (0.0–1.0) |
+| `campaign_summary[].delivered_but_not_scanned` | `number` | Fraction delivered but not scanned (0.0–1.0) |
+| `campaign_summary[].in_transit` | `number` | In-flight postcard count for this campaign |
+| `campaign_summary[].returned_cancelled` | `number` | Returned/cancelled count for this campaign |
+
+#### Success Response — no campaigns
+
+```json
+{
+  "status": "success",
+  "message": "Analytics computed successfully",
+  "data": {
+    "total_summary": {
+      "delivered_and_scanned": 0,
+      "delivered_but_not_scanned": 0,
+      "in_transit": 0,
+      "returned_cancelled": 0
+    },
+    "campaign_summary": []
+  }
+}
+```
+
+---
+
+### `active_campaigns`
+
+Returns a status card for every campaign with `status = "Active"` in the org. Data covers all-time postcard sends for those campaigns. `campaign_ids` filter applies (limits to active campaigns in that list).
+
+**Status thresholds (based on `delivery_rate`):**
+| Status | Condition |
+|---|---|
+| `On Track` | `delivery_rate` ≥ 0.80 |
+| `Delayed` | 0.60 ≤ `delivery_rate` < 0.80 |
+| `At Risk` | `delivery_rate` < 0.60 |
+
+#### Curl — all active campaigns
+
+```bash
+curl -X POST https://xnflihspegizweqidvow.supabase.co/functions/v1/getAnalyticsV2 \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "type": "active_campaigns"
+  }'
+```
+
+#### Curl — with `campaign_ids` filter
+
+```bash
+curl -X POST https://xnflihspegizweqidvow.supabase.co/functions/v1/getAnalyticsV2 \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "type": "active_campaigns",
+    "campaign_ids": ["a1b2c3d4-e5f6-7890-abcd-ef1234567890"]
+  }'
+```
+
+#### Success Response `200`
+
+```json
+{
+  "status": "success",
+  "message": "Analytics computed successfully",
+  "data": [
+    {
+      "campaign_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      "campaign_name": "Spring Promotion 2024",
+      "days_running": 14,
+      "in_flight": 270,
+      "scans": 42,
+      "delivery_rate": 0.8200,
+      "status": "On Track"
+    },
+    {
+      "campaign_id": "b2c3d4e5-f6a7-8901-bcde-f12345678901",
+      "campaign_name": "Summer Sale Campaign",
+      "days_running": 3,
+      "in_flight": 480,
+      "scans": 7,
+      "delivery_rate": 0.4500,
+      "status": "At Risk"
+    }
+  ]
+}
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `data` | `array` | One entry per active campaign |
+| `[].campaign_id` | `string` | Campaign UUID |
+| `[].campaign_name` | `string` | Campaign display name |
+| `[].days_running` | `number` | Days since `campaign.created_at` |
+| `[].in_flight` | `number` | Postcards with status `ready`, `printing`, or `processed_for_delivery` |
+| `[].scans` | `number` | Total QR scans from PostGrid tracker summary (`visitCount`) |
+| `[].delivery_rate` | `number` | `completed / total_sent` (0.0–1.0, 4dp) |
+| `[].status` | `string` | `"On Track"` / `"Delayed"` / `"At Risk"` |
+
+#### Success Response — no active campaigns
+
+```json
+{
+  "status": "success",
+  "message": "Analytics computed successfully",
+  "data": []
+}
+```
+
+---
+
 ## Filter Behaviour Notes
+
+---
+
+### `performance_trend`
+
+Returns **180 consecutive day entries** (past 6 months ending today, oldest first) showing delivery rate, scan rate, and postcard volume per day. The frontend handles any filtering/aggregation.
+
+**Rates:**
+- `delivery_rate` = completed postcards created that day / total postcards created that day (0.0–1.0)
+- `scan_rate` = scans that occurred that day / total postcards sent org-wide all time (0.0–1.0)
+- `total_volume` = postcards created that day
+
+Time-based filters (`last_24hours` etc.) are ignored for this type. `campaign_ids` filter applies.
+
+#### Curl — all campaigns
+
+```bash
+curl -X POST https://xnflihspegizweqidvow.supabase.co/functions/v1/getAnalyticsV2 \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "type": "performance_trend"
+  }'
+```
+
+#### Curl — with `campaign_ids` filter
+
+```bash
+curl -X POST https://xnflihspegizweqidvow.supabase.co/functions/v1/getAnalyticsV2 \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "type": "performance_trend",
+    "campaign_ids": [
+      "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      "b2c3d4e5-f6a7-8901-bcde-f12345678901"
+    ]
+  }'
+```
+
+#### Success Response `200` (truncated — full response has 180 entries)
+
+```json
+{
+  "status": "success",
+  "message": "Analytics computed successfully",
+  "data": [
+    { "date": "2025-10-24", "day": "Friday",    "delivery_rate": 0.0,  "scan_rate": 0.0,    "total_volume": 0   },
+    { "date": "2025-10-25", "day": "Saturday",  "delivery_rate": 0.0,  "scan_rate": 0.0,    "total_volume": 0   },
+    "...",
+    { "date": "2026-04-20", "day": "Monday",    "delivery_rate": 0.75, "scan_rate": 0.0015, "total_volume": 80  },
+    { "date": "2026-04-21", "day": "Tuesday",   "delivery_rate": 0.80, "scan_rate": 0.0020, "total_volume": 50  },
+    { "date": "2026-04-22", "day": "Wednesday", "delivery_rate": 0.60, "scan_rate": 0.0008, "total_volume": 30  }
+  ]
+}
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `data` | `array[180]` | 180 day entries, day 1 = 179 days ago, day 180 = today |
+| `[].date` | `string` | Date string `YYYY-MM-DD` |
+| `[].day` | `string` | Day of week name (`"Monday"` … `"Sunday"`) |
+| `[].delivery_rate` | `number` | Completed / sent on that day (0.0–1.0) |
+| `[].scan_rate` | `number` | Scans on that day / total postcards sent all time (0.0–1.0) |
+| `[].total_volume` | `number` | Postcards created on that day |
+
+---
+
+---
+
+### `campaign_performance`
+
+Ranks ALL campaigns that have a PostGrid tracker by total QR scans and returns the top 5 (best) and bottom 5 (worst). Rankings are global — rank 1 = most scans, rank N = least. Campaigns with 0 scans are included so that the true worst performers always appear.
+
+If there are 5 or fewer campaigns total, all go into `top_performers` and `bottom_performers` is empty (no overlap).
+
+`scan_rate` is a fraction (0.0–1.0), same as other types.
+
+#### Curl — all campaigns
+
+```bash
+curl -X POST https://xnflihspegizweqidvow.supabase.co/functions/v1/getAnalyticsV2 \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "type": "campaign_performance"
+  }'
+```
+
+#### Curl — with `campaign_ids` filter
+
+```bash
+curl -X POST https://xnflihspegizweqidvow.supabase.co/functions/v1/getAnalyticsV2 \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "type": "campaign_performance",
+    "campaign_ids": [
+      "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      "b2c3d4e5-f6a7-8901-bcde-f12345678901"
+    ]
+  }'
+```
+
+#### Curl — with `last_month` filter
+
+```bash
+curl -X POST https://xnflihspegizweqidvow.supabase.co/functions/v1/getAnalyticsV2 \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "type": "campaign_performance",
+    "last_month": true
+  }'
+```
+
+#### Curl — combined: specific campaigns + last week
+
+```bash
+curl -X POST https://xnflihspegizweqidvow.supabase.co/functions/v1/getAnalyticsV2 \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "type": "campaign_performance",
+    "campaign_ids": ["a1b2c3d4-e5f6-7890-abcd-ef1234567890"],
+    "last_week": true
+  }'
+```
+
+#### Success Response `200`
+
+```json
+{
+  "status": "success",
+  "message": "Analytics computed successfully",
+  "data": {
+    "top_performers": [
+      { "campaign_name": "Campaign Awesome",  "total_scans": 55, "total_postcards_sent": 5000, "scan_rate": 0.011,   "ranking_position": 1 },
+      { "campaign_name": "Spring Promo 2024", "total_scans": 38, "total_postcards_sent": 2000, "scan_rate": 0.019,   "ranking_position": 2 },
+      { "campaign_name": "Summer Sale",       "total_scans": 21, "total_postcards_sent": 1500, "scan_rate": 0.014,   "ranking_position": 3 },
+      { "campaign_name": "Fall Outreach",     "total_scans": 15, "total_postcards_sent": 1000, "scan_rate": 0.015,   "ranking_position": 4 },
+      { "campaign_name": "Q4 Push",           "total_scans": 7,  "total_postcards_sent": 800,  "scan_rate": 0.00875, "ranking_position": 5 }
+    ],
+    "bottom_performers": [
+      { "campaign_name": "Winter Blast",  "total_scans": 4, "total_postcards_sent": 600, "scan_rate": 0.0067, "ranking_position": 6  },
+      { "campaign_name": "Early Bird",    "total_scans": 2, "total_postcards_sent": 400, "scan_rate": 0.005,  "ranking_position": 7  },
+      { "campaign_name": "Referral Drive","total_scans": 1, "total_postcards_sent": 250, "scan_rate": 0.004,  "ranking_position": 8  },
+      { "campaign_name": "Local Blitz",   "total_scans": 1, "total_postcards_sent": 100, "scan_rate": 0.01,   "ranking_position": 9  },
+      { "campaign_name": "Test Campaign", "total_scans": 0, "total_postcards_sent": 50,  "scan_rate": 0.0,    "ranking_position": 10 }
+    ]
+  }
+}
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `top_performers` | `array` | Up to 5 best campaigns, ranked 1–5 |
+| `bottom_performers` | `array` | Up to 5 worst campaigns, ranked 6–10. Empty if ≤5 campaigns total |
+| `[].campaign_name` | `string` | Campaign display name |
+| `[].total_scans` | `number` | Total QR scans from PostGrid |
+| `[].total_postcards_sent` | `number` | Total postcards sent for this campaign |
+| `[].scan_rate` | `number` | `total_scans / total_postcards_sent` (0.0–1.0) |
+| `[].ranking_position` | `number` | Global rank — 1 = most scans, 10 = least |
+
+#### Success Response — 5 or fewer campaigns (no bottom performers)
+
+```json
+{
+  "status": "success",
+  "message": "Analytics computed successfully",
+  "data": {
+    "top_performers": [
+      { "campaign_name": "Only Campaign", "total_scans": 12, "total_postcards_sent": 200, "scan_rate": 0.06, "ranking_position": 1 }
+    ],
+    "bottom_performers": []
+  }
+}
+```
+
+---
 
 ### `campaign_ids` with PostGrid-based types
 
@@ -911,6 +1362,10 @@ When `last_24hours`, `last_week`, or `last_month` is set for `scan_trend`, `rece
 ### Time filters with DB-based types
 
 For `dashboard_cards`, `delivery_funnel`, and `waste_meter`, time filters apply a `created_at >= <cutoff>` condition directly on the `postcard_sends` and `payment_history` tables — no approximation.
+
+### Time filters ignored by `performance_trend` and `scan_trend_by_type`
+
+These two types always return all 180 days regardless of any time filter. The frontend is expected to slice the array as needed.
 
 ### `last_24hours` vs `last_week` vs `last_month`
 
