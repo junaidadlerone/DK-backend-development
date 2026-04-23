@@ -33,7 +33,15 @@ const POSTGRID_BASE_URL = "https://api.postgrid.com/print-mail/v1";
 // imbStatus = returned_to_sender is tracked via the imb_status column separately.
 const TERMINAL_STATUSES = ["completed", "cancelled"];
 
-const BATCH_SIZE = 50;
+// 5 concurrent requests per batch, 500 ms gap between batches → ~300 req/min
+// Keeps total runtime ~50 s for 254 postcards — well under Supabase's 150 s idle timeout
+const BATCH_SIZE = 5;
+const BATCH_DELAY_MS = 500;
+const RETRY_DELAY_MS = 62_000; // PostGrid says "try again in a minute"
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 interface PostcardSendRow {
   id: string;
@@ -96,20 +104,41 @@ Deno.serve(async (_req) => {
   let errorCount = 0;
   const now = new Date().toISOString();
 
-  // 2. Process in batches
+  // 2. Process in batches — 5 concurrent, 5 s gap between batches → ≤ 60 req/min.
+  //    On 429 the request is retried once after RETRY_DELAY_MS (62 s).
   for (let i = 0; i < pending.length; i += BATCH_SIZE) {
     const batch = pending.slice(i, i + BATCH_SIZE);
 
     await Promise.all(
       batch.map(async (row) => {
         try {
-          const response = await fetch(
+          let response = await fetch(
             `${POSTGRID_BASE_URL}/postcards/${row.postgrid_postcard_id}`,
             {
               method: "GET",
               headers: { "x-api-key": postgridApiKey },
             },
           );
+
+          // Single retry on rate-limit — PostGrid clears in ~60 s
+          if (response.status === 429) {
+            console.warn(
+              `[syncPostcardStatuses] Rate limited for ${row.postgrid_postcard_id} — retrying in ${RETRY_DELAY_MS / 1000}s`,
+            );
+            await sleep(RETRY_DELAY_MS);
+            response = await fetch(
+              `${POSTGRID_BASE_URL}/postcards/${row.postgrid_postcard_id}`,
+              {
+                method: "GET",
+                headers: { "x-api-key": postgridApiKey },
+              },
+            );
+          }
+
+          // 404 means the ID doesn't exist in PostGrid (e.g. seed/test data) — skip silently
+          if (response.status === 404) {
+            return;
+          }
 
           if (!response.ok) {
             const errText = await response.text();
@@ -172,6 +201,11 @@ Deno.serve(async (_req) => {
         }
       }),
     );
+
+    // Pause between batches to stay under PostGrid rate limit
+    if (i + BATCH_SIZE < pending.length) {
+      await sleep(BATCH_DELAY_MS);
+    }
   }
 
   const summary = {
