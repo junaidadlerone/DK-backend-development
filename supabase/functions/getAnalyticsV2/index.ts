@@ -302,6 +302,7 @@ interface PostcardOverviewSummary {
 interface CampaignOverviewEntry extends PostcardOverviewSummary {
   campaign_id: string;
   campaign_name: string;
+  total_postcards_sent: number;
 }
 
 interface PostcardOverviewData {
@@ -309,7 +310,7 @@ interface PostcardOverviewData {
   campaign_summary: CampaignOverviewEntry[];
 }
 
-type ActiveCampaignStatus = "On Track" | "Delayed" | "At Risk";
+type ActiveCampaignStatus = "On Track" | "Delayed" | "At Risk" | "Pending";
 
 interface ActiveCampaignEntry {
   campaign_id: string;
@@ -2006,7 +2007,7 @@ async function computePostcardOverview(
   // 1. Fetch campaigns
   let campaignsQuery = supabase
     .from("campaigns")
-    .select("id, campaign_name, postgrid_tracker_id")
+    .select("id, campaign_name, postgrid_tracker_id, postcards_sent")
     .eq("organization_id", organizationId);
   if (filters.campaign_ids) campaignsQuery = campaignsQuery.in("id", filters.campaign_ids);
   const { data: campaigns, error: campaignsError } = await campaignsQuery;
@@ -2020,6 +2021,7 @@ async function computePostcardOverview(
     id: string;
     campaign_name: string;
     postgrid_tracker_id: string | null;
+    postcards_sent: number | null;
   }> = campaigns ?? [];
 
   if (campaignList.length === 0) {
@@ -2030,7 +2032,7 @@ async function computePostcardOverview(
   const campaignIds = campaignList.map((c) => c.id);
   let sendsQuery = supabase
     .from("postcard_sends")
-    .select("postgrid_postcard_id, postgrid_status, imb_status, campaign_id")
+    .select("postgrid_status, imb_status, campaign_id")
     .eq("organization_id", organizationId)
     .in("campaign_id", campaignIds);
   if (filters.since) sendsQuery = sendsQuery.gte("created_at", filters.since);
@@ -2041,7 +2043,7 @@ async function computePostcardOverview(
     throw new Error("Failed to fetch postcard data");
   }
 
-  type SendRow = { postgrid_postcard_id: string; postgrid_status: string; imb_status: string | null; campaign_id: string };
+  type SendRow = { postgrid_status: string; imb_status: string | null; campaign_id: string };
   const sendRows: SendRow[] = sends ?? [];
 
   // Group sends by campaign_id
@@ -2051,8 +2053,8 @@ async function computePostcardOverview(
     sendsByCampaign.get(row.campaign_id)!.push(row);
   }
 
-  // 3. Fetch scanned postcard IDs per campaign from PostGrid visits
-  const scannedIdsByCampaign = new Map<string, Set<string>>();
+  // 3. Fetch total scan count per campaign from tracker summary
+  const scanCountByCampaign = new Map<string, number>();
 
   if (postgridApiKey) {
     await Promise.all(
@@ -2061,23 +2063,12 @@ async function computePostcardOverview(
         .map(async (campaign) => {
           try {
             const response = await fetch(
-              `${POSTGRID_TRACKER_BASE_URL}/${campaign.postgrid_tracker_id}/visits?limit=1000&skip=0`,
+              `${POSTGRID_TRACKER_BASE_URL}/${campaign.postgrid_tracker_id}`,
               { headers: { "x-api-key": postgridApiKey } },
             );
             if (!response.ok) return;
             const result = await response.json();
-            const visits: Array<Record<string, any>> = Array.isArray(result.data)
-              ? result.data
-              : Array.isArray(result)
-              ? result
-              : [];
-
-            const scannedIds = new Set<string>();
-            for (const v of visits) {
-              const oid: string | undefined = v.orderId ?? v.order_id ?? v.order;
-              if (oid) scannedIds.add(oid);
-            }
-            scannedIdsByCampaign.set(campaign.id, scannedIds);
+            scanCountByCampaign.set(campaign.id, result.visitCount ?? 0);
           } catch (err) {
             console.error(`[postcard_overview] Failed for tracker ${campaign.postgrid_tracker_id}:`, err);
           }
@@ -2086,10 +2077,6 @@ async function computePostcardOverview(
   }
 
   // 4. Compute per-campaign buckets
-  const rate4dp = (n: number, d: number): number =>
-    d > 0 ? Math.round((n / d) * 10000) / 10000 : 0;
-
-  let totalSent = 0;
   let totalDeliveredAndScanned = 0;
   let totalDeliveredNotScanned = 0;
   let totalInTransit = 0;
@@ -2097,25 +2084,21 @@ async function computePostcardOverview(
 
   const campaign_summary: CampaignOverviewEntry[] = campaignList.map((campaign) => {
     const rows = sendsByCampaign.get(campaign.id) ?? [];
-    const scannedIds = scannedIdsByCampaign.get(campaign.id) ?? new Set<string>();
-    const sent = rows.length;
+    const totalScans = scanCountByCampaign.get(campaign.id) ?? 0;
 
-    let deliveredAndScanned = 0;
-    let deliveredNotScanned = 0;
+    let deliveredCount = 0;
     let inTransit = 0;
     let returnedCancelled = 0;
 
     for (const row of rows) {
-      const isDelivered = row.postgrid_status === "completed";
-      const isScanned = scannedIds.has(row.postgrid_postcard_id);
-
-      if (isDelivered && isScanned) deliveredAndScanned++;
-      else if (isDelivered && !isScanned) deliveredNotScanned++;
+      if (row.postgrid_status === "completed") deliveredCount++;
       if (IN_FLIGHT_STATUSES.includes(row.postgrid_status)) inTransit++;
       if (row.postgrid_status === "cancelled" || row.imb_status === "returned_to_sender") returnedCancelled++;
     }
 
-    totalSent += sent;
+    const deliveredAndScanned = Math.min(totalScans, deliveredCount);
+    const deliveredNotScanned = deliveredCount - deliveredAndScanned;
+
     totalDeliveredAndScanned += deliveredAndScanned;
     totalDeliveredNotScanned += deliveredNotScanned;
     totalInTransit += inTransit;
@@ -2124,8 +2107,9 @@ async function computePostcardOverview(
     return {
       campaign_id: campaign.id,
       campaign_name: campaign.campaign_name,
-      delivered_and_scanned: rate4dp(deliveredAndScanned, sent),
-      delivered_but_not_scanned: rate4dp(deliveredNotScanned, sent),
+      total_postcards_sent: campaign.postcards_sent ?? 0,
+      delivered_and_scanned: deliveredAndScanned,
+      delivered_but_not_scanned: deliveredNotScanned,
       in_transit: inTransit,
       returned_cancelled: returnedCancelled,
     };
@@ -2133,8 +2117,8 @@ async function computePostcardOverview(
 
   return {
     total_summary: {
-      delivered_and_scanned: rate4dp(totalDeliveredAndScanned, totalSent),
-      delivered_but_not_scanned: rate4dp(totalDeliveredNotScanned, totalSent),
+      delivered_and_scanned: totalDeliveredAndScanned,
+      delivered_but_not_scanned: totalDeliveredNotScanned,
       in_transit: totalInTransit,
       returned_cancelled: totalReturnedCancelled,
     },
@@ -2157,7 +2141,7 @@ async function computeActiveCampaigns(
 
   let campaignsQuery = supabase
     .from("campaigns")
-    .select("id, campaign_name, created_at, postgrid_tracker_id")
+    .select("id, campaign_name, created_at, postgrid_tracker_id, postcards_sent")
     .eq("organization_id", organizationId)
     .filter("status->>name", "eq", "Active");
   if (filters.campaign_ids) campaignsQuery = campaignsQuery.in("id", filters.campaign_ids);
@@ -2169,6 +2153,7 @@ async function computeActiveCampaigns(
     campaign_name: string;
     created_at: string;
     postgrid_tracker_id: string | null;
+    postcards_sent: number | null;
   }> = campaignsRaw ?? [];
 
   if (campaigns.length === 0) return [];
@@ -2214,18 +2199,19 @@ async function computeActiveCampaigns(
 
   return campaigns.map((c) => {
     const campaignSends = sendsByCampaign.get(c.id) ?? [];
-    const total = campaignSends.length;
     const delivered = campaignSends.filter((s) => s.postgrid_status === "completed").length;
     const inFlight = campaignSends.filter((s) =>
       IN_FLIGHT_STATUSES.includes(s.postgrid_status)
     ).length;
-    const deliveryRate = total > 0 ? Math.round((delivered / total) * 10000) / 10000 : 0;
+    const totalSent = c.postcards_sent ?? 0;
+    const deliveryRate = totalSent > 0 ? Math.round((delivered / totalSent) * 10000) / 10000 : 0;
     const daysRunning = Math.floor(
       (now.getTime() - new Date(c.created_at).getTime()) / 86_400_000,
     );
 
     let status: ActiveCampaignStatus;
-    if (deliveryRate >= 0.80) status = "On Track";
+    if (campaignSends.length === 0) status = "Pending";
+    else if (deliveryRate >= 0.80) status = "On Track";
     else if (deliveryRate >= 0.60) status = "Delayed";
     else status = "At Risk";
 
