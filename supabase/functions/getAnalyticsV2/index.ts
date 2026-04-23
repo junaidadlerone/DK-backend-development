@@ -265,7 +265,7 @@ interface PostcardOverviewData {
   campaign_summary: CampaignOverviewEntry[];
 }
 
-type ActiveCampaignStatus = "On Track" | "Delayed" | "At Risk";
+type ActiveCampaignStatus = "On Track" | "Delayed" | "At Risk" | "Pending";
 
 interface ActiveCampaignEntry {
   campaign_id: string;
@@ -1856,7 +1856,7 @@ async function computeActiveCampaigns(
 
   let campaignsQuery = supabase
     .from("campaigns")
-    .select("id, campaign_name, created_at, postgrid_tracker_id")
+    .select("id, campaign_name, created_at, postgrid_tracker_id, postcards_sent")
     .eq("organization_id", organizationId)
     .filter("status->>name", "eq", "Active");
   if (filters.campaign_ids) campaignsQuery = campaignsQuery.in("id", filters.campaign_ids);
@@ -1868,6 +1868,7 @@ async function computeActiveCampaigns(
     campaign_name: string;
     created_at: string;
     postgrid_tracker_id: string | null;
+    postcards_sent: number | null;
   }> = campaignsRaw ?? [];
 
   if (campaigns.length === 0) return [];
@@ -1913,18 +1914,19 @@ async function computeActiveCampaigns(
 
   return campaigns.map((c) => {
     const campaignSends = sendsByCampaign.get(c.id) ?? [];
-    const total = campaignSends.length;
     const delivered = campaignSends.filter((s) => s.postgrid_status === "completed").length;
     const inFlight = campaignSends.filter((s) =>
       IN_FLIGHT_STATUSES.includes(s.postgrid_status)
     ).length;
-    const deliveryRate = total > 0 ? Math.round((delivered / total) * 10000) / 10000 : 0;
+    const totalSent = c.postcards_sent ?? 0;
+    const deliveryRate = totalSent > 0 ? Math.round((delivered / totalSent) * 10000) / 10000 : 0;
     const daysRunning = Math.floor(
       (now.getTime() - new Date(c.created_at).getTime()) / 86_400_000,
     );
 
     let status: ActiveCampaignStatus;
-    if (deliveryRate >= 0.80) status = "On Track";
+    if (totalSent === 0) status = "Pending";
+    else if (deliveryRate >= 0.80) status = "On Track";
     else if (deliveryRate >= 0.60) status = "Delayed";
     else status = "At Risk";
 
