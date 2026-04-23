@@ -67,6 +67,7 @@ interface AnalyticsV2Request {
 interface AnalyticsFilters {
   campaign_ids?: string[];
   since?: string;
+  timeFilter?: "last_24hours" | "last_week" | "last_month";
 }
 
 function parseFilters(body: AnalyticsV2Request): AnalyticsFilters {
@@ -77,10 +78,13 @@ function parseFilters(body: AnalyticsV2Request): AnalyticsFilters {
   const now = Date.now();
   if (body.last_24hours === true) {
     filters.since = new Date(now - 86_400_000).toISOString();
+    filters.timeFilter = "last_24hours";
   } else if (body.last_week === true) {
     filters.since = new Date(now - 7 * 86_400_000).toISOString();
+    filters.timeFilter = "last_week";
   } else if (body.last_month === true) {
     filters.since = new Date(now - 30 * 86_400_000).toISOString();
+    filters.timeFilter = "last_month";
   }
   return filters;
 }
@@ -1363,12 +1367,21 @@ async function computePerformanceTrend(
   };
 
   // Last 6 months of daily data, oldest to newest, today as final entry
-  return Array.from({ length: 180 }, (_, i) => {
+  const data = Array.from({ length: 180 }, (_, i) => {
     const d = new Date(now);
     d.setDate(now.getDate() - 179 + i);
     const dateStr = toDateStr(d);
     return { date: dateStr, day: DAY_NAMES[d.getDay()], ...metricsForDate(dateStr) };
   });
+
+  if (filters.timeFilter === "last_24hours") return data.slice(-1);
+  if (filters.timeFilter === "last_week") return data.slice(-7);
+  if (filters.timeFilter === "last_month") {
+    const firstOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const daysSinceFirst = Math.floor((now.getTime() - firstOfMonth.getTime()) / 86_400_000);
+    return data.slice(179 - daysSinceFirst);
+  }
+  return data;
 }
 
 // ---------------------------------------------------------------------------
@@ -1639,12 +1652,21 @@ async function computeScanTrendByType(
   };
 
   // Last 6 months of daily data, oldest to newest, today as final entry
-  return Array.from({ length: 180 }, (_, i) => {
+  const data = Array.from({ length: 180 }, (_, i) => {
     const d = new Date(now);
     d.setDate(now.getDate() - 179 + i);
     const dateStr = toDateStr(d);
     return { date: dateStr, day: DAY_NAMES[d.getDay()], ...breakdownForDate(dateStr) };
   });
+
+  if (filters.timeFilter === "last_24hours") return data.slice(-1);
+  if (filters.timeFilter === "last_week") return data.slice(-7);
+  if (filters.timeFilter === "last_month") {
+    const firstOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const daysSinceFirst = Math.floor((now.getTime() - firstOfMonth.getTime()) / 86_400_000);
+    return data.slice(179 - daysSinceFirst);
+  }
+  return data;
 }
 
 // ---------------------------------------------------------------------------
@@ -1836,7 +1858,7 @@ async function computeActiveCampaigns(
     .from("campaigns")
     .select("id, campaign_name, created_at, postgrid_tracker_id")
     .eq("organization_id", organizationId)
-    .eq("status", "Active");
+    .filter("status->>name", "eq", "Active");
   if (filters.campaign_ids) campaignsQuery = campaignsQuery.in("id", filters.campaign_ids);
   const { data: campaignsRaw, error: campaignsError } = await campaignsQuery;
   if (campaignsError) throw new Error("Failed to fetch active campaigns");
