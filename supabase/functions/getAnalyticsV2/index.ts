@@ -88,12 +88,18 @@ function parseFilters(body: AnalyticsV2Request): AnalyticsFilters {
   if (body.last_24hours === true) {
     filters.since = new Date(now - 86_400_000).toISOString();
     filters.timeFilter = "last_24hours";
+    filters.period = "last_24hours";
   } else if (body.last_week === true) {
-    filters.since = new Date(now - 7 * 86_400_000).toISOString();
+    const startOfWeek = new Date();
+    startOfWeek.setUTCHours(0, 0, 0, 0);
+    startOfWeek.setUTCDate(startOfWeek.getUTCDate() - startOfWeek.getUTCDay());
+    filters.since = startOfWeek.toISOString();
     filters.timeFilter = "last_week";
+    filters.period = "last_week";
   } else if (body.last_month === true) {
     filters.since = new Date(now - 30 * 86_400_000).toISOString();
     filters.timeFilter = "last_month";
+    filters.period = "last_month";
   }
   return filters;
 }
@@ -389,11 +395,7 @@ Deno.serve(async (req) => {
 
       case "scan_trend": {
         const data = await computeScanTrend(supabase, organizationId, filters);
-        return successResponse({
-          status: "success",
-          message: "Analytics computed successfully",
-          data,
-        }, 200);
+        return successResponse({ success: true, data }, 200);
       }
 
       case "recent_scans": {
