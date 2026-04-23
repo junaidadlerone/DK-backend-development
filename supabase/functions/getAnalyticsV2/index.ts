@@ -364,6 +364,22 @@ Deno.serve(async (req) => {
     const analyticsType = type.toLowerCase();
     const filters = parseFilters(body);
 
+    // Return simulated data for demo orgs listed in ANALYTICS_SIMULATED_ORG_IDS secret
+    const simulatedOrgIds = (Deno.env.get("ANALYTICS_SIMULATED_ORG_IDS") ?? "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+
+    if (simulatedOrgIds.includes(organizationId)) {
+      const simData = buildSimulatedAnalytics(analyticsType, filters);
+      if (simData !== null) {
+        const envelope = analyticsType === "scan_trend"
+          ? { success: true, data: simData }
+          : { status: "success", message: "Analytics computed successfully", data: simData };
+        return successResponse(envelope, 200);
+      }
+    }
+
     switch (analyticsType) {
       case "dashboard_cards": {
         const preferences = await getUserPreferences(supabase, user.userId);
@@ -840,6 +856,324 @@ function _isSimulatedOrg(organizationId: string): boolean {
     .map((s) => s.trim())
     .filter(Boolean);
   return ids.includes(organizationId);
+}
+
+// ---------------------------------------------------------------------------
+// Simulated Analytics
+// ---------------------------------------------------------------------------
+
+type SimBreakdownPeriod = "24h" | "week" | "month" | "alltime";
+
+const SIM_HOUR_LABELS = ["12am","2am","4am","6am","8am","10am","12pm","2pm","4pm","6pm","8pm","10pm"];
+const SIM_DAY_KEYS    = ["sunday_scans","monday_scans","tuesday_scans","wednesday_scans","thursday_scans","friday_scans","saturday_scans"];
+const SIM_MONTH_ABBR  = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+
+function buildSimBreakdownTemplate(period: SimBreakdownPeriod): Record<string, number> {
+  switch (period) {
+    case "24h":
+      return Object.fromEntries(SIM_HOUR_LABELS.map((k) => [k, 0]));
+    case "week":
+      return Object.fromEntries(SIM_DAY_KEYS.map((k) => [k, 0]));
+    case "month": {
+      const today = new Date();
+      const start = new Date(today);
+      start.setHours(0, 0, 0, 0);
+      start.setDate(today.getDate() <= 15 ? 1 : today.getDate() - 14);
+      const result: Record<string, number> = {};
+      const cur = new Date(start);
+      const end = new Date(today);
+      end.setHours(23, 59, 59, 999);
+      while (cur <= end) {
+        result[`${SIM_MONTH_ABBR[cur.getMonth()]} ${cur.getDate()}`] = 0;
+        cur.setDate(cur.getDate() + 1);
+      }
+      return result;
+    }
+    case "alltime": {
+      const today = new Date();
+      const result: Record<string, number> = {};
+      for (let i = 5; i >= 0; i--) {
+        const d = new Date(today.getFullYear(), today.getMonth() - i, 1);
+        result[`${SIM_MONTH_ABBR[d.getMonth()]} ${d.getFullYear()}`] = 0;
+      }
+      return result;
+    }
+  }
+}
+
+function buildSimulatedAnalytics(analyticsType: string, filters: AnalyticsFilters): unknown | null {
+  // Scale by time window: all_time=1.0, last_month=0.60, last_week=0.20, last_24hours=0.03
+  let scale = 1.0;
+  if (filters.since) {
+    const ageDays = (Date.now() - new Date(filters.since).getTime()) / 86_400_000;
+    scale = ageDays <= 1.1 ? 0.03 : ageDays <= 8 ? 0.20 : 0.60;
+  }
+
+  // ── Postcard counts (all derived from one scaled total) ───────────────────
+  const total     = Math.max(1, Math.round(1254 * scale));
+  const completed = Math.round(1189 / 1254 * total);
+  const processed = Math.round(  17 / 1254 * total);
+  const printing  = Math.round(  18 / 1254 * total);
+  const cancelled = Math.round(  18 / 1254 * total);
+  const ready     = total - completed - processed - printing - cancelled;
+  const inFlight  = processed + printing + ready;
+  const inTransit = Math.round(187 / 1254 * total);
+  const returned  = Math.round(  7 / 1254 * total);
+  const delayed   = Math.round(  4 / 1254 * total);
+  const wasted    = returned + cancelled;
+  const deliveryRate = Math.round(completed / total * 10000) / 100;
+  const spentToDate  = Math.round(total * PRICE_PER_POSTCARD * 100) / 100;
+  const usd          = (n: number) => Math.round(n * PRICE_PER_POSTCARD * 100) / 100;
+  const problemRate  = ((wasted + delayed) / total) * 100;
+  const wasteStatus: WasteMeterStatus =
+    problemRate < WASTE_STATUS_THRESHOLDS.HEALTHY ? "Healthy"
+    : problemRate < WASTE_STATUS_THRESHOLDS.AT_RISK ? "At Risk"
+    : "Critical";
+
+  // ── Campaign data ─────────────────────────────────────────────────────────
+  const CAMPAIGN_NAMES      = ["Spring Neighborhood Outreach","East Side Growth Drive","Downtown Business Promo","North County Expansion","Summer Referral Wave"];
+  const BASE_CAMPAIGN_POSTS = [480, 312, 256, 154, 52];
+  const BASE_SCAN_RATES     = [29.58, 31.41, 23.83, 22.08, 13.46];
+
+  const scaledPosts = BASE_CAMPAIGN_POSTS.map((p) => Math.round(p / 1254 * total));
+  scaledPosts[4] = total - scaledPosts[0] - scaledPosts[1] - scaledPosts[2] - scaledPosts[3];
+  const scaledScans = scaledPosts.map((p, i) => Math.max(0, Math.round(p * BASE_SCAN_RATES[i] / 100)));
+  const totalScans  = scaledScans.reduce((a, b) => a + b, 0);
+  const uniqueScans = Math.round(totalScans * 0.845);
+
+  const bucket = (count: number) => ({
+    count,
+    percentage: total > 0 ? Math.round((count / total) * 10000) / 10000 : 0,
+  });
+
+  switch (analyticsType) {
+    case "dashboard_cards":
+      return {
+        in_flight_postcards:   inFlight,
+        delivered:             completed,
+        delivery_rate:         deliveryRate,
+        total_scans:           totalScans,
+        spent_to_date:         spentToDate,
+        spent_to_date_display: enrichCurrency(spentToDate, "USD"),
+      };
+
+    case "delivery_funnel":
+      return {
+        total_postcards_sent: total,
+        delivered:  bucket(completed),
+        processed:  bucket(processed),
+        printing:   bucket(printing),
+        ready:      bucket(ready),
+        cancelled:  bucket(cancelled),
+        in_transit: bucket(inTransit),
+        returned:   bucket(returned),
+      };
+
+    case "waste_meter":
+      return {
+        status:                 wasteStatus,
+        total_postcards_sent:   total,
+        total_pieces_wasted:    wasted,
+        total_amount_wasted:    usd(wasted),
+        total_pieces_returned:  returned,
+        total_amount_returned:  usd(returned),
+        total_pieces_cancelled: cancelled,
+        total_amount_cancelled: usd(cancelled),
+        total_pieces_delayed:   delayed,
+        total_amount_delayed:   usd(delayed),
+      };
+
+    case "scan_trend": {
+      const period: SimBreakdownPeriod =
+        scale <= 0.03 ? "24h" : scale <= 0.20 ? "week" : scale < 1.0 ? "month" : "alltime";
+      const tpl = buildSimBreakdownTemplate(period);
+      let rawWeights: number[];
+      if (period === "24h") {
+        rawWeights = [0, 3, 0, 1, 12, 9, 14, 8, 6, 4, 2, 1];
+      } else if (period === "week") {
+        rawWeights = [11, 68, 54, 61, 57, 72, 19];
+      } else if (period === "month") {
+        const DOW_WEIGHTS = [1, 7, 6, 8, 6, 9, 2];
+        rawWeights = Object.keys(tpl).map((k) => {
+          const d = new Date();
+          d.setDate(parseInt(k.split(" ")[1], 10));
+          return DOW_WEIGHTS[d.getDay()];
+        });
+      } else {
+        rawWeights = [34, 51, 28, 67, 89, 73];
+      }
+      const rawSum = rawWeights.reduce((a, b) => a + b, 0);
+      const keys   = Object.keys(tpl);
+      let remaining = totalScans;
+      keys.forEach((k, i) => {
+        if (i === keys.length - 1) {
+          tpl[k] = Math.max(0, remaining);
+        } else {
+          const v = rawSum > 0 ? Math.max(0, Math.round(rawWeights[i] / rawSum * totalScans)) : 0;
+          tpl[k] = v;
+          remaining -= v;
+        }
+      });
+      return { total_scans: totalScans, unique_scans: uniqueScans, scan_rate: total > 0 ? Math.round(totalScans / total * 10000) / 100 : 0, breakdown: tpl };
+    }
+
+    case "recent_scans": {
+      const allCampaigns = [
+        {
+          campaign_id: "sim-campaign-001", campaign_name: "Spring Neighborhood Outreach",
+          scans: [
+            { postcard_number: 84,  scan_address: "2741 Market St, San Francisco, CA",  scan_time_stamp: "3 minutes ago" },
+            { postcard_number: 201, scan_address: "490 Post St, San Francisco, CA",      scan_time_stamp: "18 minutes ago" },
+            { postcard_number: 57,  scan_address: "1 Ferry Building, San Francisco, CA", scan_time_stamp: "41 minutes ago" },
+            { postcard_number: 133, scan_address: "3650 21st St, San Francisco, CA",     scan_time_stamp: "2 hours ago" },
+            { postcard_number: 76,  scan_address: "720 Valencia St, San Francisco, CA",  scan_time_stamp: "4 hours ago" },
+          ],
+        },
+        {
+          campaign_id: "sim-campaign-002", campaign_name: "East Side Growth Drive",
+          scans: [
+            { postcard_number: 38,  scan_address: "4601 E Thomas Rd, Phoenix, AZ",       scan_time_stamp: "7 minutes ago" },
+            { postcard_number: 112, scan_address: "2022 E McDowell Rd, Phoenix, AZ",     scan_time_stamp: "1 hour ago" },
+            { postcard_number: 9,   scan_address: "6900 E Camelback Rd, Scottsdale, AZ", scan_time_stamp: "3 hours ago" },
+            { postcard_number: 67,  scan_address: "7014 E Camelback Rd, Scottsdale, AZ", scan_time_stamp: "5 hours ago" },
+          ],
+        },
+        {
+          campaign_id: "sim-campaign-003", campaign_name: "Downtown Business Promo",
+          scans: [
+            { postcard_number: 22, scan_address: "233 S Wacker Dr, Chicago, IL",    scan_time_stamp: "34 minutes ago" },
+            { postcard_number: 45, scan_address: "875 N Michigan Ave, Chicago, IL", scan_time_stamp: "2 hours ago" },
+            { postcard_number: 61, scan_address: "151 N Michigan Ave, Chicago, IL", scan_time_stamp: "6 hours ago" },
+          ],
+        },
+      ];
+      const campaignLimit = scale <= 0.03 ? 1 : scale <= 0.20 ? 2 : 3;
+      const scanLimit     = scale <= 0.03 ? 2 : scale <= 0.20 ? 3 : 5;
+      return { data: allCampaigns.slice(0, campaignLimit).map((c) => ({ ...c, scans: c.scans.slice(0, scanLimit) })) };
+    }
+
+    case "campaign_leaderboard": {
+      const leaderboard = CAMPAIGN_NAMES
+        .map((name, i) => ({ campaign_name: name, total_scans: scaledScans[i], total_postcards_sent: scaledPosts[i], scan_rate: BASE_SCAN_RATES[i] }))
+        .filter((e) => e.total_scans > 0)
+        .map((e, i) => ({ ...e, ranking_position: i + 1 }));
+      return { leaderboard };
+    }
+
+    case "campaign_performance": {
+      const ranked = CAMPAIGN_NAMES.map((name, i) => ({
+        campaign_name: name, total_scans: scaledScans[i], total_postcards_sent: scaledPosts[i],
+        scan_rate: BASE_SCAN_RATES[i], ranking_position: i + 1,
+      }));
+      return { top_performers: ranked, bottom_performers: [] };
+    }
+
+    case "postcard_overview": {
+      const campaign_summary = CAMPAIGN_NAMES.map((name, i) => {
+        const posts    = scaledPosts[i];
+        const delivered = Math.round(posts * 1189 / 1254);
+        const dasScans  = Math.min(scaledScans[i], delivered);
+        return {
+          campaign_id: `sim-campaign-00${i + 1}`, campaign_name: name,
+          total_postcards_sent:      posts,
+          delivered_and_scanned:     dasScans,
+          delivered_but_not_scanned: Math.max(0, delivered - dasScans),
+          in_transit:                Math.round(posts * 47 / 1254),
+          returned_cancelled:        Math.round(posts * 25 / 1254),
+        };
+      });
+      const sum = (key: keyof typeof campaign_summary[0]) =>
+        campaign_summary.reduce((a, c) => a + (c[key] as number), 0);
+      return {
+        total_summary: {
+          delivered_and_scanned:     sum("delivered_and_scanned"),
+          delivered_but_not_scanned: sum("delivered_but_not_scanned"),
+          in_transit:                sum("in_transit"),
+          returned_cancelled:        sum("returned_cancelled"),
+        },
+        campaign_summary,
+      };
+    }
+
+    case "active_campaigns": {
+      const SIM_ACTIVE = [
+        { idx: 0, days_running: 42, dr: 0.9488, status: "On Track" },
+        { idx: 1, days_running: 18, dr: 0.7200, status: "Delayed"  },
+        { idx: 2, days_running:  7, dr: 0.4500, status: "At Risk"  },
+      ];
+      return SIM_ACTIVE.map(({ idx, days_running, dr, status }) => ({
+        campaign_id:   `sim-campaign-00${idx + 1}`,
+        campaign_name: CAMPAIGN_NAMES[idx],
+        days_running,
+        in_flight:     Math.max(0, Math.round(scaledPosts[idx] * 47 / 1254)),
+        scans:         scaledScans[idx],
+        delivery_rate: dr,
+        status,
+      }));
+    }
+
+    case "performance_trend": {
+      const SIM_PERF_DAY_NAMES = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
+      const DR_PAT  = [0.82, 0.91, 0.89, 0.93, 0.87, 0.90, 0.84];
+      const SR_PAT  = [0.02, 0.05, 0.04, 0.06, 0.04, 0.05, 0.03];
+      const VOL_PAT = [3, 8, 7, 9, 7, 8, 4];
+      const nowPT = new Date();
+      const allDaysPT = Array.from({ length: 180 }, (_, i) => {
+        const d = new Date(nowPT);
+        d.setUTCDate(nowPT.getUTCDate() - 179 + i);
+        const dow = d.getUTCDay();
+        return {
+          date: d.toISOString().slice(0, 10), day: SIM_PERF_DAY_NAMES[dow],
+          delivery_rate: DR_PAT[dow], scan_rate: SR_PAT[dow],
+          total_volume: Math.max(0, Math.round(total * VOL_PAT[dow] / (6 * 180))),
+        };
+      });
+      if (scale <= 0.03) return allDaysPT.slice(-1);
+      if (scale <= 0.20) return allDaysPT.slice(-7);
+      if (scale  < 1.0) {
+        const firstOfMonth = new Date(nowPT.getUTCFullYear(), nowPT.getUTCMonth(), 1);
+        const daysSinceFirst = Math.floor((nowPT.getTime() - firstOfMonth.getTime()) / 86_400_000);
+        return allDaysPT.slice(179 - daysSinceFirst);
+      }
+      return allDaysPT;
+    }
+
+    case "scan_trend_by_type": {
+      const SIM_TYPE_DAY_NAMES = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
+      const lzPosts  = scaledPosts[0] + scaledPosts[1];
+      const refPosts = scaledPosts[2] + scaledPosts[3];
+      const alPosts  = scaledPosts[4];
+      const VOL_PAT_TYPE = [2, 6, 5, 7, 5, 6, 3];
+      const nowST = new Date();
+      const allDaysST = Array.from({ length: 180 }, (_, i) => {
+        const d = new Date(nowST);
+        d.setUTCDate(nowST.getUTCDate() - 179 + i);
+        const dow = d.getUTCDay();
+        const daily = Math.max(0, Math.round(totalScans * VOL_PAT_TYPE[dow] / (4.9 * 180)));
+        const lz    = Math.round(daily * 0.55);
+        const ref   = Math.round(daily * 0.30);
+        const al    = daily - lz - ref;
+        return {
+          date: d.toISOString().slice(0, 10), day: SIM_TYPE_DAY_NAMES[dow],
+          total_scans: daily,
+          location_zone:  { count: lz,  percentage: lzPosts  > 0 ? Math.round(lz  / lzPosts  * 10000) / 10000 : 0 },
+          referral:       { count: ref, percentage: refPosts > 0 ? Math.round(ref / refPosts * 10000) / 10000 : 0 },
+          addresses_list: { count: al,  percentage: alPosts  > 0 ? Math.round(al  / alPosts  * 10000) / 10000 : 0 },
+        };
+      });
+      if (scale <= 0.03) return allDaysST.slice(-1);
+      if (scale <= 0.20) return allDaysST.slice(-7);
+      if (scale  < 1.0) {
+        const firstOfMonth = new Date(nowST.getUTCFullYear(), nowST.getUTCMonth(), 1);
+        const daysSinceFirst = Math.floor((nowST.getTime() - firstOfMonth.getTime()) / 86_400_000);
+        return allDaysST.slice(179 - daysSinceFirst);
+      }
+      return allDaysST;
+    }
+
+    default:
+      return null;
+  }
 }
 
 // ---------------------------------------------------------------------------

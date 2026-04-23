@@ -1350,6 +1350,134 @@ function buildSimulatedAnalytics(analyticsType: string, filters: AnalyticsFilter
       return { leaderboard };
     }
 
+    case "campaign_performance": {
+      // All 5 campaigns ranked — bottom_performers empty when ≤ 5 total
+      const ranked = CAMPAIGN_NAMES.map((name, i) => ({
+        campaign_name:        name,
+        total_scans:          scaledScans[i],
+        total_postcards_sent: scaledPosts[i],
+        scan_rate:            BASE_SCAN_RATES[i],
+        ranking_position:     i + 1,
+      }));
+      return { top_performers: ranked, bottom_performers: [] };
+    }
+
+    case "postcard_overview": {
+      const campaign_summary = CAMPAIGN_NAMES.map((name, i) => {
+        const posts     = scaledPosts[i];
+        const delivered = Math.round(posts * 1189 / 1254);
+        const inTransit = Math.round(posts *   47 / 1254); // processed + printing + ready
+        const retCancel = Math.round(posts *   25 / 1254); // returned + cancelled
+        const dasScans  = Math.min(scaledScans[i], delivered);
+        return {
+          campaign_id:                `sim-campaign-00${i + 1}`,
+          campaign_name:              name,
+          total_postcards_sent:       posts,
+          delivered_and_scanned:      dasScans,
+          delivered_but_not_scanned:  Math.max(0, delivered - dasScans),
+          in_transit:                 inTransit,
+          returned_cancelled:         retCancel,
+        };
+      });
+      const sum = (key: keyof typeof campaign_summary[0]) =>
+        campaign_summary.reduce((a, c) => a + (c[key] as number), 0);
+      return {
+        total_summary: {
+          delivered_and_scanned:     sum("delivered_and_scanned"),
+          delivered_but_not_scanned: sum("delivered_but_not_scanned"),
+          in_transit:                sum("in_transit"),
+          returned_cancelled:        sum("returned_cancelled"),
+        },
+        campaign_summary,
+      };
+    }
+
+    case "active_campaigns": {
+      // Three simulated active campaigns with On Track / Delayed / At Risk statuses
+      const SIM_ACTIVE = [
+        { idx: 0, days_running: 42, dr: 0.9488, status: "On Track"  },
+        { idx: 1, days_running: 18, dr: 0.7200, status: "Delayed"   },
+        { idx: 2, days_running:  7, dr: 0.4500, status: "At Risk"   },
+      ];
+      return SIM_ACTIVE.map(({ idx, days_running, dr, status }) => ({
+        campaign_id:   `sim-campaign-00${idx + 1}`,
+        campaign_name: CAMPAIGN_NAMES[idx],
+        days_running,
+        in_flight:     Math.max(0, Math.round(scaledPosts[idx] * 47 / 1254)),
+        scans:         scaledScans[idx],
+        delivery_rate: dr,
+        status,
+      }));
+    }
+
+    case "performance_trend": {
+      const SIM_PERF_DAY_NAMES = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
+      // Deterministic weekly patterns (Sun→Sat)
+      const DR_PAT  = [0.82, 0.91, 0.89, 0.93, 0.87, 0.90, 0.84]; // delivery_rate
+      const SR_PAT  = [0.02, 0.05, 0.04, 0.06, 0.04, 0.05, 0.03]; // scan_rate
+      const VOL_PAT = [   3,    8,    7,    9,    7,    8,    4];   // relative volume
+
+      const nowPT = new Date();
+      const allDaysPT = Array.from({ length: 180 }, (_, i) => {
+        const d = new Date(nowPT);
+        d.setUTCDate(nowPT.getUTCDate() - 179 + i);
+        const dow = d.getUTCDay();
+        return {
+          date:          d.toISOString().slice(0, 10),
+          day:           SIM_PERF_DAY_NAMES[dow],
+          delivery_rate: DR_PAT[dow],
+          scan_rate:     SR_PAT[dow],
+          total_volume:  Math.max(0, Math.round(total * VOL_PAT[dow] / (6 * 180))),
+        };
+      });
+
+      if (scale <= 0.03) return allDaysPT.slice(-1);
+      if (scale <= 0.20) return allDaysPT.slice(-7);
+      if (scale  < 1.0) {
+        const firstOfMonth = new Date(nowPT.getUTCFullYear(), nowPT.getUTCMonth(), 1);
+        const daysSinceFirst = Math.floor((nowPT.getTime() - firstOfMonth.getTime()) / 86_400_000);
+        return allDaysPT.slice(179 - daysSinceFirst);
+      }
+      return allDaysPT;
+    }
+
+    case "scan_trend_by_type": {
+      const SIM_TYPE_DAY_NAMES = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
+      // Type split: campaigns 0-1 = location_zone, 2-3 = referral, 4 = addresses_list
+      const lzPosts  = scaledPosts[0] + scaledPosts[1];
+      const refPosts = scaledPosts[2] + scaledPosts[3];
+      const alPosts  = scaledPosts[4];
+      const VOL_PAT_TYPE = [2, 6, 5, 7, 5, 6, 3];
+
+      const nowST = new Date();
+      const allDaysST = Array.from({ length: 180 }, (_, i) => {
+        const d = new Date(nowST);
+        d.setUTCDate(nowST.getUTCDate() - 179 + i);
+        const dow = d.getUTCDay();
+        const daily = Math.max(0, Math.round(totalScans * VOL_PAT_TYPE[dow] / (4.9 * 180)));
+        const lz    = Math.round(daily * 0.55);
+        const ref   = Math.round(daily * 0.30);
+        const al    = daily - lz - ref;
+        return {
+          date:  d.toISOString().slice(0, 10),
+          day:   SIM_TYPE_DAY_NAMES[dow],
+          total_scans:    daily,
+          location_zone:  { count: lz,  percentage: lzPosts  > 0 ? Math.round(lz  / lzPosts  * 10000) / 10000 : 0 },
+          referral:       { count: ref, percentage: refPosts > 0 ? Math.round(ref / refPosts * 10000) / 10000 : 0 },
+          addresses_list: { count: al,  percentage: alPosts  > 0 ? Math.round(al  / alPosts  * 10000) / 10000 : 0 },
+        };
+      });
+
+      if (scale <= 0.03) return allDaysST.slice(-1);
+      if (scale <= 0.20) return allDaysST.slice(-7);
+      if (scale  < 1.0) {
+        const firstOfMonth = new Date(nowST.getUTCFullYear(), nowST.getUTCMonth(), 1);
+        const daysSinceFirst = Math.floor((nowST.getTime() - firstOfMonth.getTime()) / 86_400_000);
+        return allDaysST.slice(179 - daysSinceFirst);
+      }
+      return allDaysST;
+    }
+
     default:
       return null;
   }
