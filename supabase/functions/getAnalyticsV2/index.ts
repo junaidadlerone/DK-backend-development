@@ -313,6 +313,18 @@ interface PostcardOverviewData {
   campaign_summary: CampaignOverviewEntry[];
 }
 
+interface CampaignTypeEntry {
+  total_scans: number;
+  total_scans_percentage: number;
+  percent_of_subtotal: number;
+}
+
+interface CampaignTypeDistributionData {
+  location_zone: CampaignTypeEntry;
+  referral: CampaignTypeEntry;
+  addresses_list: CampaignTypeEntry;
+}
+
 type ActiveCampaignStatus = "On Track" | "Delayed" | "At Risk" | "Pending";
 
 interface ActiveCampaignEntry {
@@ -481,10 +493,19 @@ Deno.serve(async (req) => {
         }, 200);
       }
 
+      case "campaign_type_distribution": {
+        const data = await computeCampaignTypeDistribution(supabase, organizationId, filters);
+        return successResponse({
+          status: "success",
+          message: "Analytics computed successfully",
+          data,
+        }, 200);
+      }
+
       default:
         return errorResponse(
           "INVALID_TYPE",
-          `Analytics type "${type}" is not supported. Supported types: dashboard_cards, delivery_funnel, waste_meter, scan_trend, recent_scans, campaign_leaderboard, performance_trend, campaign_performance, scan_trend_by_type, postcard_overview, active_campaigns`,
+          `Analytics type "${type}" is not supported. Supported types: dashboard_cards, delivery_funnel, waste_meter, scan_trend, recent_scans, campaign_leaderboard, performance_trend, campaign_performance, scan_trend_by_type, postcard_overview, active_campaigns, campaign_type_distribution`,
           400,
         );
     }
@@ -2606,4 +2627,99 @@ async function computeActiveCampaigns(
       status,
     };
   });
+}
+
+// ---------------------------------------------------------------------------
+// Campaign Type Distribution
+// ---------------------------------------------------------------------------
+
+async function computeCampaignTypeDistribution(
+  supabase: any,
+  organizationId: string,
+  filters: AnalyticsFilters,
+): Promise<CampaignTypeDistributionData> {
+  const postgridApiKey =
+    Deno.env.get("POSTGRID_POSTCARD_API_KEY") ??
+    Deno.env.get("VITE_POSTGRID_POSTCARD_API_KEY");
+
+  let campaignsQuery = supabase
+    .from("campaigns")
+    .select("postgrid_tracker_id, campaign_target_type, postcards_sent")
+    .eq("organization_id", organizationId)
+    .not("postgrid_tracker_id", "is", null)
+    .not("campaign_target_type", "is", null);
+  if (filters.campaign_ids) campaignsQuery = campaignsQuery.in("id", filters.campaign_ids);
+  const { data: campaigns, error: campaignsError } = await campaignsQuery;
+
+  if (campaignsError) {
+    console.error("Error fetching campaigns for campaign_type_distribution:", campaignsError);
+    throw new Error("Failed to fetch campaign data");
+  }
+
+  const campaignList: Array<{
+    postgrid_tracker_id: string;
+    campaign_target_type: string;
+    postcards_sent: number | null;
+  }> = (campaigns ?? []).filter((c: any) => c.campaign_target_type in TARGET_TYPE_MAP);
+
+  const postcardsSentByType: Record<CampaignTargetType, number> = {
+    location_zone: 0,
+    referral: 0,
+    addresses_list: 0,
+  };
+  for (const c of campaignList) {
+    postcardsSentByType[TARGET_TYPE_MAP[c.campaign_target_type]] += c.postcards_sent ?? 0;
+  }
+
+  const scansByType: Record<CampaignTargetType, number> = {
+    location_zone: 0,
+    referral: 0,
+    addresses_list: 0,
+  };
+
+  if (postgridApiKey && campaignList.length > 0) {
+    await Promise.all(
+      campaignList.map(async (campaign) => {
+        const typeKey = TARGET_TYPE_MAP[campaign.campaign_target_type];
+        try {
+          const response = await fetch(
+            `${POSTGRID_TRACKER_BASE_URL}/${campaign.postgrid_tracker_id}/visits?limit=1000&skip=0`,
+            { headers: { "x-api-key": postgridApiKey } },
+          );
+          if (!response.ok) return;
+          const result = await response.json();
+          const visits: Array<Record<string, any>> = Array.isArray(result.data)
+            ? result.data
+            : Array.isArray(result)
+            ? result
+            : [];
+          const filtered = filters.since
+            ? visits.filter((v) => {
+                const ts = v.createdAt ?? v.created_at;
+                return ts && ts >= filters.since!;
+              })
+            : visits;
+          scansByType[typeKey] += filtered.length;
+        } catch { /* skip */ }
+      }),
+    );
+  }
+
+  const totalScans = scansByType.location_zone + scansByType.referral + scansByType.addresses_list;
+
+  const entry = (typeKey: CampaignTargetType): CampaignTypeEntry => {
+    const scans = scansByType[typeKey];
+    const sent = postcardsSentByType[typeKey];
+    return {
+      total_scans: scans,
+      total_scans_percentage: sent > 0 ? Math.round((scans / sent) * 10000) / 10000 : 0,
+      percent_of_subtotal: totalScans > 0 ? Math.round((scans / totalScans) * 10000) / 10000 : 0,
+    };
+  };
+
+  return {
+    location_zone: entry("location_zone"),
+    referral: entry("referral"),
+    addresses_list: entry("addresses_list"),
+  };
 }
