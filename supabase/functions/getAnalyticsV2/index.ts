@@ -313,6 +313,11 @@ interface PostcardOverviewData {
   campaign_summary: CampaignOverviewEntry[];
 }
 
+interface HourEntry {
+  hour: string;
+  scans: number;
+}
+
 interface CampaignTypeEntry {
   total_scans: number;
   total_scans_percentage: number;
@@ -502,10 +507,19 @@ Deno.serve(async (req) => {
         }, 200);
       }
 
+      case "scan_activity_by_hour": {
+        const data = await computeScanActivityByHour(supabase, organizationId, filters);
+        return successResponse({
+          status: "success",
+          message: "Analytics computed successfully",
+          data,
+        }, 200);
+      }
+
       default:
         return errorResponse(
           "INVALID_TYPE",
-          `Analytics type "${type}" is not supported. Supported types: dashboard_cards, delivery_funnel, waste_meter, scan_trend, recent_scans, campaign_leaderboard, performance_trend, campaign_performance, scan_trend_by_type, postcard_overview, active_campaigns, campaign_type_distribution`,
+          `Analytics type "${type}" is not supported. Supported types: dashboard_cards, delivery_funnel, waste_meter, scan_trend, recent_scans, campaign_leaderboard, performance_trend, campaign_performance, scan_trend_by_type, postcard_overview, active_campaigns, campaign_type_distribution, scan_activity_by_hour`,
           400,
         );
     }
@@ -2722,4 +2736,65 @@ async function computeCampaignTypeDistribution(
     referral: entry("referral"),
     addresses_list: entry("addresses_list"),
   };
+}
+
+// ---------------------------------------------------------------------------
+// Scan Activity By Hour
+// ---------------------------------------------------------------------------
+
+async function computeScanActivityByHour(
+  supabase: any,
+  organizationId: string,
+  filters: AnalyticsFilters,
+): Promise<HourEntry[]> {
+  const postgridApiKey =
+    Deno.env.get("POSTGRID_POSTCARD_API_KEY") ??
+    Deno.env.get("VITE_POSTGRID_POSTCARD_API_KEY");
+
+  const now = new Date();
+  const currentHour = now.getUTCHours();
+  const todayStr = now.toISOString().slice(0, 10); // YYYY-MM-DD in UTC
+
+  let campaignsQuery = supabase
+    .from("campaigns")
+    .select("postgrid_tracker_id")
+    .eq("organization_id", organizationId)
+    .not("postgrid_tracker_id", "is", null);
+  if (filters.campaign_ids) campaignsQuery = campaignsQuery.in("id", filters.campaign_ids);
+  const { data: campaigns } = await campaignsQuery;
+
+  const campaignList: Array<{ postgrid_tracker_id: string }> = campaigns ?? [];
+  const hourCounts = new Array(24).fill(0);
+
+  if (postgridApiKey && campaignList.length > 0) {
+    await Promise.all(
+      campaignList.map(async (c) => {
+        try {
+          const response = await fetch(
+            `${POSTGRID_TRACKER_BASE_URL}/${c.postgrid_tracker_id}/visits?limit=1000&skip=0`,
+            { headers: { "x-api-key": postgridApiKey } },
+          );
+          if (!response.ok) return;
+          const result = await response.json();
+          const visits: Array<Record<string, any>> = Array.isArray(result.data)
+            ? result.data
+            : Array.isArray(result)
+            ? result
+            : [];
+          for (const v of visits) {
+            const ts: string | undefined = v.createdAt ?? v.created_at;
+            if (!ts) continue;
+            const d = new Date(ts);
+            if (d.toISOString().slice(0, 10) !== todayStr) continue;
+            hourCounts[d.getUTCHours()]++;
+          }
+        } catch { /* skip */ }
+      }),
+    );
+  }
+
+  return Array.from({ length: currentHour + 1 }, (_, i) => ({
+    hour: formatHour(i),
+    scans: hourCounts[i],
+  }));
 }

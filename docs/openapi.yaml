@@ -10067,6 +10067,7 @@ paths:
                     - postcard_overview
                     - active_campaigns
                     - campaign_type_distribution
+                    - scan_activity_by_hour
                   description: |
                     The analytics view to retrieve.
                     - `dashboard_cards` — high-level summary cards: delivery rate, total scans, scan rate, average scans/day, peak scan hour, spend
@@ -10081,6 +10082,7 @@ paths:
                     - `postcard_overview` — per-campaign breakdown: delivered+scanned count, delivered-not-scanned count, in-transit, returned/cancelled, total_postcards_sent
                     - `active_campaigns` — live status card for every Active campaign: days running, in-flight, scans, delivery rate, status (On Track / Delayed / At Risk / Pending)
                     - `campaign_type_distribution` — aggregate QR scan totals by campaign target type (location_zone, referral, addresses_list) with scan rate and share of total
+                    - `scan_activity_by_hour` — today's QR scan counts bucketed by clock hour (UTC), from 12AM up to and including the current hour
                 campaign_ids:
                   type: array
                   items:
@@ -10215,6 +10217,15 @@ paths:
                 value:
                   type: "campaign_type_distribution"
                   last_week: true
+              scan_activity_by_hour:
+                summary: "scan_activity_by_hour — all campaigns, today"
+                value:
+                  type: "scan_activity_by_hour"
+              scan_activity_by_hour_filtered:
+                summary: "scan_activity_by_hour — specific campaigns, today"
+                value:
+                  type: "scan_activity_by_hour"
+                  campaign_ids: ["a1b2c3d4-e5f6-7890-abcd-ef1234567890"]
       responses:
         "200":
           description: Analytics computed successfully
@@ -10247,6 +10258,7 @@ paths:
                       - $ref: "#/components/schemas/PostcardOverviewAnalytics"
                       - $ref: "#/components/schemas/ActiveCampaignsAnalytics"
                       - $ref: "#/components/schemas/CampaignTypeDistributionAnalytics"
+                      - $ref: "#/components/schemas/ScanActivityByHourAnalytics"
                     discriminator:
                       propertyName: _type
               examples:
@@ -10646,6 +10658,44 @@ paths:
                         total_scans: 5
                         total_scans_percentage: 0.0098
                         percent_of_subtotal: 0.1471
+                scan_activity_by_hour:
+                  summary: "scan_activity_by_hour response (current time 3:18 PM UTC)"
+                  value:
+                    status: "success"
+                    message: "Analytics computed successfully"
+                    data:
+                      - hour: "12AM"
+                        scans: 0
+                      - hour: "01AM"
+                        scans: 0
+                      - hour: "02AM"
+                        scans: 0
+                      - hour: "03AM"
+                        scans: 0
+                      - hour: "04AM"
+                        scans: 0
+                      - hour: "05AM"
+                        scans: 0
+                      - hour: "06AM"
+                        scans: 0
+                      - hour: "07AM"
+                        scans: 0
+                      - hour: "08AM"
+                        scans: 0
+                      - hour: "09AM"
+                        scans: 3
+                      - hour: "10AM"
+                        scans: 7
+                      - hour: "11AM"
+                        scans: 5
+                      - hour: "12PM"
+                        scans: 11
+                      - hour: "01PM"
+                        scans: 4
+                      - hour: "02PM"
+                        scans: 2
+                      - hour: "03PM"
+                        scans: 1
         "400":
           description: Invalid request — missing or unsupported type
           content:
@@ -10662,7 +10712,7 @@ paths:
                   summary: Unsupported analytics type
                   value:
                     error: "INVALID_TYPE"
-                    message: "Analytics type \"foo\" is not supported. Supported types: dashboard_cards, delivery_funnel, waste_meter, scan_trend, recent_scans, campaign_leaderboard, performance_trend, campaign_performance, scan_trend_by_type, postcard_overview, active_campaigns, campaign_type_distribution"
+                    message: "Analytics type \"foo\" is not supported. Supported types: dashboard_cards, delivery_funnel, waste_meter, scan_trend, recent_scans, campaign_leaderboard, performance_trend, campaign_performance, scan_trend_by_type, postcard_overview, active_campaigns, campaign_type_distribution, scan_activity_by_hour"
         "401":
           description: Unauthorized — missing or invalid Bearer token
           content:
@@ -19273,6 +19323,33 @@ components:
         addresses_list:
           $ref: "#/components/schemas/CampaignTypeEntry"
           description: "Scans from campaigns with campaign_target_type = Addresses List."
+
+    HourEntry:
+      type: object
+      required:
+        - hour
+        - scans
+      properties:
+        hour:
+          type: string
+          description: "Clock hour label in 12-hour format (e.g. '12AM', '01AM', '12PM', '03PM')."
+          example: "03PM"
+        scans:
+          type: integer
+          description: "Number of QR scans that occurred during this hour (UTC)."
+          example: 4
+
+    ScanActivityByHourAnalytics:
+      type: array
+      description: |
+        Today's QR scan counts broken down by clock hour (UTC).
+        Always starts at 12AM and ends at the current UTC hour (inclusive).
+        At 3:18 PM UTC the array contains 16 entries: 12AM through 03PM.
+        Each hour bucket covers the full 60-minute window (e.g. 03PM = 15:00–15:59 UTC).
+        campaign_ids filter scopes which campaign trackers are queried.
+        Time filters (last_24hours, last_week, last_month) are ignored — this type always shows today.
+      items:
+        $ref: "#/components/schemas/HourEntry"
 
     GlobalExclusionsAnalytics:
       type: object
