@@ -318,6 +318,17 @@ interface HourEntry {
   scans: number;
 }
 
+interface DeviceEntry {
+  device_name: string;
+  device_scans: number;
+  scan_percentage: number;
+}
+
+interface DeviceDistributionData {
+  total_scans: number;
+  devices: DeviceEntry[];
+}
+
 interface CampaignTypeEntry {
   total_scans: number;
   total_scans_percentage: number;
@@ -516,10 +527,19 @@ Deno.serve(async (req) => {
         }, 200);
       }
 
+      case "device_distribution": {
+        const data = await computeDeviceDistribution(supabase, organizationId, filters);
+        return successResponse({
+          status: "success",
+          message: "Analytics computed successfully",
+          data,
+        }, 200);
+      }
+
       default:
         return errorResponse(
           "INVALID_TYPE",
-          `Analytics type "${type}" is not supported. Supported types: dashboard_cards, delivery_funnel, waste_meter, scan_trend, recent_scans, campaign_leaderboard, performance_trend, campaign_performance, scan_trend_by_type, postcard_overview, active_campaigns, campaign_type_distribution, scan_activity_by_hour`,
+          `Analytics type "${type}" is not supported. Supported types: dashboard_cards, delivery_funnel, waste_meter, scan_trend, recent_scans, campaign_leaderboard, performance_trend, campaign_performance, scan_trend_by_type, postcard_overview, active_campaigns, campaign_type_distribution, scan_activity_by_hour, device_distribution`,
           400,
         );
     }
@@ -1798,7 +1818,7 @@ async function computeRecentScans(
         if (visits.length === 0) return;
 
         const scans: RecentScanEvent[] = visits.map((visit, index) => {
-          const orderId: string | undefined = visit.orderId ?? visit.order_id ?? visit.order;
+          const orderId: string | undefined = visit.orderID ?? visit.orderId ?? visit.order_id;
           const ts: string = visit.createdAt ?? visit.created_at ?? "";
 
           // Postcard number from our DB lookup, fallback to visit index
@@ -2797,4 +2817,79 @@ async function computeScanActivityByHour(
     hour: formatHour(i),
     scans: hourCounts[i],
   }));
+}
+
+// ---------------------------------------------------------------------------
+// Device Distribution
+// ---------------------------------------------------------------------------
+
+function detectDevice(visit: Record<string, any>): "android" | "iphone" | "web" {
+  const device: string = (visit.device ?? "").toLowerCase();
+  if (device.includes("android")) return "android";
+  if (device.includes("iphone") || device.includes("ipad") || device.includes("ios")) return "iphone";
+  return "web";
+}
+
+async function computeDeviceDistribution(
+  supabase: any,
+  organizationId: string,
+  filters: AnalyticsFilters,
+): Promise<DeviceDistributionData> {
+  const postgridApiKey =
+    Deno.env.get("POSTGRID_POSTCARD_API_KEY") ??
+    Deno.env.get("VITE_POSTGRID_POSTCARD_API_KEY");
+
+  let campaignsQuery = supabase
+    .from("campaigns")
+    .select("postgrid_tracker_id")
+    .eq("organization_id", organizationId)
+    .not("postgrid_tracker_id", "is", null);
+  if (filters.campaign_ids) campaignsQuery = campaignsQuery.in("id", filters.campaign_ids);
+  const { data: campaigns } = await campaignsQuery;
+
+  const campaignList: Array<{ postgrid_tracker_id: string }> = campaigns ?? [];
+
+  const counts = { android: 0, iphone: 0, web: 0 };
+
+  if (postgridApiKey && campaignList.length > 0) {
+    await Promise.all(
+      campaignList.map(async (c) => {
+        try {
+          const response = await fetch(
+            `${POSTGRID_TRACKER_BASE_URL}/${c.postgrid_tracker_id}/visits?limit=1000&skip=0`,
+            { headers: { "x-api-key": postgridApiKey } },
+          );
+          if (!response.ok) return;
+          const result = await response.json();
+          const visits: Array<Record<string, any>> = Array.isArray(result.data)
+            ? result.data
+            : Array.isArray(result)
+            ? result
+            : [];
+          const filtered = filters.since
+            ? visits.filter((v) => {
+                const ts = v.createdAt ?? v.created_at;
+                return ts && ts >= filters.since!;
+              })
+            : visits;
+          for (const v of filtered) {
+            counts[detectDevice(v)]++;
+          }
+        } catch { /* skip */ }
+      }),
+    );
+  }
+
+  const total = counts.android + counts.iphone + counts.web;
+  const pct = (n: number): number =>
+    total > 0 ? Math.round((n / total) * 10000) / 10000 : 0;
+
+  return {
+    total_scans: total,
+    devices: [
+      { device_name: "android", device_scans: counts.android, scan_percentage: pct(counts.android) },
+      { device_name: "iphone",  device_scans: counts.iphone,  scan_percentage: pct(counts.iphone)  },
+      { device_name: "web",     device_scans: counts.web,     scan_percentage: pct(counts.web)     },
+    ],
+  };
 }

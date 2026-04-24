@@ -10068,6 +10068,7 @@ paths:
                     - active_campaigns
                     - campaign_type_distribution
                     - scan_activity_by_hour
+                    - device_distribution
                   description: |
                     The analytics view to retrieve.
                     - `dashboard_cards` — high-level summary cards: delivery rate, total scans, scan rate, average scans/day, peak scan hour, spend
@@ -10083,6 +10084,7 @@ paths:
                     - `active_campaigns` — live status card for every Active campaign: days running, in-flight, scans, delivery rate, status (On Track / Delayed / At Risk / Pending)
                     - `campaign_type_distribution` — aggregate QR scan totals by campaign target type (location_zone, referral, addresses_list) with scan rate and share of total
                     - `scan_activity_by_hour` — today's QR scan counts bucketed by clock hour (UTC), from 12AM up to and including the current hour
+                    - `device_distribution` — total QR scans broken down by device type (android, iphone, web) using PostGrid's visit.device field
                 campaign_ids:
                   type: array
                   items:
@@ -10226,6 +10228,16 @@ paths:
                 value:
                   type: "scan_activity_by_hour"
                   campaign_ids: ["a1b2c3d4-e5f6-7890-abcd-ef1234567890"]
+              device_distribution:
+                summary: "device_distribution — all campaigns, all time"
+                value:
+                  type: "device_distribution"
+              device_distribution_filtered:
+                summary: "device_distribution — last week, specific campaigns"
+                value:
+                  type: "device_distribution"
+                  last_week: true
+                  campaign_ids: ["a1b2c3d4-e5f6-7890-abcd-ef1234567890"]
       responses:
         "200":
           description: Analytics computed successfully
@@ -10259,6 +10271,7 @@ paths:
                       - $ref: "#/components/schemas/ActiveCampaignsAnalytics"
                       - $ref: "#/components/schemas/CampaignTypeDistributionAnalytics"
                       - $ref: "#/components/schemas/ScanActivityByHourAnalytics"
+                      - $ref: "#/components/schemas/DeviceDistributionAnalytics"
                     discriminator:
                       propertyName: _type
               examples:
@@ -10696,6 +10709,23 @@ paths:
                         scans: 2
                       - hour: "03PM"
                         scans: 1
+                device_distribution:
+                  summary: "device_distribution response"
+                  value:
+                    status: "success"
+                    message: "Analytics computed successfully"
+                    data:
+                      total_scans: 1247
+                      devices:
+                        - device_name: "android"
+                          device_scans: 534
+                          scan_percentage: 0.4282
+                        - device_name: "iphone"
+                          device_scans: 489
+                          scan_percentage: 0.3922
+                        - device_name: "web"
+                          device_scans: 224
+                          scan_percentage: 0.1796
         "400":
           description: Invalid request — missing or unsupported type
           content:
@@ -10712,7 +10742,7 @@ paths:
                   summary: Unsupported analytics type
                   value:
                     error: "INVALID_TYPE"
-                    message: "Analytics type \"foo\" is not supported. Supported types: dashboard_cards, delivery_funnel, waste_meter, scan_trend, recent_scans, campaign_leaderboard, performance_trend, campaign_performance, scan_trend_by_type, postcard_overview, active_campaigns, campaign_type_distribution, scan_activity_by_hour"
+                    message: "Analytics type \"foo\" is not supported. Supported types: dashboard_cards, delivery_funnel, waste_meter, scan_trend, recent_scans, campaign_leaderboard, performance_trend, campaign_performance, scan_trend_by_type, postcard_overview, active_campaigns, campaign_type_distribution, scan_activity_by_hour, device_distribution"
         "401":
           description: Unauthorized — missing or invalid Bearer token
           content:
@@ -19350,6 +19380,52 @@ components:
         Time filters (last_24hours, last_week, last_month) are ignored — this type always shows today.
       items:
         $ref: "#/components/schemas/HourEntry"
+
+    DeviceEntry:
+      type: object
+      required:
+        - device_name
+        - device_scans
+        - scan_percentage
+      properties:
+        device_name:
+          type: string
+          enum:
+            - android
+            - iphone
+            - web
+          description: "Device category. 'android' = PostGrid device field contains 'android', 'iphone' = contains 'iphone'/'ipad'/'ios', 'web' = everything else including 'Device Unknown'."
+          example: "android"
+        device_scans:
+          type: integer
+          description: "Raw scan count for this device category."
+          example: 534
+        scan_percentage:
+          type: number
+          format: float
+          description: "device_scans / total_scans (0.0–1.0, 4 decimal places)."
+          example: 0.4282
+
+    DeviceDistributionAnalytics:
+      type: object
+      description: |
+        QR scan counts broken down by device type, sourced from PostGrid's visit.device field.
+        Always returns all three device categories (android, iphone, web) even if count is 0.
+        Devices with 'Device Unknown' from PostGrid fall into the 'web' bucket.
+        campaign_ids and time filters (last_24hours, last_week, last_month) are supported.
+      required:
+        - total_scans
+        - devices
+      properties:
+        total_scans:
+          type: integer
+          description: "Total QR scans across all device types."
+          example: 1247
+        devices:
+          type: array
+          description: "Always contains exactly three entries: android, iphone, web."
+          items:
+            $ref: "#/components/schemas/DeviceEntry"
 
     GlobalExclusionsAnalytics:
       type: object
