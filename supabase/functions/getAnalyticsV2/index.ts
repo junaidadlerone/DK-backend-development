@@ -2156,8 +2156,8 @@ type CampaignTargetType = "location_zone" | "referral" | "addresses_list";
 
 const TARGET_TYPE_MAP: Record<string, CampaignTargetType> = {
   "Location Zone": "location_zone",
-  "Referral": "referral",
-  "Addresses List": "addresses_list",
+  "Referrals": "referral",
+  "Address List": "addresses_list",
 };
 
 /**
