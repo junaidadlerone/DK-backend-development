@@ -109,6 +109,9 @@ interface DashboardCardsData {
   delivered: number;
   delivery_rate: number;
   total_scans: number;
+  scan_rate: number;
+  average_scans_per_day: number;
+  peak_hour: string | null;
   spent_to_date: number;
   spent_to_date_display: {
     value: number;
@@ -495,6 +498,13 @@ Deno.serve(async (req) => {
   }
 });
 
+function formatHour(hour: number): string {
+  if (hour === 0) return "12AM";
+  if (hour < 12) return `${String(hour).padStart(2, "0")}AM`;
+  if (hour === 12) return "12PM";
+  return `${String(hour - 12).padStart(2, "0")}PM`;
+}
+
 /**
  * Compute Dashboard Cards Analytics
  *
@@ -578,33 +588,70 @@ async function computeDashboardCards(
   );
   const spentRounded = Math.round(spentToDate * 100) / 100;
 
-  // Sum visitCount from each tracker's summary (all-time total scans)
-  let totalScans = 0;
+  // Fetch visits per tracker — needed for total_scans, scan_rate, average_scans_per_day, peak_hour
+  const allVisits: Array<Record<string, any>> = [];
   if (postgridApiKey && campaignList.length > 0) {
-    const scanCounts = await Promise.all(
+    await Promise.all(
       campaignList.map(async (c) => {
         try {
           const response = await fetch(
-            `${POSTGRID_TRACKER_BASE_URL}/${c.postgrid_tracker_id}`,
+            `${POSTGRID_TRACKER_BASE_URL}/${c.postgrid_tracker_id}/visits?limit=1000&skip=0`,
             { headers: { "x-api-key": postgridApiKey } },
           );
-          if (!response.ok) return 0;
-          const data = await response.json();
-          return data.visitCount ?? 0;
+          if (!response.ok) return;
+          const result = await response.json();
+          const visits: Array<Record<string, any>> = Array.isArray(result.data)
+            ? result.data
+            : Array.isArray(result)
+            ? result
+            : [];
+          const filtered = filters.since
+            ? visits.filter((v) => {
+                const ts = v.createdAt ?? v.created_at;
+                return ts && ts >= filters.since!;
+              })
+            : visits;
+          allVisits.push(...filtered);
         } catch (err) {
           console.error(`[dashboard_cards] Failed for tracker ${c.postgrid_tracker_id}:`, err);
-          return 0;
         }
       }),
     );
-    totalScans = scanCounts.reduce((sum, n) => sum + n, 0);
   }
+
+  const totalScans = allVisits.length;
+
+  // Hour distribution and earliest visit for per-day average
+  const hourCounts = new Array(24).fill(0);
+  let earliestVisit: Date | null = null;
+  for (const v of allVisits) {
+    const ts: string | undefined = v.createdAt ?? v.created_at;
+    if (!ts) continue;
+    const d = new Date(ts);
+    hourCounts[d.getHours()]++;
+    if (!earliestVisit || d < earliestVisit) earliestVisit = d;
+  }
+
+  const peakHour = totalScans > 0
+    ? formatHour(hourCounts.indexOf(Math.max(...hourCounts)))
+    : null;
+
+  let averageScansPerDay = 0;
+  if (totalScans > 0 && earliestVisit && totalSent > 0) {
+    const dayRange = Math.max(1, Math.ceil((Date.now() - earliestVisit.getTime()) / 86_400_000));
+    averageScansPerDay = Math.round((totalScans / dayRange / totalSent) * 10000) / 10000;
+  }
+
+  const scanRate = totalSent > 0 ? Math.round((totalScans / totalSent) * 10000) / 10000 : 0;
 
   return {
     in_flight_postcards: inFlight,
     delivered,
     delivery_rate: deliveryRate,
     total_scans: totalScans,
+    scan_rate: scanRate,
+    average_scans_per_day: averageScansPerDay,
+    peak_hour: peakHour,
     spent_to_date: spentRounded,
     spent_to_date_display: enrichCurrency(spentRounded, preferences.currency ?? "USD"),
   };
