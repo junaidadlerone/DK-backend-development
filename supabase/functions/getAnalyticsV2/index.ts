@@ -318,6 +318,16 @@ interface HourEntry {
   scans: number;
 }
 
+interface CampaignEngagementEntry {
+  campaign_id: string;
+  campaign_name: string;
+  time_since_last_scan: string | null;
+  scans_in_24hours: number;
+  scans_total: number;
+  postcards_sent: number;
+  status: "in-flight" | "completed";
+}
+
 interface DeviceEntry {
   device_name: string;
   device_scans: number;
@@ -536,10 +546,19 @@ Deno.serve(async (req) => {
         }, 200);
       }
 
+      case "campaign_engagement": {
+        const data = await computeCampaignEngagement(supabase, organizationId, filters);
+        return successResponse({
+          status: "success",
+          message: "Analytics computed successfully",
+          data,
+        }, 200);
+      }
+
       default:
         return errorResponse(
           "INVALID_TYPE",
-          `Analytics type "${type}" is not supported. Supported types: dashboard_cards, delivery_funnel, waste_meter, scan_trend, recent_scans, campaign_leaderboard, performance_trend, campaign_performance, scan_trend_by_type, postcard_overview, active_campaigns, campaign_type_distribution, scan_activity_by_hour, device_distribution`,
+          `Analytics type "${type}" is not supported. Supported types: dashboard_cards, delivery_funnel, waste_meter, scan_trend, recent_scans, campaign_leaderboard, performance_trend, campaign_performance, scan_trend_by_type, postcard_overview, active_campaigns, campaign_type_distribution, scan_activity_by_hour, device_distribution, campaign_engagement`,
           400,
         );
     }
@@ -1695,6 +1714,19 @@ function timeAgo(isoString: string): string {
   if (days < 30) return `${days} day${days === 1 ? "" : "s"} ago`;
   const months = Math.floor(days / 30);
   return `${months} month${months === 1 ? "" : "s"} ago`;
+}
+
+function timeAgoShort(isoString: string): string {
+  const diffMs = Date.now() - new Date(isoString).getTime();
+  const minutes = Math.floor(diffMs / 60_000);
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 30) return `${days}d ago`;
+  const months = Math.floor(days / 30);
+  return `${months}mo ago`;
 }
 
 /**
@@ -2892,4 +2924,111 @@ async function computeDeviceDistribution(
       { device_name: "web",     device_scans: counts.web,     scan_percentage: pct(counts.web)     },
     ],
   };
+}
+
+// ---------------------------------------------------------------------------
+// Campaign Engagement
+// ---------------------------------------------------------------------------
+
+async function computeCampaignEngagement(
+  supabase: any,
+  organizationId: string,
+  filters: AnalyticsFilters,
+): Promise<CampaignEngagementEntry[]> {
+  const postgridApiKey =
+    Deno.env.get("POSTGRID_POSTCARD_API_KEY") ??
+    Deno.env.get("VITE_POSTGRID_POSTCARD_API_KEY");
+
+  // 1. Fetch all campaigns
+  let campaignsQuery = supabase
+    .from("campaigns")
+    .select("id, campaign_name, postgrid_tracker_id, postcards_sent")
+    .eq("organization_id", organizationId);
+  if (filters.campaign_ids) campaignsQuery = campaignsQuery.in("id", filters.campaign_ids);
+  const { data: campaigns, error: campaignsError } = await campaignsQuery;
+  if (campaignsError) throw new Error("Failed to fetch campaigns");
+
+  const campaignList: Array<{
+    id: string;
+    campaign_name: string;
+    postgrid_tracker_id: string | null;
+    postcards_sent: number | null;
+  }> = campaigns ?? [];
+  if (campaignList.length === 0) return [];
+
+  // 2. Determine in-flight status per campaign from postcard_sends
+  const campaignIds = campaignList.map((c) => c.id);
+  const { data: sendsRaw } = await supabase
+    .from("postcard_sends")
+    .select("campaign_id, postgrid_status")
+    .in("campaign_id", campaignIds);
+
+  const inFlightSet = new Set<string>();
+  for (const s of (sendsRaw ?? [])) {
+    if (IN_FLIGHT_STATUSES.includes(s.postgrid_status)) inFlightSet.add(s.campaign_id);
+  }
+
+  // 3. Fetch scan data per campaign from PostGrid
+  const last24hCutoff = new Date(Date.now() - 86_400_000).toISOString();
+
+  type ScanData = { total: number; last24h: number; lastScanAt: string | null };
+  const scanDataMap = new Map<string, ScanData>();
+
+  if (postgridApiKey) {
+    await Promise.all(
+      campaignList
+        .filter((c) => c.postgrid_tracker_id)
+        .map(async (c) => {
+          try {
+            const [summaryResp, visitsResp] = await Promise.all([
+              fetch(`${POSTGRID_TRACKER_BASE_URL}/${c.postgrid_tracker_id}`, {
+                headers: { "x-api-key": postgridApiKey },
+              }),
+              fetch(`${POSTGRID_TRACKER_BASE_URL}/${c.postgrid_tracker_id}/visits?limit=1000&skip=0`, {
+                headers: { "x-api-key": postgridApiKey },
+              }),
+            ]);
+
+            let total = 0;
+            if (summaryResp.ok) {
+              const summary = await summaryResp.json();
+              total = summary.visitCount ?? 0;
+            }
+
+            let last24h = 0;
+            let lastScanAt: string | null = null;
+            if (visitsResp.ok) {
+              const result = await visitsResp.json();
+              const visits: Array<Record<string, any>> = Array.isArray(result.data)
+                ? result.data
+                : Array.isArray(result)
+                ? result
+                : [];
+              if (visits.length > 0) {
+                lastScanAt = visits[0].createdAt ?? visits[0].created_at ?? null;
+              }
+              for (const v of visits) {
+                const ts = v.createdAt ?? v.created_at;
+                if (ts && ts >= last24hCutoff) last24h++;
+              }
+            }
+
+            scanDataMap.set(c.id, { total, last24h, lastScanAt });
+          } catch { /* skip */ }
+        }),
+    );
+  }
+
+  return campaignList.map((c) => {
+    const sd = scanDataMap.get(c.id) ?? { total: 0, last24h: 0, lastScanAt: null };
+    return {
+      campaign_id: c.id,
+      campaign_name: c.campaign_name,
+      time_since_last_scan: sd.lastScanAt ? timeAgoShort(sd.lastScanAt) : null,
+      scans_in_24hours: sd.last24h,
+      scans_total: sd.total,
+      postcards_sent: c.postcards_sent ?? 0,
+      status: inFlightSet.has(c.id) ? "in-flight" : "completed",
+    };
+  });
 }
