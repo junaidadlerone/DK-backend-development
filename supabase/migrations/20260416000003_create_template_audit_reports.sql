@@ -2,6 +2,8 @@
 -- Stores the results of universal template audits against PostGrid,
 -- including an AI-generated summary of any detected issues.
 
+DROP TABLE IF EXISTS template_audit_reports CASCADE;
+
 CREATE TABLE template_audit_reports (
   id            uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
   run_at        timestamptz NOT NULL DEFAULT now(),
