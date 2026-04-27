@@ -2,7 +2,12 @@ import { corsResponse, errorResponse, successResponse } from "../_shared/respons
 import { createSupabaseClient } from "../_shared/client.ts";
 import { getUserFromRequest } from "../_shared/history.ts";
 import { getUserOrganizationId, validateOrganizationAccess } from "../_shared/organization.ts";
-import { decode } from "https://deno.land/std@0.168.0/encoding/base64.ts";
+function decode(b64: string): Uint8Array {
+  const binary = atob(b64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
 
 /**
  * Complete Onboarding Edge Function
@@ -339,14 +344,24 @@ Deno.serve(async (req) => {
           .select("id, role")
           .in("id", ids);
 
+        const addedMemberIds: string[] = [];
+
         for (const mp of memberProfiles || []) {
           const alreadyMember = existingMembers.some((m: any) => m?.member_uid === mp.id);
           if (!alreadyMember) {
-            // Use caller-specified role if provided, otherwise keep the user's existing role
             const overrideEntry = team_member_ids.find(t => t.id === mp.id);
             const assignedRole = overrideEntry?.role || mp.role;
             newMembers.push({ member_uid: mp.id, member_role: assignedRole });
+            addedMemberIds.push(mp.id);
           }
+        }
+
+        // Enable multi-org on all newly added members so they can switch between orgs
+        if (addedMemberIds.length > 0) {
+          await supabase
+            .from("profiles")
+            .update({ multi_org_enabled: true, updated_at: new Date().toISOString() })
+            .in("id", addedMemberIds);
         }
       }
 
@@ -356,14 +371,17 @@ Deno.serve(async (req) => {
       // Invite new users by email
       if (invite_emails && invite_emails.length > 0) {
         for (const invite of invite_emails) {
-          const email = invite.email;
-          const role = invite.role || "TECHNICIAN";
+          const email = typeof invite === "string" ? invite : invite.email;
+          const role = (typeof invite === "object" && invite.role) ? invite.role : "TECHNICIAN";
 
           try {
             // Create user and send invite email via Supabase Auth admin
             const { data: inviteData, error: inviteError } = await supabase.auth.admin.inviteUserByEmail(
               email,
-              { data: { role } }
+              {
+                data: { role },
+                redirectTo: `${(Deno.env.get("SITE_URL") ?? "https://door-knocker-plus-dev.vercel.app").replace(/\/$/, "")}/set-password`,
+              }
             );
 
             if (inviteError || !inviteData?.user) {
@@ -432,6 +450,17 @@ Deno.serve(async (req) => {
 
       if (updateError) {
         return errorResponse("UPDATE_FAILED", "Failed to update team members", 500);
+      }
+
+      // Mark step 4 as completed in the onboarding table
+      const { error: onboardingUpdateError } = await supabase
+        .from("onboarding")
+        .update({ team_onboarding_completed: true, updated_at: new Date().toISOString() })
+        .eq("organization_id", organizationId);
+
+      if (onboardingUpdateError) {
+        console.error("[completeOnboarding] step 4 onboarding update error:", onboardingUpdateError);
+        return errorResponse("UPDATE_FAILED", "Failed to mark onboarding step 4 as complete", 500);
       }
 
       return successResponse({

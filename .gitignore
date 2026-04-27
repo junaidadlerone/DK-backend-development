@@ -11,6 +11,8 @@
 **/supabase/.branches/
 **/supabase/.temp/
 
+/research/*
+
 # Environment variables
 .env
 .env.local
@@ -21,6 +23,9 @@ dev.env
 
 # Supabase secrets
 supabase/.env
+
+supabase/scripts/template_bundle_ids.json
+supabase/scripts/universal_template_ids.json
 
 # ============================================
 # Deno

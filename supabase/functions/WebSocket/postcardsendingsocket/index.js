@@ -145,11 +145,23 @@ async function processCampaign(ws, campaignId, postgridApiKey)
 
         const { launch_data, campaign_templates, business_data, offer_data } = campaignData;
 
-        // Filter out addresses with status "Opt-out"
         const allAddresses = launch_data.verified_addresses || [];
-        const addresses = allAddresses.filter(addr => addr.status !== 'Opt-out');
+        const isCsvCampaign = !!launch_data.csv_address_list_id;
+        const skipVerification = isCsvCampaign ? (launch_data.skip_verification || false) : false;
 
-        console.log(`Found ${addresses.length} addresses to process (filtered out ${allAddresses.length - addresses.length} Opt-out addresses).`);
+        console.log(`Campaign type: ${isCsvCampaign ? 'CSV' : 'Zone'}, Skip verification: ${skipVerification}`);
+
+        const addresses = allAddresses.filter(addr => {
+            if (addr.is_deleted === true) return false;
+            if (addr.status === 'Opt-out' || addr.is_duplicate === true) return false;
+            if (addr.is_valid !== true && addr.verified !== true) return false;
+            if (isCsvCampaign) {
+                return skipVerification ? true : addr.is_reachable === true;
+            }
+            return true;
+        });
+
+        console.log(`Found ${addresses.length} addresses to process (filtered out ${allAddresses.length - addresses.length} addresses).`);
 
         // Send progress update
         ws.send(JSON.stringify({
@@ -159,15 +171,21 @@ async function processCampaign(ws, campaignId, postgridApiKey)
         }));
 
         // 3. Loop through addresses and send postcards
+        const postcardRecords = [];
+
         for (let i = 0; i < addresses.length; i++)
         {
             const addr = addresses[i];
             try
             {
-                const success = await sendPostcard(addr, campaign_templates, business_data, offer_data, postgridApiKey);
-                if (success)
+                const postcardId = await sendPostcard(addr, campaign_templates, business_data, offer_data, postgridApiKey);
+                if (postcardId)
                 {
                     count++;
+                    postcardRecords.push({
+                        postgrid_postcard_id: postcardId,
+                        address: addr.address || addr.address_line1 || ''
+                    });
                 }
 
                 // Send progress update every 5 addresses or on last address
@@ -190,7 +208,13 @@ async function processCampaign(ws, campaignId, postgridApiKey)
 
         console.log(`Finished processing. Total sent: ${count}`);
 
-        // 4. Update PostCards Sent Count
+        // 4. Store individual postcard records for analytics (before updating sent count)
+        if (postcardRecords.length > 0)
+        {
+            await storePostcardSends(campaignId, postcardRecords);
+        }
+
+        // 5. Update PostCards Sent Count
         await updateSentCount(campaignId, count);
 
         ws.send(JSON.stringify({
@@ -221,10 +245,19 @@ async function sendPostcard(addressObj, templates, businessData, offerData, post
     };
     const size = sizeMap[rawSize] || "6x4";
 
+    const addressLine1 = addressObj.address || addressObj.address_line1 || "";
+    const city = addressObj.city || "";
+    const state = addressObj.state || addressObj.provinceOrState || "";
+    const zip = addressObj.zip || addressObj.postalOrZip || "";
+
     const payload = {
         to: {
-            addressLine1: addressObj.address,
-            firstName: "Current Resident",
+            addressLine1: addressLine1,
+            city: city,
+            provinceOrState: state,
+            postalOrZip: zip,
+            firstName: addressObj.full_name || addressObj.first_name || "Current Resident",
+            lastName: addressObj.last_name || "",
             countryCode: 'US'
         },
         size: size,
@@ -264,18 +297,46 @@ async function sendPostcard(addressObj, templates, businessData, offerData, post
         const json = await response.json();
         console.log(`PostGrid Success Response for ${addressObj.address}:`, JSON.stringify(json, null, 2));
         console.log(`Postcard sent to ${addressObj.address}. ID: ${json.id}`);
-        return true;
+        return json.id || null;  // return PostGrid postcard ID (e.g. "postcard_xxx")
     } else
     {
         const errorText = await response.text();
         console.error(`PostGrid Error (${response.status}) for ${addressObj.address}:`, errorText);
-        return false;
+        return null;
     }
 }
 
 // =============================================================================
 // SUPABASE UPDATE
 // =============================================================================
+async function storePostcardSends(campaignId, postcards)
+{
+    try
+    {
+        const response = await fetch(`${SUPABASE_URL}/storePostcardSends`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'apikey': SUPABASE_ANON_KEY,
+                'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+            },
+            body: JSON.stringify({ campaign_id: campaignId, postcards: postcards })
+        });
+
+        if (!response.ok)
+        {
+            console.error(`Failed to store postcard sends: ${response.statusText}`);
+        } else
+        {
+            console.log(`Stored ${postcards.length} postcard records for campaign ${campaignId}`);
+        }
+    } catch (err)
+    {
+        // Non-fatal — analytics data loss is preferable to breaking the campaign send
+        console.error(`Failed to store postcard sends for campaign ${campaignId}:`, err.message);
+    }
+}
+
 async function updateSentCount(campaignId, count)
 {
     const response = await fetch(`${SUPABASE_URL}/updatePostCardsSentCount`, {

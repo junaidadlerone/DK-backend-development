@@ -1,4 +1,4 @@
-import { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
+import { SupabaseClient } from "npm:@supabase/supabase-js@2.39.3";
 import { CreatedByInfo } from "./types.ts";
 
 /**
@@ -41,9 +41,9 @@ export async function logReferralHistory(
  * Extracts user information from JWT token
  *
  * @param req - Request object
- * @returns Object with userId and userName, or null if extraction fails
+ * @returns Object with userId, userName, and isServiceRole flag, or null if extraction fails
  */
-export function getUserFromRequest(req: Request): { userId: string; userName: string } | null {
+export function getUserFromRequest(req: Request): { userId: string; userName: string; isServiceRole: boolean } | null {
   try {
     const authHeader = req.headers.get("authorization");
     if (!authHeader) return null;
@@ -54,10 +54,11 @@ export function getUserFromRequest(req: Request): { userId: string; userName: st
     const payload = JSON.parse(atob(token.split(".")[1]));
 
     const userId = payload.sub;
+    const isServiceRole = payload.role === "service_role";
     const userMetadata = payload.user_metadata || {};
-    const fullName = userMetadata.full_name || userMetadata.fullName || "Unknown User";
+    const fullName = userMetadata.full_name || userMetadata.fullName || (isServiceRole ? "System Service" : "Unknown User");
 
-    return { userId, userName: fullName };
+    return { userId, userName: fullName, isServiceRole };
   } catch (error) {
     console.error("Error extracting user from request:", error);
     return null;

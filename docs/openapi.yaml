@@ -107,6 +107,8 @@ tags:
     description: Address discovery and verification operations
   - name: Analytics
     description: Organization-level analytics with intelligent daily caching
+  - name: Analytics 2.0
+    description: Postcard-level delivery analytics powered by individual PostGrid postcard tracking
   - name: Billing
     description: Stripe payment methods and billing history management (ADMIN only)
   - name: Version 2 APIs
@@ -119,10 +121,14 @@ tags:
       multiple organizations under one account, with full tenant isolation.
 
       **New endpoints:** enableMultiOrg, disableMultiOrg, createOrganization, switchOrganization,
-      getUserOrganizations, deleteOrganization, recoverOrganization, transferOrganizationOwnership
+      getUserOrganizations, deleteOrganization, recoverOrganization, transferOrganizationOwnership,
+      getAgencyAccountOrganizationMembers
 
-      **Modified endpoints:** login (org list in response), signUp (sets Super Admin flag),
-      completeOnboarding (org_id param + step 4), createUser (org_id param), getUser (org column for Super Admins)
+      **Modified endpoints:** login (org list in response), signUp (sets Super Admin flag), completeOnboarding (org_id param + step 4), createUser (org_id param), getUser (org column for Super Admins)
+  - name: Address List Management
+    description: CSV-based address list operations including duplicates removal, geocoding, and bulk deletion.
+  - name: Universal Template Audit
+    description: Cross-checks every universal template in the database against PostGrid, categorises each by status, generates an AI summary of any issues found, and persists a report only when problems are detected.
 
 paths:
   /signUp:
@@ -2443,6 +2449,208 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
+  /importAddressList:
+    post:
+      tags:
+        - Address List Management
+      summary: Import and verify CSV address list
+      description: |
+        Ingests a CSV file, parses it, identifies duplicates, and verifies unique addresses via internal field validation.
+
+        **CSV Format Requirements:**
+        The CSV must include the following headers:
+        - `Address Line 1`
+        - `Address Line 2` (optional)
+        - `City`
+        - `State`
+        - `Zip Code`
+
+        **Processing Logic:**
+        1. **Parsing**: Validates headers and extracts rows.
+        2. **Deduplication**: Identifies records with identical Line1, Line2, and Zip.
+        3. **Validation**: Marks records as invalid if any required field is missing.
+        4. **Persistence**: Saves the resulting list to the database.
+      operationId: importAddressList
+      security:
+        - SupabaseAuth: []
+          BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - list_name
+                - csv_data
+                - campaign_id
+              properties:
+                campaign_id:
+                  type: string
+                  format: uuid
+                  description: ID of the campaign to which the address list belongs
+                list_name:
+                  type: string
+                  description: Human-readable name for the address list
+                csv_data:
+                  type: string
+                  format: byte
+                  description: Base64 encoded CSV content. Prefixed with data:text/csv;base64 for best results.
+                filename:
+                  type: string
+                column_mapping:
+                  type: object
+                  additionalProperties:
+                    type: string
+                  description: |
+                    Optional mapping from target fields to CSV headers.
+                     Fields: Address Line 1, Address Line 2, City, State, Zip Code, Country, First Name, Last Name, Full Name.
+            example:
+              campaign_id: "123e4567-e89b-12d3-a456-426614174000"
+              list_name: "Spring Marketing Campaign"
+              csv_data: "data:text/csv;base64,..."
+              column_mapping:
+                "Address Line 1": "street_addr"
+                "Zip Code": "postal_code"
+      responses:
+        "200":
+          description: List processed and verified successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  list_id:
+                    type: string
+                    format: uuid
+                    description: ID of the created address list
+                  is_editing:
+                    type: boolean
+                  total_addresses:
+                    type: integer
+                  valid_addresses:
+                    type: integer
+                  invalid_addresses:
+                    type: integer
+                  duplicate_addresses:
+                    type: integer
+                  results:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        address_line1:
+                          type: string
+                        address_line2:
+                          type: string
+                        city:
+                          type: string
+                        state:
+                          type: string
+                        zip:
+                          type: string
+                        first_name:
+                          type: string
+                        last_name:
+                          type: string
+                        full_name:
+                          type: string
+                        id:
+                          type: string
+                          format: uuid
+                        country:
+                          type: string
+                        is_valid:
+                          type: boolean
+                        is_duplicate:
+                          type: boolean
+                        is_included:
+                          type: boolean
+                        status:
+                          type: string
+                          enum: [valid, invalid, duplicate]
+                        error_message:
+                          type: string
+        "422":
+          description: Automatic column detection failed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: UNABLE_TO_AUTOMATICALLY_PICK_DATA_COLUMNS
+                  message:
+                    type: string
+                  located_headers:
+                    type: array
+                    items:
+                      type: string
+                  missing_headers:
+                    type: array
+                    items:
+                      type: string
+                  required_headers:
+                    type: array
+                    items:
+                      type: string
+                example:
+                  error: UNABLE_TO_AUTOMATICALLY_PICK_DATA_COLUMNS
+                  message: "Could not find or map mandatory columns: Address Line 1, Zip Code"
+                  located_headers: [
+                    "street_addr",
+                    "city_name",
+                    "state_code",
+                    "post_code",
+                    "tel",
+                  ]
+                  missing_headers: ["Address Line 1", "Zip Code"]
+                  required_headers: [
+                    "Address Line 1",
+                    "City",
+                    "State",
+                    "Zip Code",
+                  ]
+
+  /removeAllDuplicates:
+    post:
+      summary: Exclude all duplicate addresses from a list
+      description: |
+        Marks all rows having 'is_duplicate' as true as 'is_included: false'.
+        Rows are not removed from the database but are excluded from campaign logic.
+      tags:
+        - Address Discovery
+      security:
+        - SupabaseAuth: []
+          BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - list_id
+              properties:
+                list_id:
+                  type: string
+                  format: uuid
+      responses:
+        "200":
+          description: Duplicates removed successfully. Operation logged in history.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  removed_count:
+                    type: integer
+                  remaining_count:
+                    type: integer
+
   /verifyAddresses:
     post:
       tags:
@@ -2900,6 +3108,14 @@ paths:
                       zone_id:
                         type: string
                         format: uuid
+                        nullable: true
+                      campaign_target_type:
+                        type: string
+                        enum: [Referrals, Location Zones, Address Lists]
+                      csv_address_list_id:
+                        type: string
+                        format: uuid
+                        nullable: true
                       validated_addresses:
                         type: integer
                         description: Number of addresses that were successfully validated
@@ -4834,6 +5050,275 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+
+  /auditUniversalTemplates:
+    get:
+      tags:
+        - Universal Template Audit
+      summary: Audit all universal templates against PostGrid
+      description: |
+        Loads every universal template (`is_universal = true`) from the `templates` table,
+        verifies each one against the PostGrid Print & Mail API, and returns a categorised
+        status report.
+
+        **What this endpoint does:**
+        1. Fetches all universal templates from the database (including soft-deleted records
+           so the audit has a complete picture).
+        2. Calls `GET /templates/{id}` on PostGrid for each template **in parallel**.
+        3. Assigns a status to every template — see status categories below.
+        4. If any issues are detected: generates an AI summary via OpenAI and persists the
+           report to `template_audit_reports`.
+        5. If every template is healthy: returns the audit data with `saved: false` and
+           writes nothing to the database.
+
+        **Status categories:**
+
+        | Status | Description |
+        |---|---|
+        | `active` | Not deleted in DB and exists on PostGrid — healthy |
+        | `deleted_from_postgrid` | Active in DB but absent on PostGrid — **action required** |
+        | `deleted_in_db_only` | Soft-deleted in DB but still present on PostGrid — potential orphan |
+        | `deleted_everywhere` | Soft-deleted in DB and absent on PostGrid — fully retired |
+        | `check_error` | PostGrid API call failed — needs investigation |
+
+        **Conditional persistence:**
+        - Report is only saved when `deleted_from_postgrid > 0`, `deleted_in_db_only > 0`,
+          `deleted_everywhere > 0`, or `check_errors > 0`.
+        - Clean runs return `saved: false` and do not write to `template_audit_reports`.
+
+        **AI summary:**
+        - Generated by OpenAI `gpt-4o-mini` when issues are found.
+        - Stored in `template_audit_reports.openai_summary` and returned as `openai_summary`.
+        - If OpenAI is unavailable the report is still saved; `openai_summary` will be `null`.
+
+        **Access:** Any authenticated user may call this endpoint.
+      operationId: auditUniversalTemplates
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: Audit completed successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: "success"
+                  message:
+                    type: string
+                    description: "Human-readable summary of the audit result"
+                    example: "2 template(s) deleted from PostGrid, 1 template(s) deleted in DB only"
+                  saved:
+                    type: boolean
+                    description: "True if the report was persisted to template_audit_reports (only when issues were found)"
+                    example: true
+                  audit_report_id:
+                    type: string
+                    format: uuid
+                    nullable: true
+                    description: "ID of the saved audit report row; null when saved is false"
+                    example: "c3d4e5f6-a7b8-9012-cdef-345678901234"
+                  run_at:
+                    type: string
+                    format: date-time
+                    nullable: true
+                    description: "Timestamp when the report was persisted; null when saved is false"
+                    example: "2026-04-16T08:30:00.000Z"
+                  openai_summary:
+                    type: string
+                    nullable: true
+                    description: "AI-generated plain-English narrative of the findings; null when no issues or OpenAI unavailable"
+                    example: "The audit found 2 universal templates that have been removed from PostGrid but remain active in the database. Immediate review is recommended to update or recreate these templates. Additionally, 1 template appears to have been soft-deleted in the database while still existing on PostGrid, which may indicate an incomplete deletion workflow."
+                  report:
+                    type: object
+                    properties:
+                      summary:
+                        type: object
+                        description: "Aggregated counts per status category"
+                        properties:
+                          total:
+                            type: integer
+                            description: "Total number of universal templates checked"
+                            example: 12
+                          active:
+                            type: integer
+                            description: "Templates that are healthy"
+                            example: 9
+                          deleted_from_postgrid:
+                            type: integer
+                            description: "Templates active in DB but missing from PostGrid"
+                            example: 2
+                          deleted_in_db_only:
+                            type: integer
+                            description: "Templates soft-deleted in DB but still on PostGrid"
+                            example: 1
+                          deleted_everywhere:
+                            type: integer
+                            description: "Templates soft-deleted in DB and absent on PostGrid"
+                            example: 0
+                          check_errors:
+                            type: integer
+                            description: "Templates whose PostGrid status could not be determined"
+                            example: 0
+                      templates:
+                        type: array
+                        description: "Full per-template audit entries"
+                        items:
+                          type: object
+                          properties:
+                            id:
+                              type: string
+                              format: uuid
+                              description: "Database record ID"
+                            postgrid_template_id:
+                              type: string
+                              description: "PostGrid template identifier"
+                              example: "template_tBnVEzz878mXLbHQaz86j8"
+                            description:
+                              type: string
+                              nullable: true
+                              description: "Template description from the database"
+                            template_type:
+                              type: string
+                              enum: ["Front", "Back"]
+                            postcard_size:
+                              type: string
+                              enum: ["4x6", "6x9", "6x11"]
+                            status:
+                              type: string
+                              enum:
+                                - active
+                                - deleted_from_postgrid
+                                - deleted_in_db_only
+                                - deleted_everywhere
+                                - check_error
+                              description: "Derived status based on DB and PostGrid state"
+                            db:
+                              type: object
+                              description: "Template state as recorded in the database"
+                              properties:
+                                live:
+                                  type: boolean
+                                  description: "Whether the template is marked live in the DB"
+                                deleted:
+                                  type: boolean
+                                  description: "Whether the template is soft-deleted in the DB"
+                                created_at:
+                                  type: string
+                                  format: date-time
+                                updated_at:
+                                  type: string
+                                  format: date-time
+                            postgrid:
+                              type: object
+                              description: "Template state as returned by PostGrid"
+                              properties:
+                                exists:
+                                  type: boolean
+                                  description: "Whether the template was found on PostGrid"
+                                live:
+                                  type: boolean
+                                  nullable: true
+                                  description: "PostGrid live flag; null if the template does not exist or the field was not returned"
+                                error:
+                                  type: string
+                                  nullable: true
+                                  description: "PostGrid error message when exists is false or the API call failed"
+                  processingTimeMs:
+                    type: integer
+                    description: "Total time taken to run the audit in milliseconds"
+                    example: 834
+              examples:
+                issuesFound:
+                  summary: Issues found — report saved
+                  value:
+                    status: "success"
+                    message: "2 template(s) deleted from PostGrid"
+                    saved: true
+                    audit_report_id: "c3d4e5f6-a7b8-9012-cdef-345678901234"
+                    run_at: "2026-04-16T08:30:00.000Z"
+                    openai_summary: "The audit detected 2 universal templates that have been removed from PostGrid but remain active in the database. These templates cannot be used for new postcards until they are recreated or replaced. Immediate review is recommended."
+                    report:
+                      summary:
+                        total: 5
+                        active: 3
+                        deleted_from_postgrid: 2
+                        deleted_in_db_only: 0
+                        deleted_everywhere: 0
+                        check_errors: 0
+                      templates:
+                        - id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+                          postgrid_template_id: "template_tBnVEzz878mXLbHQaz86j8"
+                          description: "Summer Promo Front"
+                          template_type: "Front"
+                          postcard_size: "4x6"
+                          status: "deleted_from_postgrid"
+                          db:
+                            live: true
+                            deleted: false
+                            created_at: "2025-06-01T10:00:00.000Z"
+                            updated_at: "2025-06-01T10:00:00.000Z"
+                          postgrid:
+                            exists: false
+                            live: null
+                            error: "Template not found on PostGrid"
+                    processingTimeMs: 834
+                allHealthy:
+                  summary: All templates healthy — not saved
+                  value:
+                    status: "success"
+                    message: "All 5 universal template(s) are healthy — no report saved"
+                    saved: false
+                    audit_report_id: null
+                    run_at: null
+                    openai_summary: null
+                    report:
+                      summary:
+                        total: 5
+                        active: 5
+                        deleted_from_postgrid: 0
+                        deleted_in_db_only: 0
+                        deleted_everywhere: 0
+                        check_errors: 0
+                      templates: []
+                    processingTimeMs: 412
+        "401":
+          description: Unauthorized — missing or invalid JWT
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: "UNAUTHORIZED"
+                message: "Unable to authenticate user"
+        "405":
+          description: Method not allowed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: "METHOD_NOT_ALLOWED"
+                message: "Only GET method is allowed"
+        "500":
+          description: Database or unexpected server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              examples:
+                databaseError:
+                  summary: Failed to load templates from DB
+                  value:
+                    error: "DATABASE_ERROR"
+                    message: "Failed to fetch universal templates from the database"
+                internalError:
+                  summary: Unexpected runtime error
+                  value:
+                    error: "INTERNAL_ERROR"
+                    message: "An unexpected error occurred: ..."
 
   /updateTemplate:
     post:
@@ -7910,6 +8395,21 @@ paths:
                       organization_id:
                         type: string
                         format: uuid
+                      target_type:
+                        type: string
+                        enum: [Referrals, Location Zones, Address Lists]
+                        description: Formal targeting type for the campaign
+                      link_referral:
+                        type: boolean
+                      location_zone_id:
+                        type: string
+                        format: uuid
+                      csv_address_list_id:
+                        type: string
+                        format: uuid
+                        description: ID of the CSV address list if target_type is Address Lists
+                      step:
+                        type: integer
                       referral_id:
                         type: string
                         format: uuid
@@ -8091,9 +8591,23 @@ paths:
                           name:
                             type: string
                             example: Draft
+                      campaign_target_type:
+                        type: string
+                        enum: [Referrals, Location Zone, Address List]
                       referral_id:
                         type: string
                         format: uuid
+                        nullable: true
+                      zone_id:
+                        type: string
+                        format: uuid
+                        nullable: true
+                      csv_address_list_id:
+                        type: string
+                        format: uuid
+                        nullable: true
+                      campaign_name:
+                        type: string
                       template_id:
                         type: string
                       offer_data:
@@ -9310,6 +9824,1150 @@ paths:
                     message: "User is not associated with any organization"
         "500":
           description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /getAnalyticsV2:
+    post:
+      tags:
+        - Analytics 2.0
+      summary: Get postcard-level delivery analytics
+      description: |
+        Returns real-time delivery analytics based on individual PostGrid postcard records
+        stored in the `postcard_sends` table. Unlike `/getAnalytics` (which uses aggregate
+        campaign counters), these metrics reflect the actual delivery lifecycle of each
+        postcard sourced directly from PostGrid statuses.
+
+        **Note:** Only postcards sent after the `postcard_sends` table was introduced will
+        appear in these metrics. Historical campaigns will show 0 for postcard-level metrics.
+
+        ---
+
+        ## How PostGrid tracking works
+
+        PostGrid provides **two separate tracking fields** per postcard:
+
+        ### Standard `status` field (all orders)
+        Every postcard has a `status` field that progresses through this lifecycle:
+
+        | Status | Description |
+        |---|---|
+        | `ready` | Order created successfully, will be printed on sendDate |
+        | `printing` | Given to a printer, being processed within SLA |
+        | `processed_for_delivery` | Handed off to the local postal service |
+        | `completed` | Most likely delivered *(PostGrid approximation)* |
+        | `cancelled` | Cancelled, will never be sent |
+
+        ### `imbStatus` field — Intelligent-Mail Tracking (US only, nullable)
+        For US orders, once a postcard is scanned at a USPS facility, PostGrid adds an
+        additional `imbStatus` field with more granular tracking:
+
+        | imbStatus | Description |
+        |---|---|
+        | `entered_mail_stream` | Postcard has entered a USPS facility |
+        | `out_for_delivery` | Processed at final USPS facility — will deliver within a day |
+        | `returned_to_sender` | Returned to sender (undeliverable) |
+
+        We store these in `postcard_sends.postgrid_status` and `postcard_sends.imb_status`.
+        `imb_status` is `null` for non-US orders or until the postcard is first scanned.
+
+        ---
+
+        ## Supported `type` values
+
+        ### `dashboard_cards`
+        Top-level summary cards for the main analytics dashboard.
+
+        | Field | Source | Description |
+        |---|---|---|
+        | `in_flight_postcards` | `postgrid_status` | Count of postcards with status `ready`, `printing`, or `processed_for_delivery` |
+        | `delivered` | `postgrid_status = completed` | Count of postcards most likely delivered (PostGrid approximation) |
+        | `delivery_rate` | derived | `(delivered / total_sent) * 100` — percentage, 2 decimal places |
+        | `total_scans` | PostGrid tracker API | All-time total QR scans — sum of `visitCount` across all org campaign trackers |
+        | `spent_to_date` | `payment_history` | Sum of `amount_paid` for this organization across all campaigns |
+        | `spent_to_date_display` | derived | Currency-formatted `spent_to_date` using the user's saved currency preference |
+
+        ---
+
+        ### `delivery_funnel`
+        Full breakdown of every postcard's current status, expressed as **percentages of
+        `total_postcards_sent`**. Combines both `postgrid_status` and `imb_status` fields.
+
+        | Response field | PostGrid source | PostGrid value(s) | Description |
+        |---|---|---|---|
+        | `total_postcards_sent` | — | — | Raw count of all postcards (percentage denominator) |
+        | `delivered` | `postgrid_status` | `completed` | % most likely delivered |
+        | `processed` | `postgrid_status` | `processed_for_delivery` | % handed to local postal service |
+        | `printing` | `postgrid_status` | `printing` | % currently being printed |
+        | `ready` | `postgrid_status` | `ready` | % awaiting print on sendDate |
+        | `cancelled` | `postgrid_status` | `cancelled` | % cancelled, never sent |
+        | `in_transit` | `imb_status` | `entered_mail_stream` + `out_for_delivery` | % confirmed inside USPS network (US only) |
+        | `returned` | `imb_status` | `returned_to_sender` | % returned to sender (US only) |
+
+        All percentages are rounded to 2 decimal places. Returns `0` when `total_postcards_sent` is 0.
+        `in_transit` and `returned` will be `0` for non-US campaigns (no `imbStatus` from PostGrid).
+
+        ---
+
+        ### `waste_meter`
+        Quantifies postcard spend that produced no delivery — returned, cancelled, and delayed
+        postcards expressed as **piece counts and dollar costs** ($3.00 per postcard).
+
+        Also emits an overall **`status`** risk indicator based on
+        `(wasted + delayed) / total_postcards_sent`:
+
+        | `status` value | Condition | Meaning |
+        |---|---|---|
+        | `Healthy` | problem rate < 5% | Delivery pipeline is performing well |
+        | `At Risk` | problem rate 5–15% | Moderate waste — worth monitoring |
+        | `Critical` | problem rate > 15% | High waste — requires attention |
+
+        | Field | Source | Definition |
+        |---|---|---|
+        | `status` | derived | Risk indicator: `Healthy` / `At Risk` / `Critical` |
+        | `total_postcards_sent` | `postcard_sends` | Total postcards in scope — use as denominator for percentage-at-risk |
+        | `total_pieces_wasted` | derived | `total_pieces_returned + total_pieces_cancelled` |
+        | `total_amount_wasted` | derived | `total_pieces_wasted × $3.00` |
+        | `total_pieces_returned` | `imb_status = returned_to_sender` | Postcards USPS returned to sender |
+        | `total_amount_returned` | derived | `total_pieces_returned × $3.00` |
+        | `total_pieces_cancelled` | `postgrid_status = cancelled` | Postcards cancelled before printing |
+        | `total_amount_cancelled` | derived | `total_pieces_cancelled × $3.00` |
+        | `total_pieces_delayed` | derived | Not `completed`/`cancelled` AND ≥ 7 working days since sent |
+        | `total_amount_delayed` | derived | `total_pieces_delayed × $3.00` |
+
+        **Delayed definition:** A postcard is delayed if it has NOT reached `completed` or `cancelled`
+        AND 7 or more working days (Monday–Friday, excluding weekends) have elapsed since `created_at`.
+
+        Dollar amounts use a fixed price of **$3.00 USD per postcard**. Returns `0` for all
+        piece/amount fields when no postcards have been sent.
+
+        ---
+
+        ### `scan_trend`
+        Aggregates QR code scan data across all campaigns in the organization that have a
+        PostGrid tracker linked via `/linkQRCodeToCampaign`.
+
+        **Data source:** PostGrid Tracker API (`GET /print-mail/v1/trackers/{id}`)
+
+        | Field | Description |
+        |---|---|
+        | `total_scans` | Sum of `visitCount` across all org campaign trackers |
+        | `unique_scans` | Sum of `uniqueVisitCount` across all org campaign trackers |
+        | `scan_rate` | `(total_scans / total_postcards_sent) × 100`, rounded to 2dp |
+        | `breakdown` | Time-bucketed scan counts — shape varies by period filter (see below) |
+
+        **`breakdown` shape by period:**
+
+        | Request filter | Keys |
+        |---|---|
+        | `last_24hours: true` | 12 fixed 2-hour slots: `"12am"` … `"10pm"` |
+        | `last_week: true` | 7 fixed weekday keys: `"sunday_scans"` … `"saturday_scans"` |
+        | `last_month: true` | Dynamic daily keys — rolling 15-day window, e.g. `"Apr 6"` … `"Apr 20"` |
+        | *(none — all_time)* | Dynamic monthly keys — last 6 months, e.g. `"Nov 2025"` … `"Apr 2026"` |
+
+        All keys are always present (zero-filled). Keys are in chronological order.
+        Returns all zeros when no trackers are linked or no scans have occurred yet.
+
+        ---
+
+        ### `recent_scans`
+        Returns the **5 most recent QR code scan events per campaign**, enriched with delivery
+        address and a human-readable relative timestamp. Campaigns with zero scans are excluded.
+
+        **Data sources:**
+        - PostGrid `GET /trackers/{id}/visits` → scan events (timestamp, PostGrid postcard `orderId`)
+        - `postcard_sends` table → delivery address and sequential postcard number per campaign
+
+        | Field | Source | Description |
+        |---|---|---|
+        | `campaign_id` | `campaigns.id` | Campaign UUID |
+        | `campaign_name` | `campaigns.campaign_name` | Campaign display name |
+        | `scans[].postcard_number` | `postcard_sends` row number | Sequential position of the postcard within the campaign (ordered by send date) |
+        | `scans[].scan_address` | `postcard_sends.address` | Delivery address the postcard was mailed to — the household that scanned the QR code |
+        | `scans[].scan_time_stamp` | `visit.createdAt` | Human-readable relative time: `"just now"`, `"5 minutes ago"`, `"2 hours ago"`, `"3 days ago"`, etc. |
+
+        Campaigns are sorted by number of recent scans descending. Returns `data: []` when no
+        trackers are linked.
+
+        ---
+
+        ### `campaign_leaderboard`
+        Returns the **top 5 campaigns ranked by total QR scans**, giving a quick view of which
+        campaigns are driving the most engagement.
+
+        **Data sources:**
+        - PostGrid `GET /trackers/{id}` → `visitCount` per campaign tracker
+        - `campaigns.postcards_sent` → total postcards sent per campaign
+
+        | Field | Description |
+        |---|---|
+        | `campaign_name` | Display name of the campaign |
+        | `total_scans` | Total QR scan count from PostGrid `visitCount` |
+        | `total_postcards_sent` | Total postcards sent for this campaign |
+        | `scan_rate` | `(total_scans / total_postcards_sent) × 100`, rounded to 2dp |
+        | `ranking_position` | Rank 1–5 (1 = most scans) |
+
+        Campaigns with zero scans or no tracker linked are excluded. Returns `leaderboard: []`
+        when no campaigns have trackers. Maximum 5 entries.
+
+        ---
+
+        ---
+
+        ### Optional Filters (apply to all types)
+
+        All parameters below are optional and can be combined with any `type`.
+
+        | Parameter | Type | Description |
+        |---|---|---|
+        | `campaign_id` | `string (uuid)` | Scope results to one campaign. Must belong to the org. |
+        | `last_24hours` | `boolean` | Restrict to the last 24 hours. |
+        | `last_week` | `boolean` | Restrict to the last 7 days. |
+        | `last_month` | `boolean` | Restrict to the last 30 days. |
+
+        When no time filter is set, all historical data is returned. If multiple time flags
+        are set, the most restrictive window is used: `last_24hours` > `last_week` > `last_month`.
+
+        **DB-based types** (`dashboard_cards`, `delivery_funnel`, `waste_meter`): filters are
+        applied directly to `postcard_sends` and `payment_history` Supabase queries.
+
+        **PostGrid-based types** (`scan_trend`, `recent_scans`, `campaign_leaderboard`): `campaign_id`
+        restricts which tracker is queried. Time filters use the PostGrid `/visits` endpoint
+        (up to 1000 most recent events) and filter by `createdAt` in-memory.
+
+        ---
+
+        **Access:** All roles (ADMIN, MARKETER, TECHNICIAN)
+      operationId: getAnalyticsV2
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - type
+              properties:
+                type:
+                  type: string
+                  enum:
+                    - dashboard_cards
+                    - delivery_funnel
+                    - waste_meter
+                    - scan_trend
+                    - recent_scans
+                    - campaign_leaderboard
+                    - performance_trend
+                    - campaign_performance
+                    - scan_trend_by_type
+                    - postcard_overview
+                    - active_campaigns
+                    - campaign_type_distribution
+                    - scan_activity_by_hour
+                    - device_distribution
+                    - campaign_engagement
+                  description: |
+                    The analytics view to retrieve.
+                    - `dashboard_cards` — high-level summary cards: delivery rate, total scans, scan rate, average scans/day, peak scan hour, spend
+                    - `delivery_funnel` — full PostGrid status breakdown as percentages
+                    - `waste_meter` — wasted/delayed postcard counts + dollar costs + risk status
+                    - `scan_trend` — QR scan totals, unique scans, scan rate, day-of-week breakdown
+                    - `recent_scans` — 5 most recent QR scans per campaign with address and timestamp
+                    - `campaign_leaderboard` — top 5 campaigns ranked by total QR scans
+                    - `performance_trend` — per-day delivery & scan rate for the past 6 months (180 entries, oldest → today)
+                    - `campaign_performance` — top 5 best and bottom 5 worst performing campaigns by QR scans
+                    - `scan_trend_by_type` — per-day QR scan breakdown by campaign target type for the past 6 months (180 entries, oldest → today)
+                    - `postcard_overview` — per-campaign breakdown: delivered+scanned count, delivered-not-scanned count, in-transit, returned/cancelled, total_postcards_sent
+                    - `active_campaigns` — live status card for every Active campaign: days running, in-flight, scans, delivery rate, status (On Track / Delayed / At Risk / Pending)
+                    - `campaign_type_distribution` — aggregate QR scan totals by campaign target type (location_zone, referral, addresses_list) with scan rate and share of total
+                    - `scan_activity_by_hour` — today's QR scan counts bucketed by clock hour (UTC), from 12AM up to and including the current hour
+                    - `device_distribution` — total QR scans broken down by device type (android, iphone, web) using PostGrid's visit.device field
+                    - `campaign_engagement` — per-campaign engagement summary: scans in last 24h, total scans, postcards sent, time since last scan, and in-flight/completed status
+                campaign_ids:
+                  type: array
+                  items:
+                    type: string
+                    format: uuid
+                  description: |
+                    **Optional.** Scope results to one or more campaigns. All IDs must belong to
+                    the authenticated user's organization. When omitted, all campaigns are included.
+                  example: ["a1b2c3d4-e5f6-7890-abcd-ef1234567890", "b2c3d4e5-f6a7-8901-bcde-f12345678901"]
+                last_24hours:
+                  type: boolean
+                  description: |
+                    **Optional.** When `true`, restrict results to the last 24 hours.
+                    Mutually exclusive with `last_week` and `last_month` — if multiple flags are
+                    set, the most restrictive window wins (`last_24hours` > `last_week` > `last_month`).
+                  example: true
+                last_week:
+                  type: boolean
+                  description: |
+                    **Optional.** When `true`, restrict results to the last 7 days.
+                  example: true
+                last_month:
+                  type: boolean
+                  description: |
+                    **Optional.** When `true`, restrict results to the last 30 days.
+                  example: true
+            examples:
+              dashboard_cards:
+                summary: "dashboard_cards — all campaigns, all time"
+                value:
+                  type: "dashboard_cards"
+              dashboard_cards_filtered:
+                summary: "dashboard_cards — multiple campaigns, last week"
+                value:
+                  type: "dashboard_cards"
+                  campaign_ids: ["a1b2c3d4-e5f6-7890-abcd-ef1234567890", "b2c3d4e5-f6a7-8901-bcde-f12345678901"]
+                  last_week: true
+              delivery_funnel:
+                summary: "delivery_funnel — full status percentage breakdown"
+                value:
+                  type: "delivery_funnel"
+              waste_meter:
+                summary: "waste_meter — wasted and delayed postcard analysis"
+                value:
+                  type: "waste_meter"
+              waste_meter_campaign:
+                summary: "waste_meter — multiple campaigns, last month"
+                value:
+                  type: "waste_meter"
+                  campaign_ids: ["a1b2c3d4-e5f6-7890-abcd-ef1234567890", "b2c3d4e5-f6a7-8901-bcde-f12345678901"]
+                  last_month: true
+              scan_trend:
+                summary: "scan_trend — QR code scan activity by day of week"
+                value:
+                  type: "scan_trend"
+              scan_trend_24h:
+                summary: "scan_trend — last 24 hours only"
+                value:
+                  type: "scan_trend"
+                  last_24hours: true
+              recent_scans:
+                summary: "recent_scans — latest QR scan events per campaign"
+                value:
+                  type: "recent_scans"
+              recent_scans_campaign:
+                summary: "recent_scans — multiple campaigns, last week"
+                value:
+                  type: "recent_scans"
+                  campaign_ids: ["a1b2c3d4-e5f6-7890-abcd-ef1234567890", "b2c3d4e5-f6a7-8901-bcde-f12345678901"]
+                  last_week: true
+              campaign_leaderboard:
+                summary: "campaign_leaderboard — top 5 campaigns by QR scan count"
+                value:
+                  type: "campaign_leaderboard"
+              campaign_leaderboard_month:
+                summary: "campaign_leaderboard — last month's top performers"
+                value:
+                  type: "campaign_leaderboard"
+                  last_month: true
+              performance_trend:
+                summary: "performance_trend — last 7 days / current month weeks / last 12 months"
+                value:
+                  type: "performance_trend"
+              performance_trend_filtered:
+                summary: "performance_trend — specific campaigns only"
+                value:
+                  type: "performance_trend"
+                  campaign_ids: ["a1b2c3d4-e5f6-7890-abcd-ef1234567890"]
+              campaign_performance:
+                summary: "campaign_performance — top 5 and bottom 5 by QR scans"
+                value:
+                  type: "campaign_performance"
+              campaign_performance_filtered:
+                summary: "campaign_performance — specific campaigns, last month"
+                value:
+                  type: "campaign_performance"
+                  campaign_ids: ["a1b2c3d4-e5f6-7890-abcd-ef1234567890", "b2c3d4e5-f6a7-8901-bcde-f12345678901"]
+                  last_month: true
+              scan_trend_by_type:
+                summary: "scan_trend_by_type — scan fraction by campaign target type"
+                value:
+                  type: "scan_trend_by_type"
+              scan_trend_by_type_filtered:
+                summary: "scan_trend_by_type — specific campaigns only"
+                value:
+                  type: "scan_trend_by_type"
+                  campaign_ids: ["a1b2c3d4-e5f6-7890-abcd-ef1234567890"]
+              postcard_overview:
+                summary: "postcard_overview — all campaigns"
+                value:
+                  type: "postcard_overview"
+              postcard_overview_filtered:
+                summary: "postcard_overview — specific campaigns only"
+                value:
+                  type: "postcard_overview"
+                  campaign_ids: ["a1b2c3d4-e5f6-7890-abcd-ef1234567890", "b2c3d4e5-f6a7-8901-bcde-f12345678901"]
+              active_campaigns:
+                summary: "active_campaigns — all active campaigns"
+                value:
+                  type: "active_campaigns"
+              active_campaigns_filtered:
+                summary: "active_campaigns — specific campaigns only"
+                value:
+                  type: "active_campaigns"
+                  campaign_ids: ["a1b2c3d4-e5f6-7890-abcd-ef1234567890"]
+              campaign_type_distribution:
+                summary: "campaign_type_distribution — all campaigns, all time"
+                value:
+                  type: "campaign_type_distribution"
+              campaign_type_distribution_filtered:
+                summary: "campaign_type_distribution — last week only"
+                value:
+                  type: "campaign_type_distribution"
+                  last_week: true
+              scan_activity_by_hour:
+                summary: "scan_activity_by_hour — all campaigns, today"
+                value:
+                  type: "scan_activity_by_hour"
+              scan_activity_by_hour_filtered:
+                summary: "scan_activity_by_hour — specific campaigns, today"
+                value:
+                  type: "scan_activity_by_hour"
+                  campaign_ids: ["a1b2c3d4-e5f6-7890-abcd-ef1234567890"]
+              device_distribution:
+                summary: "device_distribution — all campaigns, all time"
+                value:
+                  type: "device_distribution"
+              device_distribution_filtered:
+                summary: "device_distribution — last week, specific campaigns"
+                value:
+                  type: "device_distribution"
+                  last_week: true
+                  campaign_ids: ["a1b2c3d4-e5f6-7890-abcd-ef1234567890"]
+              campaign_engagement:
+                summary: "campaign_engagement — all campaigns"
+                value:
+                  type: "campaign_engagement"
+              campaign_engagement_filtered:
+                summary: "campaign_engagement — specific campaigns"
+                value:
+                  type: "campaign_engagement"
+                  campaign_ids: ["a1b2c3d4-e5f6-7890-abcd-ef1234567890"]
+      responses:
+        "200":
+          description: Analytics computed successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - status
+                  - message
+                  - data
+                properties:
+                  status:
+                    type: string
+                    example: "success"
+                  message:
+                    type: string
+                    example: "Analytics computed successfully"
+                  data:
+                    oneOf:
+                      - $ref: "#/components/schemas/DashboardCardsAnalytics"
+                      - $ref: "#/components/schemas/DeliveryFunnelAnalytics"
+                      - $ref: "#/components/schemas/WasteMeterAnalytics"
+                      - $ref: "#/components/schemas/ScanTrendAnalytics"
+                      - $ref: "#/components/schemas/RecentScansAnalytics"
+                      - $ref: "#/components/schemas/CampaignLeaderboardAnalytics"
+                      - $ref: "#/components/schemas/PerformanceTrendAnalytics"
+                      - $ref: "#/components/schemas/CampaignPerformanceAnalytics"
+                      - $ref: "#/components/schemas/ScanTrendByTypeAnalytics"
+                      - $ref: "#/components/schemas/PostcardOverviewAnalytics"
+                      - $ref: "#/components/schemas/ActiveCampaignsAnalytics"
+                      - $ref: "#/components/schemas/CampaignTypeDistributionAnalytics"
+                      - $ref: "#/components/schemas/ScanActivityByHourAnalytics"
+                      - $ref: "#/components/schemas/DeviceDistributionAnalytics"
+                      - $ref: "#/components/schemas/CampaignEngagementAnalytics"
+                    discriminator:
+                      propertyName: _type
+              examples:
+                dashboard_cards:
+                  summary: "dashboard_cards response"
+                  value:
+                    status: "success"
+                    message: "Analytics computed successfully"
+                    data:
+                      in_flight_postcards: 450
+                      delivered: 1200
+                      delivery_rate: 72.73
+                      total_scans: 342
+                      scan_rate: 0.0684
+                      average_scans_per_day: 0.0038
+                      peak_hour: "02PM"
+                      spent_to_date: 4950.00
+                      spent_to_date_display:
+                        value: 4950.00
+                        currency_code: "USD"
+                        symbol: "$"
+                        formatted: "$4,950.00"
+                delivery_funnel:
+                  summary: "delivery_funnel response"
+                  value:
+                    status: "success"
+                    message: "Analytics computed successfully"
+                    data:
+                      total_postcards_sent: 5000
+                      delivered:
+                        count: 3625
+                        percentage: 0.725
+                      in_transit:
+                        count: 410
+                        percentage: 0.082
+                      processed:
+                        count: 305
+                        percentage: 0.061
+                      printing:
+                        count: 240
+                        percentage: 0.048
+                      ready:
+                        count: 170
+                        percentage: 0.034
+                      returned:
+                        count: 125
+                        percentage: 0.025
+                      cancelled:
+                        count: 125
+                        percentage: 0.025
+                waste_meter:
+                  summary: "waste_meter response"
+                  value:
+                    status: "success"
+                    message: "Analytics computed successfully"
+                    data:
+                      status: "At Risk"
+                      total_postcards_sent: 1200
+                      total_pieces_wasted: 87
+                      total_amount_wasted: 261.00
+                      total_pieces_returned: 42
+                      total_amount_returned: 126.00
+                      total_pieces_cancelled: 45
+                      total_amount_cancelled: 135.00
+                      total_pieces_delayed: 130
+                      total_amount_delayed: 390.00
+                scan_trend:
+                  summary: "scan_trend response (all_time — default)"
+                  value:
+                    status: "success"
+                    message: "Analytics computed successfully"
+                    data:
+                      total_scans: 342
+                      unique_scans: 289
+                      scan_rate: 6.31
+                      breakdown:
+                        "Nov 2025": 34
+                        "Dec 2025": 51
+                        "Jan 2026": 28
+                        "Feb 2026": 67
+                        "Mar 2026": 89
+                        "Apr 2026": 73
+                scan_trend_last_week:
+                  summary: "scan_trend response (last_week)"
+                  value:
+                    status: "success"
+                    message: "Analytics computed successfully"
+                    data:
+                      total_scans: 88
+                      unique_scans: 71
+                      scan_rate: 1.62
+                      breakdown:
+                        sunday_scans: 4
+                        monday_scans: 18
+                        tuesday_scans: 22
+                        wednesday_scans: 15
+                        thursday_scans: 9
+                        friday_scans: 11
+                        saturday_scans: 9
+                scan_trend_last_24h:
+                  summary: "scan_trend response (last_24hours)"
+                  value:
+                    status: "success"
+                    message: "Analytics computed successfully"
+                    data:
+                      total_scans: 14
+                      unique_scans: 12
+                      scan_rate: 0.26
+                      breakdown:
+                        "12am": 0
+                        "2am": 0
+                        "4am": 0
+                        "6am": 1
+                        "8am": 3
+                        "10am": 4
+                        "12pm": 2
+                        "2pm": 1
+                        "4pm": 2
+                        "6pm": 1
+                        "8pm": 0
+                        "10pm": 0
+                scan_trend_last_month:
+                  summary: "scan_trend response (last_month)"
+                  value:
+                    status: "success"
+                    message: "Analytics computed successfully"
+                    data:
+                      total_scans: 127
+                      unique_scans: 98
+                      scan_rate: 2.34
+                      breakdown:
+                        "Apr 6": 5
+                        "Apr 7": 9
+                        "Apr 8": 7
+                        "Apr 9": 11
+                        "Apr 10": 8
+                        "Apr 11": 3
+                        "Apr 12": 6
+                        "Apr 13": 14
+                        "Apr 14": 10
+                        "Apr 15": 8
+                        "Apr 16": 12
+                        "Apr 17": 9
+                        "Apr 18": 7
+                        "Apr 19": 11
+                        "Apr 20": 7
+                recent_scans:
+                  summary: "recent_scans response"
+                  value:
+                    status: "success"
+                    message: "Analytics computed successfully"
+                    data:
+                      data:
+                        - campaign_id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+                          campaign_name: "Spring Promotion 2024"
+                          scans:
+                            - postcard_number: 42
+                              scan_address: "512 Elm St, Austin, TX 78701"
+                              scan_time_stamp: "15 minutes ago"
+                            - postcard_number: 17
+                              scan_address: "88 Maple Ave, Dallas, TX 75201"
+                              scan_time_stamp: "2 hours ago"
+                            - postcard_number: 103
+                              scan_address: "4 Oak Blvd, Houston, TX 77001"
+                              scan_time_stamp: "1 day ago"
+                        - campaign_id: "b2c3d4e5-f6a7-8901-bcde-fa2345678901"
+                          campaign_name: "Summer Sale Campaign"
+                          scans:
+                            - postcard_number: 8
+                              scan_address: "200 Pine Rd, San Antonio, TX 78201"
+                              scan_time_stamp: "3 hours ago"
+                campaign_leaderboard:
+                  summary: "campaign_leaderboard response"
+                  value:
+                    status: "success"
+                    message: "Analytics computed successfully"
+                    data:
+                      leaderboard:
+                        - campaign_name: "Campaign Awesome"
+                          total_scans: 55
+                          total_postcards_sent: 5000
+                          scan_rate: 1.10
+                          ranking_position: 1
+                        - campaign_name: "Spring Promo 2024"
+                          total_scans: 38
+                          total_postcards_sent: 2000
+                          scan_rate: 1.90
+                          ranking_position: 2
+                        - campaign_name: "Summer Sale"
+                          total_scans: 21
+                          total_postcards_sent: 1500
+                          scan_rate: 1.40
+                          ranking_position: 3
+                        - campaign_name: "Campaign Awesome 2"
+                          total_scans: 15
+                          total_postcards_sent: 100
+                          scan_rate: 15.00
+                          ranking_position: 4
+                        - campaign_name: "Q4 Outreach"
+                          total_scans: 7
+                          total_postcards_sent: 800
+                          scan_rate: 0.88
+                          ranking_position: 5
+                performance_trend:
+                  summary: "performance_trend response (truncated — 180 entries total)"
+                  value:
+                    status: "success"
+                    message: "Analytics computed successfully"
+                    data:
+                      - date: "2025-10-24"
+                        day: "Friday"
+                        delivery_rate: 0.0
+                        scan_rate: 0.0
+                        total_volume: 0
+                      - date: "2025-10-25"
+                        day: "Saturday"
+                        delivery_rate: 0.0
+                        scan_rate: 0.0
+                        total_volume: 0
+                      - date: "2026-04-20"
+                        day: "Monday"
+                        delivery_rate: 0.75
+                        scan_rate: 0.0015
+                        total_volume: 80
+                      - date: "2026-04-21"
+                        day: "Tuesday"
+                        delivery_rate: 0.80
+                        scan_rate: 0.0020
+                        total_volume: 50
+                      - date: "2026-04-22"
+                        day: "Wednesday"
+                        delivery_rate: 0.60
+                        scan_rate: 0.0008
+                        total_volume: 30
+                campaign_performance:
+                  summary: "campaign_performance response"
+                  value:
+                    status: "success"
+                    message: "Analytics computed successfully"
+                    data:
+                      top_performers:
+                        - campaign_name: "Campaign Awesome"
+                          total_scans: 55
+                          total_postcards_sent: 5000
+                          scan_rate: 0.011
+                          ranking_position: 1
+                        - campaign_name: "Spring Promo 2024"
+                          total_scans: 38
+                          total_postcards_sent: 2000
+                          scan_rate: 0.019
+                          ranking_position: 2
+                        - campaign_name: "Summer Sale"
+                          total_scans: 21
+                          total_postcards_sent: 1500
+                          scan_rate: 0.014
+                          ranking_position: 3
+                        - campaign_name: "Fall Outreach"
+                          total_scans: 15
+                          total_postcards_sent: 1000
+                          scan_rate: 0.015
+                          ranking_position: 4
+                        - campaign_name: "Q4 Push"
+                          total_scans: 7
+                          total_postcards_sent: 800
+                          scan_rate: 0.00875
+                          ranking_position: 5
+                      bottom_performers:
+                        - campaign_name: "Winter Blast"
+                          total_scans: 4
+                          total_postcards_sent: 600
+                          scan_rate: 0.0067
+                          ranking_position: 6
+                        - campaign_name: "Early Bird"
+                          total_scans: 2
+                          total_postcards_sent: 400
+                          scan_rate: 0.005
+                          ranking_position: 7
+                        - campaign_name: "Referral Drive"
+                          total_scans: 1
+                          total_postcards_sent: 250
+                          scan_rate: 0.004
+                          ranking_position: 8
+                        - campaign_name: "Local Blitz"
+                          total_scans: 1
+                          total_postcards_sent: 100
+                          scan_rate: 0.01
+                          ranking_position: 9
+                        - campaign_name: "Test Campaign"
+                          total_scans: 0
+                          total_postcards_sent: 50
+                          scan_rate: 0.0
+                          ranking_position: 10
+                scan_trend_by_type:
+                  summary: "scan_trend_by_type response (truncated — 180 entries total)"
+                  value:
+                    status: "success"
+                    message: "Analytics computed successfully"
+                    data:
+                      - date: "2025-10-24"
+                        day: "Friday"
+                        total_scans: 0
+                        location_zone: { count: 0, percentage: 0.0 }
+                        referral: { count: 0, percentage: 0.0 }
+                        addresses_list: { count: 0, percentage: 0.0 }
+                      - date: "2025-10-25"
+                        day: "Saturday"
+                        total_scans: 0
+                        location_zone: { count: 0, percentage: 0.0 }
+                        referral: { count: 0, percentage: 0.0 }
+                        addresses_list: { count: 0, percentage: 0.0 }
+                      - date: "2026-04-20"
+                        day: "Monday"
+                        total_scans: 20
+                        location_zone: { count: 12, percentage: 0.6 }
+                        referral: { count: 5, percentage: 0.25 }
+                        addresses_list: { count: 3, percentage: 0.15 }
+                      - date: "2026-04-21"
+                        day: "Tuesday"
+                        total_scans: 12
+                        location_zone: { count: 6, percentage: 0.5 }
+                        referral: { count: 4, percentage: 0.3333 }
+                        addresses_list: { count: 2, percentage: 0.1667 }
+                      - date: "2026-04-22"
+                        day: "Wednesday"
+                        total_scans: 4
+                        location_zone: { count: 2, percentage: 0.5 }
+                        referral: { count: 1, percentage: 0.25 }
+                        addresses_list: { count: 1, percentage: 0.25 }
+                postcard_overview:
+                  summary: "postcard_overview response"
+                  value:
+                    status: "success"
+                    message: "Analytics computed successfully"
+                    data:
+                      total_summary:
+                        delivered_and_scanned: 34
+                        delivered_but_not_scanned: 516
+                        in_transit: 52
+                        returned_cancelled: 95
+                      campaign_summary:
+                        - campaign_id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+                          campaign_name: "Spring Promotion 2024"
+                          total_postcards_sent: 500
+                          delivered_and_scanned: 21
+                          delivered_but_not_scanned: 389
+                          in_transit: 52
+                          returned_cancelled: 0
+                        - campaign_id: "b2c3d4e5-f6a7-8901-bcde-f12345678901"
+                          campaign_name: "Summer Sale Campaign"
+                          total_postcards_sent: 200
+                          delivered_and_scanned: 13
+                          delivered_but_not_scanned: 127
+                          in_transit: 0
+                          returned_cancelled: 46
+                active_campaigns:
+                  summary: "active_campaigns response"
+                  value:
+                    status: "success"
+                    message: "Analytics computed successfully"
+                    data:
+                      - campaign_id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+                        campaign_name: "Spring Promotion 2024"
+                        days_running: 14
+                        in_flight: 270
+                        scans: 42
+                        delivery_rate: 0.82
+                        status: "On Track"
+                      - campaign_id: "b2c3d4e5-f6a7-8901-bcde-f12345678901"
+                        campaign_name: "Summer Sale Campaign"
+                        days_running: 3
+                        in_flight: 480
+                        scans: 7
+                        delivery_rate: 0.45
+                        status: "At Risk"
+                      - campaign_id: "c3d4e5f6-a7b8-9012-cdef-123456789012"
+                        campaign_name: "New Launch Campaign"
+                        days_running: 0
+                        in_flight: 0
+                        scans: 0
+                        delivery_rate: 0
+                        status: "Pending"
+                campaign_type_distribution:
+                  summary: "campaign_type_distribution response"
+                  value:
+                    status: "success"
+                    message: "Analytics computed successfully"
+                    data:
+                      location_zone:
+                        total_scans: 21
+                        total_scans_percentage: 0.0412
+                        percent_of_subtotal: 0.6176
+                      referral:
+                        total_scans: 8
+                        total_scans_percentage: 0.0267
+                        percent_of_subtotal: 0.2353
+                      addresses_list:
+                        total_scans: 5
+                        total_scans_percentage: 0.0098
+                        percent_of_subtotal: 0.1471
+                scan_activity_by_hour:
+                  summary: "scan_activity_by_hour response (current time 3:18 PM UTC)"
+                  value:
+                    status: "success"
+                    message: "Analytics computed successfully"
+                    data:
+                      - hour: "12AM"
+                        scans: 0
+                      - hour: "01AM"
+                        scans: 0
+                      - hour: "02AM"
+                        scans: 0
+                      - hour: "03AM"
+                        scans: 0
+                      - hour: "04AM"
+                        scans: 0
+                      - hour: "05AM"
+                        scans: 0
+                      - hour: "06AM"
+                        scans: 0
+                      - hour: "07AM"
+                        scans: 0
+                      - hour: "08AM"
+                        scans: 0
+                      - hour: "09AM"
+                        scans: 3
+                      - hour: "10AM"
+                        scans: 7
+                      - hour: "11AM"
+                        scans: 5
+                      - hour: "12PM"
+                        scans: 11
+                      - hour: "01PM"
+                        scans: 4
+                      - hour: "02PM"
+                        scans: 2
+                      - hour: "03PM"
+                        scans: 1
+                device_distribution:
+                  summary: "device_distribution response"
+                  value:
+                    status: "success"
+                    message: "Analytics computed successfully"
+                    data:
+                      total_scans: 1247
+                      devices:
+                        - device_name: "android"
+                          device_scans: 534
+                          scan_percentage: 0.4282
+                        - device_name: "iphone"
+                          device_scans: 489
+                          scan_percentage: 0.3922
+                        - device_name: "web"
+                          device_scans: 224
+                          scan_percentage: 0.1796
+                campaign_engagement:
+                  summary: "campaign_engagement response"
+                  value:
+                    status: "success"
+                    message: "Analytics computed successfully"
+                    data:
+                      - campaign_id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+                        campaign_name: "Spring Referral Push"
+                        time_since_last_scan: "3h ago"
+                        scans_in_24hours: 14
+                        scans_total: 312
+                        postcards_sent: 800
+                        status: "in-flight"
+                      - campaign_id: "b2c3d4e5-f6a7-8901-bcde-f12345678901"
+                        campaign_name: "Downtown Location Zone"
+                        time_since_last_scan: "2d ago"
+                        scans_in_24hours: 0
+                        scans_total: 87
+                        postcards_sent: 500
+                        status: "completed"
+                      - campaign_id: "c3d4e5f6-a7b8-9012-cdef-123456789012"
+                        campaign_name: "Address List Q1"
+                        time_since_last_scan: null
+                        scans_in_24hours: 0
+                        scans_total: 0
+                        postcards_sent: 250
+                        status: "completed"
+        "400":
+          description: Invalid request — missing or unsupported type
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              examples:
+                missing_type:
+                  summary: Missing type field
+                  value:
+                    error: "INVALID_INPUT"
+                    message: "type is required and must be a string"
+                invalid_type:
+                  summary: Unsupported analytics type
+                  value:
+                    error: "INVALID_TYPE"
+                    message: "Analytics type \"foo\" is not supported. Supported types: dashboard_cards, delivery_funnel, waste_meter, scan_trend, recent_scans, campaign_leaderboard, performance_trend, campaign_performance, scan_trend_by_type, postcard_overview, active_campaigns, campaign_type_distribution, scan_activity_by_hour, device_distribution, campaign_engagement"
+        "401":
+          description: Unauthorized — missing or invalid Bearer token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              examples:
+                unauthorized:
+                  summary: Missing token
+                  value:
+                    error: "UNAUTHORIZED"
+                    message: "Unable to authenticate user"
+        "403":
+          description: Forbidden — user is not associated with any organization
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              examples:
+                no_org:
+                  summary: No organization
+                  value:
+                    error: "NO_ORGANIZATION"
+                    message: "User is not associated with any organization"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              examples:
+                server_error:
+                  summary: Unexpected server error
+                  value:
+                    error: "INTERNAL_ERROR"
+                    message: "An unexpected error occurred. Please try again later."
+
+  /storePostcardSends:
+    post:
+      tags:
+        - Analytics 2.0
+      summary: Store postcard send records (internal)
+      description: |
+        **Internal use only.** Called by the WebSocket postcard sending server after
+        each campaign run to persist individual PostGrid postcard IDs into the
+        `postcard_sends` table. This enables per-postcard delivery status tracking
+        for analytics.
+
+        Authentication uses the Supabase service role key. Not intended to be called
+        directly by frontend clients.
+      operationId: storePostcardSends
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - campaign_id
+                - postcards
+              properties:
+                campaign_id:
+                  type: string
+                  format: uuid
+                  description: The campaign these postcards belong to
+                postcards:
+                  type: array
+                  minItems: 1
+                  items:
+                    type: object
+                    required:
+                      - postgrid_postcard_id
+                    properties:
+                      postgrid_postcard_id:
+                        type: string
+                        description: PostGrid postcard ID returned on creation (e.g. "postcard_xxx")
+                        example: "postcard_abc123"
+                      address:
+                        type: string
+                        description: Mailing address the postcard was sent to
+                        example: "123 Main St, Springfield, IL 62701"
+            example:
+              campaign_id: "550e8400-e29b-41d4-a716-446655440000"
+              postcards:
+                - postgrid_postcard_id: "postcard_abc123"
+                  address: "123 Main St, Springfield, IL 62701"
+                - postgrid_postcard_id: "postcard_def456"
+                  address: "456 Oak Ave, Springfield, IL 62702"
+      responses:
+        "201":
+          description: Postcard records stored successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: "success"
+                  message:
+                    type: string
+                    example: "Stored 2 postcard records"
+                  inserted:
+                    type: integer
+                    example: 2
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Campaign not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /syncPostcardStatuses:
+    post:
+      tags:
+        - Analytics 2.0
+      summary: Sync postcard delivery statuses from PostGrid (scheduled)
+      description: |
+        **Scheduled/cron function.** Queries PostGrid for the current delivery statuses
+        of every non-terminal postcard in the `postcard_sends` table and updates both
+        `postgrid_status` and `imb_status` columns accordingly.
+
+        **What gets updated per postcard:**
+        - `postgrid_status` ← PostGrid `status` field (standard lifecycle)
+        - `imb_status` ← PostGrid `imbStatus` field (US Intelligent-Mail Tracking, nullable)
+
+        **Terminal statuses** (never re-fetched — DB write skipped):
+        - `postgrid_status`: `completed`, `cancelled`
+
+        **Non-terminal statuses** (refreshed on every run):
+        - `postgrid_status`: `ready`, `printing`, `processed_for_delivery`
+        - `imb_status`: always re-checked for non-terminal postcards since `imbStatus`
+          can arrive and update independently of the main `status`
+
+        Postcards where neither `status` nor `imbStatus` changed are skipped (no DB write).
+        Intended to be triggered on a schedule (e.g., every 6 hours). Can also be
+        called manually to force a refresh.
+      operationId: syncPostcardStatuses
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: Sync completed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: "Postcard status sync complete"
+                  total_checked:
+                    type: integer
+                    description: Total non-terminal postcards checked
+                    example: 500
+                  updated:
+                    type: integer
+                    description: Number of postcards whose status changed
+                    example: 45
+                  errors:
+                    type: integer
+                    description: Number of PostGrid API errors encountered
+                    example: 0
+                  unchanged:
+                    type: integer
+                    description: Number of postcards with unchanged status
+                    example: 455
+        "500":
+          description: Internal server error or missing API key
           content:
             application/json:
               schema:
@@ -11459,7 +13117,7 @@ paths:
         **Business Rules:**
         - Requires bundle ID and PostGrid API key
         - Bundle must belong to user's organization (or be universal and user is ADMIN)
-        - Can update html_front, html_back, and/or description
+        - Can update html_front, html_back, description, postcardSize, and/or restriction UI flags
         - Updates PostGrid templates first, then database
         - Description changes automatically append " Front" and " Back"
 
@@ -11506,12 +13164,20 @@ paths:
                     - 6x9
                     - 6x11
                   description: Size of the postcard. Updates both front and back templates.
+                show_restriction_annotations_tooltips:
+                  type: boolean
+                  description: When true, the UI displays tooltips for restriction annotation markers on the template. (optional)
+                show_restriction_area_warning:
+                  type: boolean
+                  description: When true, the UI displays a warning banner for restricted areas on the template. (optional)
             example:
               postgridApiKey: "test_sk_..."
               template_bundle_id: "550e8400-e29b-41d4-a716-446655440000"
               html_front: "<h1>Updated Front</h1>"
               description: "Fall Campaign"
               postcardSize: "6x9"
+              show_restriction_annotations_tooltips: true
+              show_restriction_area_warning: false
       responses:
         "200":
           description: Template bundle updated successfully
@@ -11766,6 +13432,14 @@ paths:
                           format: uuid
                         isUniversal:
                           type: boolean
+                        showRestrictionAnnotationsTooltips:
+                          type: boolean
+                          description: When true, the UI displays tooltips for restriction annotation markers on the template.
+                          default: false
+                        showRestrictionAreaWarning:
+                          type: boolean
+                          description: When true, the UI displays a warning banner for restricted areas on the template.
+                          default: false
                         front_template:
                           type: object
                           description: Front template details with timezone-enriched timestamps
@@ -11894,6 +13568,14 @@ paths:
                             nullable: true
                           is_universal:
                             type: boolean
+                          show_restriction_annotations_tooltips:
+                            type: boolean
+                            description: When true, the UI displays tooltips for restriction annotation markers on the template.
+                            default: false
+                          show_restriction_area_warning:
+                            type: boolean
+                            description: When true, the UI displays a warning banner for restricted areas on the template.
+                            default: false
                           created_at:
                             type: string
                             format: date-time
@@ -11914,6 +13596,8 @@ paths:
                     id: "550e8400-e29b-41d4-a716-446655440000"
                     organization_id: "660e8400-e29b-41d4-a716-446655440001"
                     is_universal: false
+                    show_restriction_annotations_tooltips: false
+                    show_restriction_area_warning: false
                     created_at: "2025-01-15T10:30:00Z"
                     updated_at: "2025-01-15T10:30:00Z"
                   front_template:
@@ -12374,11 +14058,23 @@ paths:
                         nullable: true
                         description: Branding theme settings
         "401":
-          $ref: "#/components/schemas/Error"
+          description: Error response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "403":
-          $ref: "#/components/schemas/Error"
+          description: Error response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "500":
-          $ref: "#/components/schemas/Error"
+          description: Error response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 
   /getCompanyLogo:
     get:
@@ -12683,8 +14379,14 @@ paths:
         ```json
         {
           "step": 4,
-          "team_member_ids": ["uuid-1", "uuid-2"],
-          "invite_emails": ["alice@example.com", "bob@example.com"]
+          "team_member_ids": [
+            { "id": "uuid-1", "role": "ADMIN" },
+            { "id": "uuid-2" }
+          ],
+          "invite_emails": [
+            "alice@example.com",
+            { "email": "bob@example.com", "role": "ADMIN" }
+          ]
         }
         ```
 
@@ -12693,7 +14395,7 @@ paths:
 
         **Optional Fields:**
         - `team_member_ids`: Array of objects with `id` (profile UUID) and optional `role` (`ADMIN`, `MARKETER`, `TECHNICIAN`). If `role` is omitted the user's existing role is used.
-        - `invite_emails`: Array of objects with `email` and optional `role` (`ADMIN`, `MARKETER`, or `TECHNICIAN`, defaults to `TECHNICIAN`). Each invite gets:
+        - `invite_emails`: Array of email strings or objects with `email` and optional `role` (`ADMIN`, `MARKETER`, or `TECHNICIAN`, defaults to `TECHNICIAN`). Each invite gets:
           - A new Supabase Auth account created
           - An invite email sent with a magic link to set their password
           - A profile row created with role `TECHNICIAN`
@@ -12721,10 +14423,18 @@ paths:
                     step:
                       type: integer
                       enum: [1]
+                    organization_id:
+                      type: string
+                      format: uuid
+                      description: Target organization. If omitted, defaults to the user's active organization.
                     business_name:
                       type: string
                     industry:
                       type: string
+                    business_email:
+                      type: string
+                      format: email
+                      description: Business email. Auto-filled from the user's account email for agency accounts; required for sub-organizations.
                     business_phone_number:
                       type: string
                     website_url:
@@ -12735,6 +14445,10 @@ paths:
                     step:
                       type: integer
                       enum: [2]
+                    organization_id:
+                      type: string
+                      format: uuid
+                      description: Target organization. If omitted, defaults to the user's active organization.
                     country:
                       type: string
                     street_address:
@@ -12751,6 +14465,10 @@ paths:
                     step:
                       type: integer
                       enum: [3]
+                    organization_id:
+                      type: string
+                      format: uuid
+                      description: Target organization. If omitted, defaults to the user's active organization.
                     company_logo:
                       type: string
                       description: Base64 encoded image or data URL
@@ -12785,6 +14503,10 @@ paths:
                     step:
                       type: integer
                       enum: [4]
+                    organization_id:
+                      type: string
+                      format: uuid
+                      description: Target organization. If omitted, defaults to the user's active organization.
                     team_member_ids:
                       type: array
                       items:
@@ -12801,30 +14523,37 @@ paths:
                     invite_emails:
                       type: array
                       items:
-                        type: object
-                        required: [email]
-                        properties:
-                          email:
-                            type: string
+                        oneOf:
+                          - type: string
                             format: email
-                          role:
-                            type: string
-                            enum: [ADMIN, MARKETER, TECHNICIAN]
-                            default: TECHNICIAN
-                      description: Users to invite by email. Each gets an account created and an invite email sent. Role defaults to TECHNICIAN.
+                            description: Email address (role defaults to TECHNICIAN)
+                          - type: object
+                            required: [email]
+                            properties:
+                              email:
+                                type: string
+                                format: email
+                              role:
+                                type: string
+                                enum: [ADMIN, MARKETER, TECHNICIAN]
+                                default: TECHNICIAN
+                      description: Users to invite by email. Each item can be a plain email string or an object with `email` and optional `role`. Role defaults to TECHNICIAN.
             examples:
               step1_business:
                 summary: Step 1 - Business Information
                 value:
                   step: 1
+                  organization_id: "550e8400-e29b-41d4-a716-446655440001"
                   business_name: "Acme Corp"
                   industry: "Technology"
+                  business_email: "contact@acmecorp.com"
                   business_phone_number: "+1-555-0123"
                   website_url: "https://acmecorp.com"
               step2_address:
                 summary: Step 2 - Address Information
                 value:
                   step: 2
+                  organization_id: "550e8400-e29b-41d4-a716-446655440001"
                   country: "United States"
                   street_address: "123 Main Street"
                   city: "San Francisco"
@@ -12834,6 +14563,7 @@ paths:
                 summary: Step 3 - Logo & Branding
                 value:
                   step: 3
+                  organization_id: "550e8400-e29b-41d4-a716-446655440001"
                   company_logo: "data:image/png;base64,iVBORw0KGgoAAAANSREEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
                   theme:
                     colors:
@@ -12849,11 +14579,13 @@ paths:
                 summary: Step 4 - Existing members + email invites
                 value:
                   step: 4
+                  organization_id: "550e8400-e29b-41d4-a716-446655440001"
                   team_member_ids:
                     - id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
                       role: "MARKETER"
                     - id: "b2c3d4e5-f6a7-8901-bcde-f12345678901"
                   invite_emails:
+                    - "charlie@example.com"
                     - email: "alice@example.com"
                       role: "ADMIN"
                     - email: "bob@example.com"
@@ -12866,6 +14598,10 @@ paths:
                 step:
                   type: integer
                   enum: [3]
+                organization_id:
+                  type: string
+                  format: uuid
+                  description: Target organization. If omitted, defaults to the user's active organization.
                 company_logo:
                   type: string
                   format: binary
@@ -12916,9 +14652,9 @@ paths:
         **Simplified 4-step campaign creation process using template bundles**
 
         This is a streamlined version of the original 6-step `/createCampaign` workflow:
-        - Step 1: Create campaign with name, optional referral, and optional disclaimer
+        - Step 1: Create campaign with name, optional target_type, optional referral, and optional disclaimer
         - Step 2: Assign template bundle (automatically sets front and back templates)
-        - Step 3: Link location zone
+        - Step 3: Link location zone OR uploaded Address List
         - Step 4: Campaign consents and disclaimers
 
         **Key Differences from V1:**
@@ -12936,13 +14672,14 @@ paths:
 
         ## Step 1: Create Campaign
 
-        Create a new campaign with name and optionally link a referral.
+        Create a new campaign with name and optionally link a referral or specify a target type.
 
         **Request:**
         ```json
         {
           "step": 1,
           "campaign_name": "Summer Promotion 2025",
+          "target_type": "Address List",
           "referral_id": "550e8400-e29b-41d4-a716-446655440000",
           "disclaimer_text": "Offer valid for new customers only"
         }
@@ -12953,7 +14690,8 @@ paths:
         - `campaign_name`: Campaign name (string, not empty)
 
         **Optional Fields:**
-        - `referral_id`: UUID of referral to link (can be omitted for campaigns without referrals)
+        - `target_type`: Explicit targeting type ('Referrals', 'Location Zone', 'Address List'). Inferred from referral_id if missing.
+        - `referral_id`: UUID of referral to link (required if target_type is 'Referrals', or used for inference)
         - `disclaimer_text`: Disclaimer text to save in offer_data
 
         **What Happens:**
@@ -12997,9 +14735,9 @@ paths:
 
         ## Step 3: Link Location Zone
 
-        Associate a location zone with verified addresses to the campaign.
+        Associate a location zone or an uploaded CSV address list to the campaign.
 
-        **Request:**
+        **Request (Zone):**
         ```json
         {
           "step": 3,
@@ -13008,15 +14746,24 @@ paths:
         }
         ```
 
+        **Request (Address List):**
+        ```json
+        {
+          "step": 3,
+          "campaign_id": "660e8400-e29b-41d4-a716-446655440001",
+          "csv_address_list_id": "990e8400-e29b-41d4-a716-446655440009"
+        }
+        ```
+
         **Required Fields:**
         - `step`: Must be 3
         - `campaign_id`: UUID of campaign
-        - `zone_id`: UUID of location zone
+        - `zone_id`: Required if `target_type` is 'Location Zone'
+        - `csv_address_list_id`: Required if `target_type` is 'Address List'
 
         **What Happens:**
-        - Verifies zone exists and belongs to organization
-        - **Smart duplication**: If zone already used by another campaign, creates a duplicate
-        - Updates campaign with zone_id
+        - Verifies zone or address list exists and belongs to organization
+        - Updates campaign with zone_id or csv_address_list_id
         - Sets current_step: 3
         - Logs history
 
@@ -13936,11 +15683,23 @@ paths:
                   message:
                     type: string
         "400":
-          $ref: "#/components/schemas/Error"
+          description: Error response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "401":
-          $ref: "#/components/schemas/Error"
+          description: Error response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "500":
-          $ref: "#/components/schemas/Error"
+          description: Error response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 
   /unarchiveNotificationById:
     post:
@@ -14079,10 +15838,25 @@ paths:
                   type: string
                   format: date-time
                   description: New start date
+                campaign_target_type:
+                  type: string
+                  enum: [Referrals, Location Zone, Address List]
+                  description: Update the campaign targeting mode
+                zone_id:
+                  type: string
+                  format: uuid
+                  nullable: true
+                  description: New location zone ID (for Location Zone)
+                csv_address_list_id:
+                  type: string
+                  format: uuid
+                  nullable: true
+                  description: New CSV address list ID (for Address List)
             example:
-              step: 1
               campaign_id: "660e8400-e29b-41d4-a716-446655440001"
               campaign_name: "Summer Sale"
+              campaign_target_type: "Location Zone"
+              zone_id: "123e4567-e89b-12d3-a456-426614174000"
               referral_id: "550e8400-e29b-41d4-a716-446655440000"
               disclaimer_text: "Terms apply"
               start_date: "2026-06-01T00:00:00Z"
@@ -14129,9 +15903,17 @@ paths:
                   message:
                     type: string
         "401":
-          $ref: "#/components/schemas/Error"
+          description: Error response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "500":
-          $ref: "#/components/schemas/Error"
+          description: Error response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 
   /sendWelcomeEmail:
     get:
@@ -14151,7 +15933,11 @@ paths:
               schema:
                 $ref: "#/components/schemas/EmailBatchResponse"
         "500":
-          $ref: "#/components/schemas/Error"
+          description: Error response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
     post:
       tags:
         - Email Notifications
@@ -14166,7 +15952,11 @@ paths:
               schema:
                 $ref: "#/components/schemas/EmailBatchResponse"
         "500":
-          $ref: "#/components/schemas/Error"
+          description: Error response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 
   /sendMaintenanceCompletedEmail:
     get:
@@ -14186,7 +15976,11 @@ paths:
               schema:
                 $ref: "#/components/schemas/EmailBatchResponse"
         "500":
-          $ref: "#/components/schemas/Error"
+          description: Error response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
     post:
       tags:
         - Email Notifications
@@ -14201,7 +15995,11 @@ paths:
               schema:
                 $ref: "#/components/schemas/EmailBatchResponse"
         "500":
-          $ref: "#/components/schemas/Error"
+          description: Error response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 
   /setMaintenanceEmailStatus:
     post:
@@ -14256,15 +16054,35 @@ paths:
                       maintenance_email_sent:
                         type: boolean
         "400":
-          $ref: "#/components/schemas/Error"
+          description: Error response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "401":
-          $ref: "#/components/schemas/Error"
+          description: Error response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "403":
-          $ref: "#/components/schemas/Error"
+          description: Error response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "404":
-          $ref: "#/components/schemas/Error"
+          description: Error response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "500":
-          $ref: "#/components/schemas/Error"
+          description: Error response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 
   # ─── Multi-Tenant Organization Management ──────────────────────────────────
 
@@ -14931,6 +16749,434 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+
+  /getAgencyAccountOrganizationMembers:
+    get:
+      tags:
+        - Multi-Tenant Organization Management
+      summary: Get all members of the agency owner's primary organization
+      description: |
+        Returns all members added to the organization the authenticated user originally signed up with (their owned org).
+
+        Only accessible by the org owner. Each member includes their `id`, `role`, `full_name`, and `email`.
+      operationId: getAgencyAccountOrganizationMembers
+      security:
+        - BearerAuth: []
+        - SupabaseAuth: []
+      responses:
+        "200":
+          description: Members retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: success
+                  organization_id:
+                    type: string
+                    format: uuid
+                  organization_name:
+                    type: string
+                    example: Acme Corp
+                  members:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                          format: uuid
+                        role:
+                          type: string
+                          enum: [ADMIN, MARKETER, TECHNICIAN]
+                        full_name:
+                          type: string
+                          nullable: true
+                        email:
+                          type: string
+                          format: email
+                          nullable: true
+              example:
+                status: success
+                organization_id: "4faa2eb4-ff07-4881-9fc3-3fdd3797e33f"
+                organization_name: "Acme Corp"
+                members:
+                  - id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+                    role: ADMIN
+                    full_name: "Alice Smith"
+                    email: "alice@example.com"
+                  - id: "b2c3d4e5-f6a7-8901-bcde-f12345678901"
+                    role: TECHNICIAN
+                    full_name: null
+                    email: "bob@example.com"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: No owned organization found for this user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: NOT_FOUND
+                message: No owned organization found for this user
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /updateCampaignVerification:
+    post:
+      tags:
+        - Address List Management
+      summary: Update skip_address_verification flag for CSV address list
+      description: |
+        Toggles the skip_address_verification flag for a specific CSV address list.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - csv_address_list_id
+                - skip_address_verification
+              properties:
+                csv_address_list_id:
+                  type: string
+                  format: uuid
+                  example: "123e4567-e89b-12d3-a456-426614174000"
+                skip_address_verification:
+                  type: boolean
+                  example: true
+      responses:
+        "200":
+          description: Successfully updated flag
+        "400":
+          description: Invalid input
+        "401":
+          description: Unauthorized
+        "403":
+          description: Forbidden/Not in organization
+        "404":
+          description: Address list not found
+        "500":
+          description: Internal server error
+  /getCSVAddressListById:
+    post:
+      tags:
+        - Address List Management
+      summary: Get CSV address list by ID
+      description: |
+        Retrieves a specific CSV address list by its ID.
+        Includes all validated addresses and list metadata.
+      operationId: getCSVAddressListById
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - csv_address_list_id
+              properties:
+                csv_address_list_id:
+                  type: string
+                  format: uuid
+                  description: UUID of the CSV address list
+            example:
+              csv_address_list_id: "123e4567-e89b-12d3-a456-426614174000"
+      responses:
+        "200":
+          description: Address list retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GetCSVAddressListResponse"
+        "401":
+          description: Unauthorized
+        "404":
+          description: List not found
+        "500":
+          description: Internal Server Error
+
+  /removeAllDuplicateAddresses:
+    post:
+      tags:
+        - Address List Management
+      summary: Exclude all duplicate addresses from list
+      description: |
+        Marks rows as `is_deleted: true` and `is_included: false` if they are tagged as `is_duplicate` within a CSV address list.
+        Updates list metadata and adds an entry to the operation history.
+      operationId: removeAllDuplicateAddresses
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - list_id
+              properties:
+                list_id:
+                  type: string
+                  format: uuid
+                  description: UUID of the CSV address list
+      responses:
+        "200":
+          description: Successfully excluded duplicates
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  message:
+                    type: string
+                  excluded_count:
+                    type: integer
+                  total_count:
+                    type: integer
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not Found
+        "500":
+          description: Internal Server Error
+
+  /editAddress:
+    post:
+      tags:
+        - Address List Management
+      summary: Update a specific address in a CSV list
+      description: |
+        Updates a specific row within a CSV address list and re-validates the address fields.
+      operationId: editAddress
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - list_id
+                - address_id
+                - updates
+              properties:
+                list_id:
+                  type: string
+                  format: uuid
+                address_id:
+                  type: string
+                  format: uuid
+                updates:
+                  $ref: "#/components/schemas/AddressUpdate"
+      responses:
+        "200":
+          description: Address updated successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  message:
+                    type: string
+                  updated_address:
+                    $ref: "#/components/schemas/AddressRow"
+        "400":
+          description: Bad Request
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not Found
+        "500":
+          description: Internal Server Error
+
+  /getCSVAddressListDetails:
+    post:
+      tags:
+        - Address List Management
+      summary: Get details of a CSV address list by campaign ID
+      description: |
+        Returns metadata and groups addresses into 'included' and 'excluded' categories for a given campaign's CSV address list.
+      operationId: getCSVAddressListDetails
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - campaign_id
+              properties:
+                campaign_id:
+                  type: string
+                  format: uuid
+      responses:
+        "200":
+          description: Address list details retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CSVAddressListDetailsResponse"
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not Found
+        "500":
+          description: Internal Server Error
+
+  /deleteCSVAddresses:
+    post:
+      tags:
+        - Address List Management
+      summary: Bulk delete addresses from a CSV list
+      description: |
+        Marks specific address IDs in a campaign_csv_address_list as deleted.
+      operationId: deleteCSVAddresses
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - list_id
+                - address_ids
+              properties:
+                list_id:
+                  type: string
+                  format: uuid
+                address_ids:
+                  type: array
+                  items:
+                    type: string
+                    format: uuid
+      responses:
+        "200":
+          description: Addresses deleted successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  message:
+                    type: string
+                  updated_count:
+                    type: integer
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not Found
+        "500":
+          description: Internal Server Error
+
+  /getCoordinates:
+    post:
+      tags:
+        - Address List Management
+      summary: Geocode addresses in a CSV list
+      description: |
+        Performs geocoding via Google Maps API for valid rows in a CSV address list and updates their coordinates.
+      operationId: getCoordinates
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - list_id
+              properties:
+                list_id:
+                  type: string
+                  format: uuid
+      responses:
+        "200":
+          description: Geocoding completed successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GetCoordinatesResponse"
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not Found
+        "422":
+          description: Geocoding could not locate any addresses
+        "500":
+          description: Internal Server Error
+
+  /removeAllInvalidAddresses:
+    post:
+      tags:
+        - Address List Management
+      summary: Bulk delete all invalid addresses
+      description: |
+        Marks all addresses with `is_valid: false` or missing required fields as `is_deleted: true` (and `is_included: false`) in a campaign_csv_address_list.
+      operationId: removeAllInvalidAddresses
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - list_id
+              properties:
+                list_id:
+                  type: string
+                  format: uuid
+      responses:
+        "200":
+          description: Invalid addresses deleted successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  message:
+                    type: string
+                  updated_count:
+                    type: integer
+                  metadata:
+                    $ref: "#/components/schemas/AddressListMetadata"
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not Found
+        "500":
+          description: Internal Server Error
 
 components:
   schemas:
@@ -15606,6 +17852,9 @@ components:
           nullable: true
           description: Name of the campaign (set in step 1)
           example: Summer Promotion 2025
+        is_editing:
+          type: boolean
+          description: Indicates if the address list associated with the campaign is currently being geocoded or edited
         status:
           type: object
           properties:
@@ -15650,7 +17899,7 @@ components:
         leads_gen:
           type: integer
           default: 0
-          description: Number of leads generated
+          description: Number of leads generated (tracked via Linkly or PostGrid trackers)
         total_spent:
           type: number
           format: decimal
@@ -15660,7 +17909,7 @@ components:
           type: number
           format: decimal
           default: 0.00
-          description: "Estimated return on investment percentage. Calculated as ((revenue - cost) / cost) × 100, where cost = postcards_sent × $3 and revenue = leads_gen × $1000 (assumed). Updated automatically by syncLinklyAnalytics cron job."
+          description: "Estimated return on investment percentage. Calculated as ((revenue - cost) / cost) × 100, where cost = postcards_sent × $3 and revenue = leads_gen × $1000 (assumed). Updated automatically by analytics sync cron job (supports both Linkly and PostGrid Trackers)."
         created_at:
           type: string
           format: date-time
@@ -16264,6 +18513,1013 @@ components:
           description: "Addresses with Opt-out verified"
           example: 87
 
+    DashboardCardsAnalytics:
+      type: object
+      description: "Dashboard card analytics from Analytics 2.0 — based on individual PostGrid postcard delivery records"
+      properties:
+        in_flight_postcards:
+          type: integer
+          description: "Count of postcards with PostGrid status ready, printing, or processed_for_delivery (not yet delivered or cancelled)"
+          example: 450
+        delivered:
+          type: integer
+          description: "Postcards with status completed (most likely delivered, per PostGrid approximation)"
+          example: 1200
+        delivery_rate:
+          type: number
+          format: float
+          description: "Percentage of sent postcards that have been delivered: (delivered / total_sent) * 100"
+          example: 72.73
+        total_scans:
+          type: integer
+          description: "All-time total QR scans across all org campaign trackers — sum of PostGrid visitCount per tracker"
+          example: 342
+        scan_rate:
+          type: number
+          format: float
+          description: "total_scans / total_postcards_sent (0.0–1.0, 4 decimal places)"
+          example: 0.0684
+        average_scans_per_day:
+          type: number
+          format: float
+          description: "(total_scans / days_since_first_scan) / total_postcards_sent — average daily scan rate relative to postcards sent (0.0–1.0, 4 decimal places)"
+          example: 0.0038
+        peak_hour:
+          type: string
+          nullable: true
+          description: "Hour of day with the highest scan count across all visit timestamps, formatted as 12-hour clock (e.g. '02PM', '09AM'). null when there are no scans."
+          example: "02PM"
+        spent_to_date:
+          type: number
+          format: float
+          description: "Total amount charged to the organization across all campaigns, in USD (sourced from payment_history)"
+          example: 4950.00
+        spent_to_date_display:
+          type: object
+          description: "Currency-enriched representation of spent_to_date using the user's saved currency preference"
+          properties:
+            value:
+              type: number
+              example: 4950.00
+            currency_code:
+              type: string
+              example: "USD"
+            symbol:
+              type: string
+              example: "$"
+            formatted:
+              type: string
+              example: "$4,950.00"
+
+    FunnelBucket:
+      type: object
+      required:
+        - count
+        - percentage
+      properties:
+        count:
+          type: integer
+          description: Raw postcard count for this status.
+          example: 3625
+        percentage:
+          type: number
+          format: float
+          description: Fraction of total_postcards_sent (0.0–1.0, 4 decimal places).
+          example: 0.725
+
+    DeliveryFunnelAnalytics:
+      type: object
+      description: |
+        Full PostGrid delivery status breakdown for all postcards sent by the organization.
+        Every field except `total_postcards_sent` is a `FunnelBucket` with both a raw `count`
+        and a `percentage` (0.0–1.0, 4 decimal places) of `total_postcards_sent`.
+
+        **Two data sources are combined:**
+
+        Fields derived from PostGrid's standard `status` field (all orders):
+        `delivered`, `processed`, `printing`, `ready`, `cancelled`
+
+        Fields derived from PostGrid's `imbStatus` field — Intelligent-Mail Tracking
+        (US orders only, `null` until first USPS facility scan):
+        `in_transit` (= `entered_mail_stream` + `out_for_delivery`), `returned`
+
+        Statuses are refreshed on a schedule by `syncPostcardStatuses`.
+        Terminal statuses (`completed`, `cancelled`) stop being polled from PostGrid.
+        `returned_to_sender` (imbStatus) is also terminal once set.
+      required:
+        - total_postcards_sent
+        - delivered
+        - in_transit
+        - processed
+        - printing
+        - ready
+        - returned
+        - cancelled
+      properties:
+        total_postcards_sent:
+          type: integer
+          description: |
+            Raw count of all postcard records for this organization.
+            This is the denominator used to calculate every percentage field below.
+          example: 5000
+        delivered:
+          $ref: "#/components/schemas/FunnelBucket"
+          description: |
+            Postcards with PostGrid `status = completed`.
+            PostGrid considers these "most likely delivered" (approximation — no physical confirmation).
+        in_transit:
+          $ref: "#/components/schemas/FunnelBucket"
+          description: |
+            Postcards currently confirmed inside the USPS network.
+            Combines `entered_mail_stream` + `out_for_delivery` imbStatus values.
+            Note: Will be 0 for non-US orders.
+        processed:
+          $ref: "#/components/schemas/FunnelBucket"
+          description: Postcards with PostGrid `status = processed_for_delivery`.
+        printing:
+          $ref: "#/components/schemas/FunnelBucket"
+          description: Postcards with PostGrid `status = printing`.
+        ready:
+          $ref: "#/components/schemas/FunnelBucket"
+          description: Postcards with PostGrid `status = ready` — awaiting print on sendDate.
+        returned:
+          $ref: "#/components/schemas/FunnelBucket"
+          description: |
+            Postcards with PostGrid `imbStatus = returned_to_sender`.
+            Note: Will be 0 for non-US orders.
+        cancelled:
+          $ref: "#/components/schemas/FunnelBucket"
+          description: Postcards with PostGrid `status = cancelled` — never sent.
+
+    WasteMeterAnalytics:
+      type: object
+      description: |
+        Waste meter analytics — quantifies postcard spend that produced no confirmed delivery.
+
+        **Definitions:**
+
+        | Category | Definition | Source field |
+        |---|---|---|
+        | `returned` | PostGrid `imbStatus = returned_to_sender` — USPS could not deliver and returned the piece | `postcard_sends.imb_status` |
+        | `cancelled` | PostGrid `status = cancelled` — order cancelled, never printed or sent | `postcard_sends.postgrid_status` |
+        | `wasted` | `returned + cancelled` — total pieces that incurred cost with zero delivery | combined |
+        | `delayed` | Not `completed` or `cancelled`, AND ≥ 7 **working days** (Mon–Fri) since created | `postcard_sends.created_at` |
+
+        **Dollar amounts** are calculated at a fixed rate of **$3.00 USD per postcard**, rounded to 2 decimal places.
+
+        **Risk status thresholds** are based on `(wasted + delayed) / total_sent × 100`:
+
+        | Status | Problem rate |
+        |---|---|
+        | `Healthy` | < 5% |
+        | `At Risk` | 5% – 15% |
+        | `Critical` | > 15% |
+
+        Returns `Healthy` when no postcards have been sent yet.
+      required:
+        - status
+        - total_postcards_sent
+        - total_pieces_wasted
+        - total_amount_wasted
+        - total_pieces_returned
+        - total_amount_returned
+        - total_pieces_cancelled
+        - total_amount_cancelled
+        - total_pieces_delayed
+        - total_amount_delayed
+      properties:
+        status:
+          type: string
+          enum:
+            - Healthy
+            - At Risk
+            - Critical
+          description: |
+            Overall waste risk status for this organization's postcard campaigns.
+            Computed from `(total_pieces_wasted + total_pieces_delayed) / total_postcards_sent × 100`.
+
+            - `Healthy` — problem rate < 5%
+            - `At Risk` — problem rate 5%–15%
+            - `Critical` — problem rate > 15%
+          example: "At Risk"
+        total_postcards_sent:
+          type: integer
+          description: |
+            Total number of postcards in scope (after applying any campaign or time filters).
+            Use this as the denominator when calculating percentage-at-risk on the frontend:
+            `(total_pieces_wasted + total_pieces_delayed) / total_postcards_sent × 100`
+          example: 1200
+        total_pieces_wasted:
+          type: integer
+          description: |
+            Total pieces that cost money but were never delivered.
+            `total_pieces_returned + total_pieces_cancelled`
+          example: 87
+        total_amount_wasted:
+          type: number
+          format: float
+          description: |
+            Dollar cost of all wasted pieces. `total_pieces_wasted × $3.00`
+          example: 261.00
+        total_pieces_returned:
+          type: integer
+          description: |
+            Pieces where PostGrid `imbStatus = returned_to_sender`.
+            USPS could not deliver (undeliverable address, no forwarding) and returned the piece.
+            Source: `postcard_sends.imb_status`
+            Note: Only populated for US orders — PostGrid does not provide imbStatus for non-US addresses.
+          example: 42
+        total_amount_returned:
+          type: number
+          format: float
+          description: |
+            Dollar cost of returned pieces. `total_pieces_returned × $3.00`
+          example: 126.00
+        total_pieces_cancelled:
+          type: integer
+          description: |
+            Pieces where PostGrid `status = cancelled`.
+            The order was cancelled before it was ever printed or sent.
+            Source: `postcard_sends.postgrid_status`
+          example: 45
+        total_amount_cancelled:
+          type: number
+          format: float
+          description: |
+            Dollar cost of cancelled pieces. `total_pieces_cancelled × $3.00`
+          example: 135.00
+        total_pieces_delayed:
+          type: integer
+          description: |
+            Pieces that are still active (not `completed` or `cancelled`) but have not been
+            delivered after **7 or more working days** (Monday–Friday) since the order was created.
+            These represent spend that has not yet yielded a confirmed delivery and may never do so.
+            Source: `postcard_sends.created_at` compared to today using Mon–Fri day counting.
+          example: 130
+        total_amount_delayed:
+          type: number
+          format: float
+          description: |
+            Dollar cost of delayed pieces. `total_pieces_delayed × $3.00`
+          example: 390.00
+
+    ScanTrendAnalytics:
+      type: object
+      description: |
+        QR code scan trend analytics from Analytics V2.
+        Aggregates scan data across all campaigns in the organization that have a PostGrid
+        tracker linked via `/linkQRCodeToCampaign`.
+
+        **Data source:** PostGrid Tracker API (`visitCount`, `uniqueVisitCount`, `/visits` endpoint)
+
+        `scan_rate` uses the total number of postcards sent by the org (from `postcard_sends`)
+        as the denominator.
+
+        The shape of `breakdown` depends on the time filter sent in the request:
+
+        | Request filter | `breakdown` keys |
+        |---|---|
+        | `last_24hours: true` | 12 fixed 2-hour slot keys: `"12am"` … `"10pm"` |
+        | `last_week: true` | 7 fixed weekday keys: `"sunday_scans"` … `"saturday_scans"` |
+        | `last_month: true` | Dynamic daily keys: rolling 15-day window e.g. `"Apr 6"` … `"Apr 20"` |
+        | *(none / all_time)* | Dynamic monthly keys: last 6 months e.g. `"Nov 2025"` … `"Apr 2026"` |
+
+        All keys are always present (zero-filled). Keys are returned in chronological order.
+        All fields return `0` when no trackers are linked or no scans have happened yet.
+      required:
+        - total_scans
+        - unique_scans
+        - scan_rate
+        - breakdown
+      properties:
+        total_scans:
+          type: integer
+          description: |
+            Total QR code scans (visits) across all campaign trackers for this organization.
+            Sourced from PostGrid `visitCount` — counts every scan, including repeat scans by the same person.
+          example: 342
+        unique_scans:
+          type: integer
+          description: |
+            Unique QR code scanners across all campaign trackers for this organization.
+            Sourced from PostGrid `uniqueVisitCount` — counts each person once regardless of how many times they scanned.
+          example: 289
+        scan_rate:
+          type: number
+          format: float
+          description: |
+            `(total_scans / total_postcards_sent) × 100`, rounded to 2 decimal places.
+            Represents the percentage of sent postcards that resulted in at least one QR scan.
+            Returns `0` when no postcards have been sent.
+          example: 6.31
+        breakdown:
+          type: object
+          description: |
+            Scan counts grouped by time bucket. The keys depend on the period filter in the request.
+
+            **`last_24hours`** — 12 fixed 2-hour slots (midnight-anchored):
+            `"12am"`, `"2am"`, `"4am"`, `"6am"`, `"8am"`, `"10am"`,
+            `"12pm"`, `"2pm"`, `"4pm"`, `"6pm"`, `"8pm"`, `"10pm"`
+
+            **`last_week`** — 7 fixed weekday keys:
+            `"sunday_scans"`, `"monday_scans"`, `"tuesday_scans"`, `"wednesday_scans"`,
+            `"thursday_scans"`, `"friday_scans"`, `"saturday_scans"`
+
+            **`last_month`** — dynamic daily keys for a rolling 15-day window:
+            - If today ≤ 15th: keys run from the 1st of the month to today (e.g. `"Apr 1"` … `"Apr 15"`)
+            - If today > 15th: keys run from 14 days ago to today (e.g. `"Apr 6"` … `"Apr 20"`)
+
+            **`all_time`** *(default, no period flag)* — last 6 calendar months:
+            e.g. `"Nov 2025"`, `"Dec 2025"`, `"Jan 2026"`, `"Feb 2026"`, `"Mar 2026"`, `"Apr 2026"`
+
+            All keys are always present (zero-filled if no scans). Keys are in chronological order.
+            For `last_month` and `all_time`, iterate via `Object.entries(breakdown)` — keys are dynamic.
+          additionalProperties:
+            type: integer
+          example:
+            "Nov 2025": 34
+            "Dec 2025": 51
+            "Jan 2026": 28
+            "Feb 2026": 67
+            "Mar 2026": 89
+            "Apr 2026": 43
+
+    RecentScansAnalytics:
+      type: object
+      description: |
+        Recent QR code scan events from Analytics V2, grouped by campaign.
+        Returns the 10 most recent scans per campaign for this organization.
+        Only campaigns that have at least one scan are included.
+
+        **Data sources:**
+        - PostGrid `GET /trackers/{id}/visits` — scan events with timestamps
+        - `postcard_sends` table — delivery address and sequential postcard number
+
+        Campaigns are sorted by scan count descending (most active first).
+        Returns `data: []` when no campaigns have QR trackers linked.
+      required:
+        - data
+      properties:
+        data:
+          type: array
+          description: One entry per campaign that has recorded at least one QR scan.
+          items:
+            type: object
+            required:
+              - campaign_id
+              - campaign_name
+              - scans
+            properties:
+              campaign_id:
+                type: string
+                format: uuid
+                description: UUID of the campaign.
+                example: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+              campaign_name:
+                type: string
+                description: Display name of the campaign.
+                example: "Spring Promotion 2024"
+              scans:
+                type: array
+                description: |
+                  Up to 10 most recent scan events for this campaign, ordered by most recent first.
+                items:
+                  type: object
+                  required:
+                    - postcard_number
+                    - scan_address
+                    - scan_time_stamp
+                  properties:
+                    postcard_number:
+                      type: integer
+                      description: |
+                        Sequential position of the scanned postcard within its campaign,
+                        numbered in order of send date (1 = first postcard sent in the campaign).
+                        Falls back to the scan event index if the postcard ID cannot be matched
+                        in `postcard_sends`.
+                      example: 42
+                    scan_address:
+                      type: string
+                      description: |
+                        Delivery address the postcard was mailed to — the household that scanned
+                        the QR code. Sourced from `postcard_sends.address`.
+                        Falls back to PostGrid geo data (city, region) when unavailable.
+                      example: "512 Elm St, Austin, TX 78701"
+                    scan_time_stamp:
+                      type: string
+                      description: |
+                        Human-readable relative time since the scan occurred.
+                        Values: `"just now"`, `"N minute(s) ago"`, `"N hour(s) ago"`,
+                        `"N day(s) ago"`, `"N month(s) ago"`, or `"Unknown"` if no timestamp.
+                      example: "15 minutes ago"
+
+    CampaignLeaderboardAnalytics:
+      type: object
+      description: |
+        Campaign leaderboard from Analytics V2 — top 5 campaigns ranked by total QR code scans.
+
+        **Data sources:**
+        - PostGrid Tracker API `visitCount` per campaign tracker
+        - `campaigns.postcards_sent` for total postcards sent per campaign
+
+        Only campaigns with a PostGrid tracker linked (via `/linkQRCodeToCampaign`) and at least
+        one scan are included. Returns `leaderboard: []` when no qualifying campaigns exist.
+        Maximum 5 entries. Ranked by `total_scans` descending.
+      required:
+        - leaderboard
+      properties:
+        leaderboard:
+          type: array
+          maxItems: 5
+          description: Top campaigns ranked by total QR scan count, highest first.
+          items:
+            type: object
+            required:
+              - campaign_name
+              - total_scans
+              - total_postcards_sent
+              - scan_rate
+              - ranking_position
+            properties:
+              campaign_name:
+                type: string
+                description: Display name of the campaign.
+                example: "Campaign Awesome"
+              total_scans:
+                type: integer
+                description: |
+                  Total number of QR code scans (visits) for this campaign.
+                  Sourced from PostGrid `visitCount` — includes repeat scans by the same person.
+                example: 55
+              total_postcards_sent:
+                type: integer
+                description: |
+                  Total postcards sent for this campaign.
+                  Sourced from `campaigns.postcards_sent`, maintained by the postcard sending pipeline.
+                example: 5000
+              scan_rate:
+                type: number
+                format: float
+                description: |
+                  `(total_scans / total_postcards_sent) × 100`, rounded to 2 decimal places.
+                  Returns `0` when no postcards have been sent.
+                example: 1.10
+              ranking_position:
+                type: integer
+                minimum: 1
+                maximum: 5
+                description: |
+                  Rank within the leaderboard. `1` = campaign with the most scans.
+                example: 1
+
+    PerformanceDayPoint:
+      type: object
+      required:
+        - date
+        - day
+        - delivery_rate
+        - scan_rate
+        - total_volume
+      properties:
+        date:
+          type: string
+          format: date
+          description: Calendar date (YYYY-MM-DD).
+          example: "2026-04-22"
+        day:
+          type: string
+          description: Day of week name.
+          example: "Tuesday"
+        delivery_rate:
+          type: number
+          format: float
+          description: Fraction of postcards created on this date that reached `completed` status (0.0–1.0).
+          example: 0.8
+        scan_rate:
+          type: number
+          format: float
+          description: Scans that occurred on this date divided by total postcards sent org-wide (0.0–1.0).
+          example: 0.002
+        total_volume:
+          type: integer
+          description: Number of postcards created on this date.
+          example: 50
+
+    PerformanceWeekPoint:
+      type: object
+      required:
+        - week
+        - range
+        - delivery_rate
+        - scan_rate
+        - total_volume
+      properties:
+        week:
+          type: string
+          description: Week label within the month.
+          example: "Week 1"
+        range:
+          type: string
+          description: Day range within the month (e.g. "1-7", "29-30").
+          example: "1-7"
+        delivery_rate:
+          type: number
+          format: float
+          description: Fraction of postcards created in this week bucket that reached `completed` status (0.0–1.0).
+          example: 0.82
+        scan_rate:
+          type: number
+          format: float
+          description: Scans that occurred in this week bucket divided by total postcards sent org-wide (0.0–1.0).
+          example: 0.018
+        total_volume:
+          type: integer
+          description: Number of postcards created in this week bucket.
+          example: 220
+
+    PerformanceTrendAnalytics:
+      type: array
+      description: |
+        180 consecutive day entries covering the past 6 months (oldest → today).
+
+        **delivery_rate** = completed postcards created that day / total postcards created that day (0.0–1.0)
+        **scan_rate**     = scans that occurred that day / total postcards sent org-wide all time (0.0–1.0)
+        **total_volume**  = postcards created that day
+
+        `campaign_ids` filter scopes both postcard and tracker data. Time-based filters are ignored.
+      items:
+        $ref: "#/components/schemas/PerformanceDayPoint"
+
+    CampaignPerformanceAnalytics:
+      type: object
+      description: |
+        Top 5 best and bottom 5 worst performing campaigns ranked by total QR scans.
+
+        All campaigns with a PostGrid tracker are ranked globally (1 = most scans, N = least).
+        Unlike `campaign_leaderboard`, campaigns with 0 scans are included so that
+        the true worst performers are always surfaced.
+
+        **top_performers** — ranks 1–5 (up to 5 entries)
+        **bottom_performers** — last 5 ranks, never overlapping with top_performers.
+        If there are 5 or fewer campaigns total, `bottom_performers` is empty.
+
+        `scan_rate` = `(total_scans / total_postcards_sent)` as a fraction (0.0–1.0, 4 decimal places).
+      required:
+        - top_performers
+        - bottom_performers
+      properties:
+        top_performers:
+          type: array
+          maxItems: 5
+          description: Up to 5 best-performing campaigns, ranked 1–5 by total QR scans.
+          items:
+            type: object
+            required:
+              - campaign_name
+              - total_scans
+              - total_postcards_sent
+              - scan_rate
+              - ranking_position
+            properties:
+              campaign_name:
+                type: string
+                example: "Campaign Awesome"
+              total_scans:
+                type: integer
+                example: 55
+              total_postcards_sent:
+                type: integer
+                example: 5000
+              scan_rate:
+                type: number
+                format: float
+                description: total_scans / total_postcards_sent (0.0–1.0).
+                example: 0.011
+              ranking_position:
+                type: integer
+                minimum: 1
+                description: Global rank across all org campaigns (1 = most scans).
+                example: 1
+        bottom_performers:
+          type: array
+          maxItems: 5
+          description: |
+            Up to 5 worst-performing campaigns. Empty when there are 5 or fewer
+            campaigns total (they are all in top_performers). Ranking positions
+            continue from where top_performers ends (e.g. 6–10).
+          items:
+            type: object
+            required:
+              - campaign_name
+              - total_scans
+              - total_postcards_sent
+              - scan_rate
+              - ranking_position
+            properties:
+              campaign_name:
+                type: string
+                example: "Test Campaign"
+              total_scans:
+                type: integer
+                example: 0
+              total_postcards_sent:
+                type: integer
+                example: 50
+              scan_rate:
+                type: number
+                format: float
+                example: 0.0
+              ranking_position:
+                type: integer
+                description: Global rank — higher number means fewer scans.
+                example: 10
+
+    ScanTypeBucket:
+      type: object
+      required:
+        - count
+        - percentage
+      properties:
+        count:
+          type: integer
+          description: Raw scan count for this campaign target type in the period.
+          example: 6
+        percentage:
+          type: number
+          format: float
+          description: Fraction of total_scans for this type (0.0–1.0, 4 decimal places).
+          example: 0.5
+
+    ScanTypeBreakdown:
+      type: object
+      description: |
+        QR scan count and percentage breakdown by campaign target type for a given time period.
+        The three `percentage` values sum to 1.0 when total_scans > 0.
+        All counts are 0 and all percentages are 0.0 when no scans occurred in the period.
+      required:
+        - total_scans
+        - location_zone
+        - referral
+        - addresses_list
+      properties:
+        total_scans:
+          type: integer
+          description: Total QR scans across all campaign types in this period.
+          example: 12
+        location_zone:
+          $ref: "#/components/schemas/ScanTypeBucket"
+          description: Scans from campaigns with target type "Location Zone".
+        referral:
+          $ref: "#/components/schemas/ScanTypeBucket"
+          description: Scans from campaigns with target type "Referral".
+        addresses_list:
+          $ref: "#/components/schemas/ScanTypeBucket"
+          description: Scans from campaigns with target type "Addresses List".
+
+    ScanTrendByTypeDayPoint:
+      allOf:
+        - $ref: "#/components/schemas/ScanTypeBreakdown"
+        - type: object
+          required:
+            - date
+            - day
+          properties:
+            date:
+              type: string
+              format: date
+              example: "2026-04-22"
+            day:
+              type: string
+              example: "Tuesday"
+
+    ScanTrendByTypeWeekPoint:
+      allOf:
+        - $ref: "#/components/schemas/ScanTypeBreakdown"
+        - type: object
+          required:
+            - week
+            - range
+          properties:
+            week:
+              type: string
+              example: "Week 1"
+            range:
+              type: string
+              example: "1-7"
+
+    ScanTrendByTypeAnalytics:
+      type: array
+      description: |
+        180 consecutive day entries covering the past 6 months (oldest → today), showing QR scan
+        counts and rates broken down by campaign target type per day.
+
+        `percentage` = scans_for_type / total_postcards_sent_for_that_type (0.0–1.0, 4dp).
+
+        **Data source:** PostGrid GET /trackers/{id}/visits per campaign (up to 1000 visits per tracker).
+        Campaigns are grouped by `campaigns.campaign_target_type`.
+
+        `campaign_ids` filter scopes which campaigns are included. Time-based filters are ignored.
+      items:
+        $ref: "#/components/schemas/ScanTrendByTypeDayPoint"
+
+    PostcardOverviewSummary:
+      type: object
+      required:
+        - delivered_and_scanned
+        - delivered_but_not_scanned
+        - in_transit
+        - returned_cancelled
+      properties:
+        delivered_and_scanned:
+          type: integer
+          description: "Count of postcards that were delivered (postgrid_status=completed) AND had their QR code scanned. Estimated as min(campaign visitCount, delivered count)."
+          example: 34
+        delivered_but_not_scanned:
+          type: integer
+          description: "Count of postcards that were delivered but QR was never scanned. Computed as delivered - delivered_and_scanned."
+          example: 516
+        in_transit:
+          type: integer
+          description: "Count of postcards still in the delivery pipeline (postgrid_status in ready, printing, processed_for_delivery)."
+          example: 52
+        returned_cancelled:
+          type: integer
+          description: "Count of postcards that were returned to sender (imb_status=returned_to_sender) or cancelled (postgrid_status=cancelled)."
+          example: 95
+
+    CampaignOverviewEntry:
+      allOf:
+        - $ref: "#/components/schemas/PostcardOverviewSummary"
+        - type: object
+          required:
+            - campaign_id
+            - campaign_name
+            - total_postcards_sent
+          properties:
+            campaign_id:
+              type: string
+              format: uuid
+              example: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+            campaign_name:
+              type: string
+              example: "Spring Promotion 2024"
+            total_postcards_sent:
+              type: integer
+              description: "Total postcards sent for this campaign (from campaigns.postcards_sent)."
+              example: 500
+
+    PostcardOverviewAnalytics:
+      type: object
+      description: |
+        Per-campaign breakdown of how postcards ended up, plus an aggregate total_summary.
+
+        All four bucket fields are raw integer counts (not rates).
+        delivered_and_scanned is estimated as min(campaign visitCount from PostGrid tracker, delivered count).
+        Campaigns without a PostGrid tracker will show delivered_and_scanned=0.
+        campaign_ids filter limits which campaigns are included.
+      required:
+        - total_summary
+        - campaign_summary
+      properties:
+        total_summary:
+          $ref: "#/components/schemas/PostcardOverviewSummary"
+          description: Aggregated metrics across all campaigns.
+        campaign_summary:
+          type: array
+          description: One entry per campaign.
+          items:
+            $ref: "#/components/schemas/CampaignOverviewEntry"
+
+    ActiveCampaignEntry:
+      type: object
+      required:
+        - campaign_id
+        - campaign_name
+        - days_running
+        - in_flight
+        - scans
+        - delivery_rate
+        - status
+      properties:
+        campaign_id:
+          type: string
+          format: uuid
+          example: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+        campaign_name:
+          type: string
+          example: "Spring Promotion 2024"
+        days_running:
+          type: integer
+          description: Number of days since campaign.created_at.
+          example: 14
+        in_flight:
+          type: integer
+          description: Postcards with postgrid_status in ready, printing, processed_for_delivery.
+          example: 270
+        scans:
+          type: integer
+          description: Total QR scans from PostGrid tracker summary (visitCount).
+          example: 42
+        delivery_rate:
+          type: number
+          format: float
+          description: "completed_sends / campaigns.postcards_sent (0.0–1.0, 4 decimal places). 0 when postcards_sent is 0."
+          example: 0.82
+        status:
+          type: string
+          enum:
+            - "On Track"
+            - "Delayed"
+            - "At Risk"
+            - "Pending"
+          description: |
+            Derived from postcard_sends records and delivery_rate:
+              Pending  — no postcard_sends records exist for this campaign yet
+              On Track — delivery_rate ≥ 0.80
+              Delayed  — 0.60 ≤ delivery_rate < 0.80
+              At Risk  — delivery_rate < 0.60
+          example: "On Track"
+
+    ActiveCampaignsAnalytics:
+      type: array
+      description: |
+        One entry per campaign with status = "Active" in the org.
+        Returns an empty array when there are no active campaigns.
+        campaign_ids filter limits to active campaigns in that list.
+      items:
+        $ref: "#/components/schemas/ActiveCampaignEntry"
+
+    CampaignTypeEntry:
+      type: object
+      required:
+        - total_scans
+        - total_scans_percentage
+        - percent_of_subtotal
+      properties:
+        total_scans:
+          type: integer
+          description: "Raw QR scan count for this campaign target type."
+          example: 21
+        total_scans_percentage:
+          type: number
+          format: float
+          description: "total_scans / postcards_sent for this type (0.0–1.0, 4 decimal places). Scan rate relative to how many postcards of this type were sent."
+          example: 0.0412
+        percent_of_subtotal:
+          type: number
+          format: float
+          description: "total_scans for this type / total_scans across all types (0.0–1.0, 4 decimal places). The three types sum to 1.0 when total_scans > 0."
+          example: 0.6176
+
+    CampaignTypeDistributionAnalytics:
+      type: object
+      description: |
+        Aggregate QR scan totals broken down by campaign target type.
+        Each key is a campaign target type with its scan count, scan rate, and share of all scans.
+        campaign_ids filter limits which campaigns are included.
+        Time filters (last_24hours, last_week, last_month) scope the visit data from PostGrid.
+      required:
+        - location_zone
+        - referral
+        - addresses_list
+      properties:
+        location_zone:
+          $ref: "#/components/schemas/CampaignTypeEntry"
+          description: "Scans from campaigns with campaign_target_type = Location Zone."
+        referral:
+          $ref: "#/components/schemas/CampaignTypeEntry"
+          description: "Scans from campaigns with campaign_target_type = Referral."
+        addresses_list:
+          $ref: "#/components/schemas/CampaignTypeEntry"
+          description: "Scans from campaigns with campaign_target_type = Addresses List."
+
+    HourEntry:
+      type: object
+      required:
+        - hour
+        - scans
+      properties:
+        hour:
+          type: string
+          description: "Clock hour label in 12-hour format (e.g. '12AM', '01AM', '12PM', '03PM')."
+          example: "03PM"
+        scans:
+          type: integer
+          description: "Number of QR scans that occurred during this hour (UTC)."
+          example: 4
+
+    ScanActivityByHourAnalytics:
+      type: array
+      description: |
+        Today's QR scan counts broken down by clock hour (UTC).
+        Always starts at 12AM and ends at the current UTC hour (inclusive).
+        At 3:18 PM UTC the array contains 16 entries: 12AM through 03PM.
+        Each hour bucket covers the full 60-minute window (e.g. 03PM = 15:00–15:59 UTC).
+        campaign_ids filter scopes which campaign trackers are queried.
+        Time filters (last_24hours, last_week, last_month) are ignored — this type always shows today.
+      items:
+        $ref: "#/components/schemas/HourEntry"
+
+    DeviceEntry:
+      type: object
+      required:
+        - device_name
+        - device_scans
+        - scan_percentage
+      properties:
+        device_name:
+          type: string
+          enum:
+            - android
+            - iphone
+            - web
+          description: "Device category. 'android' = PostGrid device field contains 'android', 'iphone' = contains 'iphone'/'ipad'/'ios', 'web' = everything else including 'Device Unknown'."
+          example: "android"
+        device_scans:
+          type: integer
+          description: "Raw scan count for this device category."
+          example: 534
+        scan_percentage:
+          type: number
+          format: float
+          description: "device_scans / total_scans (0.0–1.0, 4 decimal places)."
+          example: 0.4282
+
+    DeviceDistributionAnalytics:
+      type: object
+      description: |
+        QR scan counts broken down by device type, sourced from PostGrid's visit.device field.
+        Always returns all three device categories (android, iphone, web) even if count is 0.
+        Devices with 'Device Unknown' from PostGrid fall into the 'web' bucket.
+        campaign_ids and time filters (last_24hours, last_week, last_month) are supported.
+      required:
+        - total_scans
+        - devices
+      properties:
+        total_scans:
+          type: integer
+          description: "Total QR scans across all device types."
+          example: 1247
+        devices:
+          type: array
+          description: "Always contains exactly three entries: android, iphone, web."
+          items:
+            $ref: "#/components/schemas/DeviceEntry"
+
+    CampaignEngagementEntry:
+      type: object
+      required:
+        - campaign_id
+        - campaign_name
+        - time_since_last_scan
+        - scans_in_24hours
+        - scans_total
+        - postcards_sent
+        - status
+      properties:
+        campaign_id:
+          type: string
+          format: uuid
+          description: "The campaign's unique identifier."
+          example: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+        campaign_name:
+          type: string
+          description: "Human-readable campaign name."
+          example: "Spring Referral Push"
+        time_since_last_scan:
+          type: string
+          nullable: true
+          description: "Human-readable time since the most recent QR scan (e.g. '3h ago', '2d ago', 'just now'). null if the campaign has never been scanned."
+          example: "3h ago"
+        scans_in_24hours:
+          type: integer
+          description: "Number of QR scans recorded in the last 24 hours."
+          example: 14
+        scans_total:
+          type: integer
+          description: "Total QR scans for this campaign (from PostGrid tracker visitCount)."
+          example: 312
+        postcards_sent:
+          type: integer
+          description: "Total number of postcards intended to be sent for this campaign (campaigns.postcards_sent)."
+          example: 800
+        status:
+          type: string
+          enum:
+            - in-flight
+            - completed
+          description: "Campaign delivery status. 'in-flight' if any postcard_sends record for this campaign has a status of ready, printing, or processed_for_delivery; 'completed' otherwise."
+          example: "in-flight"
+
+    CampaignEngagementAnalytics:
+      type: array
+      description: |
+        Per-campaign engagement summary. One entry per campaign belonging to the organization.
+        Includes scan recency, 24-hour scan velocity, lifetime scan total, postcards sent, and delivery status.
+        campaign_ids filter narrows results to the specified campaigns.
+      items:
+        $ref: "#/components/schemas/CampaignEngagementEntry"
+
     GlobalExclusionsAnalytics:
       type: object
       description: "Global exclusions analytics data"
@@ -16696,6 +19952,10 @@ components:
           type: string
           format: date-time
           description: Optional start date for the campaign
+        target_type:
+          type: string
+          enum: [Referrals, Location Zones, Address Lists]
+          description: Chosen targeting method for the campaign. Inferred if omitted (defaults to Location Zone, or Referrals if referral_id provided).
 
     CampaignV2Step2:
       type: object
@@ -16722,7 +19982,6 @@ components:
       required:
         - step
         - campaign_id
-        - zone_id
       properties:
         step:
           type: integer
@@ -16735,7 +19994,11 @@ components:
         zone_id:
           type: string
           format: uuid
-          description: UUID of location zone
+          description: UUID of location zone (required for Location Zone campaigns)
+        csv_address_list_id:
+          type: string
+          format: uuid
+          description: UUID of uploaded address list (required for Address List campaigns)
 
     CampaignV2Step4:
       type: object
@@ -16800,6 +20063,240 @@ components:
           type: boolean
         has_previous_page:
           type: boolean
+
+    AddressUpdate:
+      type: object
+      properties:
+        address_line1:
+          type: string
+        address_line2:
+          type: string
+        city:
+          type: string
+        state:
+          type: string
+        zip:
+          type: string
+
+    AddressRow:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        address_line1:
+          type: string
+        address_line2:
+          type: string
+        city:
+          type: string
+        state:
+          type: string
+        zip:
+          type: string
+        lat:
+          type: number
+        long:
+          type: number
+        is_valid:
+          type: boolean
+        is_included:
+          type: boolean
+        is_deleted:
+          type: boolean
+        is_duplicate:
+          type: boolean
+        status:
+          type: string
+          enum: [valid, invalid, duplicate]
+        error_message:
+          type: string
+
+    AddressListMetadata:
+      type: object
+      properties:
+        valid_count:
+          type: integer
+        invalid_count:
+          type: integer
+        duplicate_count:
+          type: integer
+        deleted_count:
+          type: integer
+        excluded_duplicates_count:
+          type: integer
+        last_operation:
+          type: string
+        last_validation_batch_size:
+          type: integer
+
+    HistoryEntry:
+      type: object
+      properties:
+        operation:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        status:
+          type: string
+        details:
+          type: object
+
+    CSVAddressListDetailsResponse:
+      type: object
+      properties:
+        status:
+          type: string
+        id:
+          type: string
+          format: uuid
+        list_name:
+          type: string
+        is_editing:
+          type: boolean
+        skip_address_verification:
+          type: boolean
+        verification_performed:
+          type: boolean
+        total_count:
+          type: integer
+        included_count:
+          type: integer
+        excluded_count:
+          type: integer
+        verified_address_count:
+          type: integer
+        included:
+          type: array
+          items:
+            $ref: "#/components/schemas/AddressRow"
+        excluded:
+          type: array
+          items:
+            $ref: "#/components/schemas/AddressRow"
+    
+    ValidatedAddress:
+      type: object
+      properties:
+        lat:
+          type: number
+        long:
+          type: number
+        osm_id:
+          type: string
+          nullable: true
+        status:
+          type: string
+        address:
+          type: string
+        verified:
+          type: boolean
+        zoneType:
+          type: string
+        residential:
+          type: boolean
+        propertyType:
+          type: string
+        targeting_zone_name:
+          type: string
+        distanceFromCenter:
+          type: number
+
+    GetCoordinatesResponse:
+      type: object
+      properties:
+        status:
+          type: string
+        message:
+          type: string
+        center:
+          type: object
+          properties:
+            lat:
+              type: number
+            long:
+              type: number
+            radius:
+              type: number
+        mode:
+          type: string
+        searchType:
+          type: string
+        metadata:
+          type: object
+          properties:
+            totalBuildingsFound:
+              type: integer
+            addressesReturned:
+              type: integer
+            residentialCount:
+              type: integer
+            otherCount:
+              type: integer
+            verified_count:
+              type: integer
+            unverified_count:
+              type: integer
+            processingTimeMs:
+              type: number
+        addresses:
+          type: array
+          items:
+            $ref: "#/components/schemas/ValidatedAddress"
+
+    GetCSVAddressListResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          example: success
+        message:
+          type: string
+          example: Address list retrieved successfully
+        data:
+          $ref: "#/components/schemas/CSVAddressList"
+
+    CSVAddressList:
+      type: object
+      properties:
+        csv_address_list_id:
+          type: string
+          format: uuid
+        id:
+          type: string
+          format: uuid
+        organization_id:
+          type: string
+          format: uuid
+        list_name:
+          type: string
+        is_editing:
+          type: boolean
+        metadata:
+          $ref: "#/components/schemas/AddressListMetadata"
+        addresses:
+          type: array
+          items:
+            $ref: "#/components/schemas/ValidatedAddress"
+        center:
+          type: object
+          properties:
+            lat:
+              type: number
+            lng:
+              type: number
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        created_at_tz:
+          $ref: "#/components/schemas/TimezoneEnrichment"
+        updated_at_tz:
+          $ref: "#/components/schemas/TimezoneEnrichment"
 
   securitySchemes:
     SupabaseAuth:

@@ -32,6 +32,8 @@ interface RequestBody {
   html_back?: string;
   description?: string;
   postcardSize?: '4x6' | '6x9' | '6x11';
+  show_restriction_annotations_tooltips?: boolean;
+  show_restriction_area_warning?: boolean;
 }
 
 Deno.serve(async (req) => {
@@ -61,21 +63,24 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Get user's organization
-    const organizationId = await getUserOrganizationId(supabase, user.userId);
-    if (!organizationId) {
-      return errorResponse(
-        "NO_ORGANIZATION",
-        "User is not associated with any organization",
-        403
-      );
+    // Get user's organization (skip for service role)
+    let organizationId: string | null = null;
+    if (!user.isServiceRole) {
+      organizationId = await getUserOrganizationId(supabase, user.userId);
+      if (!organizationId) {
+        return errorResponse(
+          "NO_ORGANIZATION",
+          "User is not associated with any organization",
+          403
+        );
+      }
     }
 
     // Parse request body
     let requestBody: RequestBody;
     try {
       requestBody = await req.json();
-    } catch (parseError) {
+    } catch (_parseError) {
       return errorResponse(
         "INVALID_INPUT",
         "Invalid JSON in request body",
@@ -83,7 +88,7 @@ Deno.serve(async (req) => {
       );
     }
 
-    const { template_bundle_id, html_front, html_back, description, postcardSize } = requestBody;
+    const { template_bundle_id, html_front, html_back, description, postcardSize, show_restriction_annotations_tooltips, show_restriction_area_warning } = requestBody;
 
     // Read PostGrid API key from environment
     const postgridApiKey = Deno.env.get("POSTGRID_POSTCARD_API_KEY");
@@ -106,10 +111,11 @@ Deno.serve(async (req) => {
     }
 
     // Validate at least one update field provided
-    if (!html_front && !html_back && !description && !postcardSize) {
+    if (!html_front && !html_back && !description && !postcardSize &&
+        show_restriction_annotations_tooltips === undefined && show_restriction_area_warning === undefined) {
       return errorResponse(
         "INVALID_INPUT",
-        "At least one of html_front, html_back, description, or postcardSize must be provided",
+        "At least one of html_front, html_back, description, postcardSize, show_restriction_annotations_tooltips, or show_restriction_area_warning must be provided",
         400
       );
     }
@@ -143,21 +149,24 @@ Deno.serve(async (req) => {
     }
 
     // Check ownership - must be user's org or universal (and user is ADMIN)
-    if (bundle.is_universal) {
-      const isUserAdmin = await isAdmin(user.userId);
-      if (!isUserAdmin) {
+    // Internal services using service role key bypass these checks
+    if (!user.isServiceRole) {
+      if (bundle.is_universal) {
+        const isUserAdmin = await isAdmin(user.userId);
+        if (!isUserAdmin) {
+          return errorResponse(
+            "FORBIDDEN",
+            "Only ADMIN users can update universal template bundles",
+            403
+          );
+        }
+      } else if (bundle.organization_id !== organizationId) {
         return errorResponse(
           "FORBIDDEN",
-          "Only ADMIN users can update universal template bundles",
+          "Bundle doesn't belong to your organization",
           403
         );
       }
-    } else if (bundle.organization_id !== organizationId) {
-      return errorResponse(
-        "FORBIDDEN",
-        "Bundle doesn't belong to your organization",
-        403
-      );
     }
 
     const frontTemplate = bundle.front;
@@ -314,10 +323,17 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Update bundle timestamp
+    // Update bundle (timestamp + any bundle-level fields)
+    const bundleUpdate: any = { updated_at: new Date().toISOString() };
+    if (show_restriction_annotations_tooltips !== undefined) {
+      bundleUpdate.show_restriction_annotations_tooltips = show_restriction_annotations_tooltips;
+    }
+    if (show_restriction_area_warning !== undefined) {
+      bundleUpdate.show_restriction_area_warning = show_restriction_area_warning;
+    }
     await supabase
       .from("template_bundles")
-      .update({ updated_at: new Date().toISOString() })
+      .update(bundleUpdate)
       .eq("id", template_bundle_id);
 
     // Fetch updated bundle
@@ -365,6 +381,8 @@ Deno.serve(async (req) => {
       bundle: {
         id: updatedBundle.id,
         isUniversal: updatedBundle.is_universal,
+        showRestrictionAnnotationsTooltips: updatedBundle.show_restriction_annotations_tooltips ?? false,
+        showRestrictionAreaWarning: updatedBundle.show_restriction_area_warning ?? false,
         front_template: {
           id: updatedBundle.front.id,
           postgrid_template_id: updatedBundle.front.postgrid_template_id,
@@ -409,7 +427,7 @@ Deno.serve(async (req) => {
     console.error("Unexpected error in updateTemplateBundle:", error);
     return errorResponse(
       "INTERNAL_ERROR",
-      `An unexpected error occurred: ${error.message}`,
+      `An unexpected error occurred: ${error instanceof Error ? error.message : String(error)}`,
       500
     );
   }

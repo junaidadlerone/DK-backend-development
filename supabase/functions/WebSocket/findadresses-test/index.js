@@ -612,9 +612,10 @@ async function handleGetAddressesFromZone(ws, message)
         {
             try
             {
-                // Get user profile from 'profiles' table
+                // 1. Get user profile (includes active_organization_id)
+                console.log('Fetching user profile for organization lookup...');
                 const profileResponse = await fetch(
-                    `${SUPABASE_URL}/rest/v1/profiles?id=eq.${userFromToken.userId}&select=id,role,full_name,created_at,updated_at`,
+                    `${SUPABASE_URL}/rest/v1/profiles?id=eq.${userFromToken.userId}&select=id,role,full_name,created_at,updated_at,active_organization_id`,
                     {
                         headers: {
                             'apikey': SUPABASE_SERVICE_ROLE_KEY,
@@ -638,11 +639,10 @@ async function handleGetAddressesFromZone(ws, message)
                             updated_at: profile.updated_at
                         };
 
-                        // helper to check if user is in org members
-                        const checkOrgMembers = async (orgId, userId) =>
-                        {
+                        // Helper to verify membership
+                        const verifyMembership = async (orgId, userId) => {
                             const resp = await fetch(
-                                `${SUPABASE_URL}/rest/v1/organizations?id=eq.${orgId}&select=organization_members`,
+                                `${SUPABASE_URL}/rest/v1/organizations?id=eq.${orgId}&select=id,owner_id,organization_members`,
                                 {
                                     headers: {
                                         'apikey': SUPABASE_SERVICE_ROLE_KEY,
@@ -651,38 +651,31 @@ async function handleGetAddressesFromZone(ws, message)
                                 }
                             );
                             if (!resp.ok) return false;
-                            const data = await resp.json();
-                            if (!data || !data.length) return false;
-                            const members = data[0].organization_members || [];
-                            return Array.isArray(members) && members.some(m => m.member_uid === userId);
-                        }
+                            const orgs = await resp.json();
+                            if (!orgs || orgs.length === 0) return false;
+                            const org = orgs[0];
+                            if (org.owner_id === userId) return true;
+                            const members = org.organization_members || [];
+                            return Array.isArray(members) && members.some(m => m && m.member_uid === userId);
+                        };
 
-                        // Get organization ID
-                        // 1. Check if owner
-                        const ownerOrgResponse = await fetch(
-                            `${SUPABASE_URL}/rest/v1/organizations?owner_id=eq.${userFromToken.userId}&select=id`,
-                            {
-                                headers: {
-                                    'apikey': SUPABASE_SERVICE_ROLE_KEY,
-                                    'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`
-                                }
-                            }
-                        );
-
-                        if (ownerOrgResponse.ok)
-                        {
-                            const ownerOrgs = await ownerOrgResponse.json();
-                            if (ownerOrgs && ownerOrgs.length > 0)
-                            {
-                                organizationId = ownerOrgs[0].id;
+                        // 2. Check active_organization_id first (Reliable for multi-org users)
+                        if (profile.active_organization_id) {
+                            console.log(`Found active_organization_id ${profile.active_organization_id} in profile. Verifying...`);
+                            const isValid = await verifyMembership(profile.active_organization_id, userFromToken.userId);
+                            if (isValid) {
+                                console.log(`Verified active_organization_id ${profile.active_organization_id} is valid for user.`);
+                                organizationId = profile.active_organization_id;
+                            } else {
+                                console.warn(`active_organization_id ${profile.active_organization_id} is not valid for user. Falling back to scan.`);
                             }
                         }
 
-                        // 2. If not owner, check member
-                        if (!organizationId)
-                        {
-                            const memberOrgResponse = await fetch(
-                                `${SUPABASE_URL}/rest/v1/organizations?select=id,organization_members&organization_members=not.is.null`,
+                        // 3. Fallback scan if no active org or not verified
+                        if (!organizationId) {
+                            console.log('Scanning organizations for ownership/membership...');
+                            const allOrgsResponse = await fetch(
+                                `${SUPABASE_URL}/rest/v1/organizations?select=id,owner_id,organization_members`,
                                 {
                                     headers: {
                                         'apikey': SUPABASE_SERVICE_ROLE_KEY,
@@ -691,30 +684,49 @@ async function handleGetAddressesFromZone(ws, message)
                                 }
                             );
 
-                            if (memberOrgResponse.ok)
-                            {
-                                const memberOrgs = await memberOrgResponse.json();
-                                for (const org of memberOrgs)
-                                {
-                                    const members = org.organization_members || [];
-                                    if (Array.isArray(members))
-                                    {
-                                        const isMember = members.some(m => m && typeof m === 'object' && m.member_uid === userFromToken.userId);
-                                        if (isMember)
-                                        {
-                                            organizationId = org.id;
-                                            break;
-                                        }
+                            if (allOrgsResponse.ok) {
+                                const allOrgs = await allOrgsResponse.json();
+                                for (const org of allOrgs) {
+                                    if (org.owner_id === userFromToken.userId) {
+                                        organizationId = org.id;
+                                        break;
                                     }
+                                    const members = org.organization_members || [];
+                                    if (Array.isArray(members) && members.some(m => m && m.member_uid === userFromToken.userId)) {
+                                        organizationId = org.id;
+                                        break;
+                                    }
+                                }
+                            }
+
+                            // 4. Update profile with found org for next time
+                            if (organizationId) {
+                                console.log(`Found organization ${organizationId} via scan. Updating active_organization_id on profile...`);
+                                try {
+                                    await fetch(`${SUPABASE_URL}/rest/v1/profiles?id=eq.${userFromToken.userId}`, {
+                                        method: 'PATCH',
+                                        headers: {
+                                            'Content-Type': 'application/json',
+                                            'apikey': SUPABASE_SERVICE_ROLE_KEY,
+                                            'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`
+                                        },
+                                        body: JSON.stringify({ active_organization_id: organizationId })
+                                    });
+                                } catch (patchError) {
+                                    console.error('Error updating profile active_organization_id:', patchError);
                                 }
                             }
                         }
 
-                        console.log('Successfully retrieved user info:', createdByInfo);
+                        if (organizationId) {
+                            console.log(`Final Organization ID for zone creation: ${organizationId}`);
+                        } else {
+                            console.error(`Could not determine organization for user ${userFromToken.userId}`);
+                        }
                     } else
                     {
                         console.error('No profile found for user:', userFromToken.userId);
-                        // Fallback
+                        // Fallback createdByInfo if no profile
                         createdByInfo = {
                             id: userFromToken.userId,
                             user_role: 'TECHNICIAN',
@@ -730,7 +742,7 @@ async function handleGetAddressesFromZone(ws, message)
                 }
             } catch (userError)
             {
-                console.error('Error getting user profile:', userError);
+                console.error('Error getting user profile/org:', userError);
             }
         } else
         {

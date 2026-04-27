@@ -46,7 +46,7 @@ Deno.serve(async (req) => {
     const supabase = createSupabaseClient();
 
     // Parse request body
-    let body: any;
+    let body: { campaign_id: string };
     try {
       body = await req.json();
     } catch (parseError) {
@@ -88,6 +88,7 @@ Deno.serve(async (req) => {
         id,
         campaign_id,
         zone_id,
+        csv_address_list_id,
         validated_addresses,
         final_cost,
         amount_per_postcard,
@@ -118,10 +119,25 @@ Deno.serve(async (req) => {
       );
     }
 
+    // Fetch is_editing and skip_verification status if csv_address_list_id exists
+    let is_editing = false;
+    let skip_verification = false;
+    if (launchData.csv_address_list_id) {
+      const { data: listData } = await supabase
+        .from("campaign_csv_address_lists")
+        .select("is_editing, skip_address_verification")
+        .eq("id", launchData.csv_address_list_id)
+        .maybeSingle();
+      if (listData) {
+        is_editing = listData.is_editing;
+        skip_verification = listData.skip_address_verification === true;
+      }
+    }
+
     // Fetch campaign details (front_template_id, back_template_id, business_data, offer_data)
     const { data: campaign, error: campaignError } = await supabase
       .from("campaigns")
-      .select("front_template_id, back_template_id, business_data, offer_data")
+      .select("front_template_id, back_template_id, business_data, offer_data, postgrid_tracker_id")
       .eq("id", campaign_id)
       .single();
 
@@ -139,7 +155,7 @@ Deno.serve(async (req) => {
     if (campaign.front_template_id) {
       const { data: frontTemplate } = await supabase
         .from("templates")
-        .select("postcard_size")
+        .select("postcard_size, html")
         .eq("postgrid_template_id", campaign.front_template_id)
         .maybeSingle();
 
@@ -151,11 +167,41 @@ Deno.serve(async (req) => {
     if (campaign.back_template_id) {
       const { data: backTemplate } = await supabase
         .from("templates")
-        .select("postcard_size")
+        .select("postcard_size, html")
         .eq("postgrid_template_id", campaign.back_template_id)
         .maybeSingle();
 
       backTemplateSize = backTemplate?.postcard_size || null;
+    }
+
+    // Resolve template_bundle_id
+    let template_bundle_id: string | null = null;
+    if (campaign.front_template_id && campaign.back_template_id) {
+      const templateIds = Array.from(new Set([campaign.front_template_id, campaign.back_template_id]));
+      
+      const { data: templateRows } = await supabase
+        .from("templates")
+        .select("id, postgrid_template_id")
+        .in("postgrid_template_id", templateIds);
+
+      if (templateRows && templateRows.length === templateIds.length) {
+        const frontRow = (templateRows as { id: string, postgrid_template_id: string }[]).find(t => t.postgrid_template_id === campaign.front_template_id);
+        const backRow  = (templateRows as { id: string, postgrid_template_id: string }[]).find(t => t.postgrid_template_id === campaign.back_template_id);
+
+        if (frontRow && backRow) {
+          const { data: bundle } = await supabase
+            .from("template_bundles")
+            .select("id")
+            .eq("template_front_id", frontRow.id)
+            .eq("template_back_id", backRow.id)
+            .maybeSingle();
+
+          template_bundle_id = bundle?.id ?? null;
+          console.log(`[DEBUG] Resolved bundle ${template_bundle_id} from PostGrid templates ${campaign.front_template_id} / ${campaign.back_template_id}`);
+        }
+      } else {
+        console.log(`[DEBUG] Could not find all template UUIDs for PostGrid IDs: ${JSON.stringify(templateIds)}. Found: ${JSON.stringify(templateRows)}`);
+      }
     }
 
     const processingTimeMs = Date.now() - startTime;
@@ -169,7 +215,11 @@ Deno.serve(async (req) => {
       launch_data: {
         id: launchData.id,
         campaign_id: launchData.campaign_id,
+        campaign_target_type: campaign.campaign_target_type,
         zone_id: launchData.zone_id,
+        csv_address_list_id: launchData.csv_address_list_id,
+        is_editing,
+        skip_verification,
         validated_addresses: launchData.validated_addresses,
         final_cost: finalCost,
         amount_per_postcard: amountPerPostcard,
@@ -191,10 +241,12 @@ Deno.serve(async (req) => {
         updated_at_tz: enrichTimestamp(launchData.updated_at, preferences.timezone)
       },
       campaign_templates: {
+        template_bundle_id,
         front_template_id: campaign.front_template_id,
         front_template_size: frontTemplateSize,
         back_template_id: campaign.back_template_id,
-        back_template_size: backTemplateSize
+        back_template_size: backTemplateSize,
+        postgrid_tracker_id: campaign.postgrid_tracker_id
       },
       business_data: campaign.business_data,
       offer_data: campaign.offer_data,

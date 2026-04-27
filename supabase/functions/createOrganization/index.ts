@@ -50,6 +50,7 @@ Deno.serve(async (req) => {
       .insert({
         owner_id: user.userId,
         organization_members: [],
+        is_agency: false,
       })
       .select()
       .single();

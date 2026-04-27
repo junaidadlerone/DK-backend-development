@@ -1,55 +1,53 @@
 import { createSupabaseClient } from "../_shared/client.ts";
 
 /**
- * Sync Linkly Analytics Cron Job
- * Runs daily to fetch click analytics from Linkly and update campaign metrics
+ * Analytics Sync Cron Job (PostGrid & Linkly)
+ * Runs daily to fetch click analytics from PostGrid and Linkly trackers and update campaign metrics
  *
  * Process:
- * 1. Fetch all campaigns with tracker_id (not null)
- * 2. For each campaign, call Linkly API to get click stats
- * 3. Calculate total leads (sum of all y values)
- * 4. Calculate scan_rate = (leads_gen / postcards_sent) * 100
- * 5. Calculate estimated ROI = ((revenue - cost) / cost) * 100
+ * 1. Fetch all campaigns with postgrid_tracker_id (not null)
+ * 2. Determine provider based on ID prefix (tracker_ for PostGrid, else Linkly)
+ * 3. Fetch analytics data from the respective provider's API
+ * 4. Calculate total leads (visitCount for PostGrid, summed y-values for Linkly)
+ * 5. Calculate scan_rate = (leads_gen / postcards_sent) * 100
+ * 6. Calculate estimated ROI = ((revenue - cost) / cost) * 100
  *    - Cost: postcards_sent * $3 per postcard
  *    - Revenue: leads_gen * $1000 assumed revenue per lead
- * 6. Update campaign with new metrics (leads_gen, scan_rate, roi)
+ * 7. Update campaign with new metrics (leads_gen, scan_rate, roi)
  */
 
-interface LinklyTrafficData {
-  traffic: Array<{
-    y: number;
-    t: string;
-  }>;
+interface PostGridTrackerData {
+  id: string;
+  uniqueVisitCount: number;
+  visitCount: number;
 }
 
 Deno.serve(async (req) => {
-  console.log("Starting Linkly analytics sync...");
+  console.log("Starting analytics sync (PostGrid)...");
 
   try {
     // Create Supabase client
     const supabase = createSupabaseClient();
 
-    const linklyApiKey = Deno.env.get("LINKLY_API_KEY");
-    const linklyWorkspaceId = Deno.env.get("LINKLY_WORKSPACE_ID");
+    const postgridApiKey = Deno.env.get("POSTGRID_POSTCARD_API_KEY") || Deno.env.get("VITE_POSTGRID_POSTCARD_API_KEY");
     const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-
-    if (!linklyApiKey || !linklyWorkspaceId) {
-      console.error("Linkly credentials not found in headers or environment");
-      return new Response(
-        JSON.stringify({
-          error:
-            "Missing Linkly credentials (x-linkly-api-key, x-linkly-workspace-id headers or env vars)",
-          success: false,
-        }),
-        { status: 500, headers: { "Content-Type": "application/json" } },
-      );
-    }
 
     if (!serviceRoleKey) {
       console.error("SUPABASE_SERVICE_ROLE_KEY not set in environment");
       return new Response(
         JSON.stringify({
           error: "Missing SUPABASE_SERVICE_ROLE_KEY in environment",
+          success: false,
+        }),
+        { status: 500, headers: { "Content-Type": "application/json" } },
+      );
+    }
+
+    if (!postgridApiKey) {
+      console.error("PostGrid API Key not found in environment");
+      return new Response(
+        JSON.stringify({
+          error: "Missing PostGrid API Key",
           success: false,
         }),
         { status: 500, headers: { "Content-Type": "application/json" } },
@@ -75,10 +73,10 @@ Deno.serve(async (req) => {
     }
 
     if (!campaigns || campaigns.length === 0) {
-      console.log("No campaigns with tracker_id found");
+      console.log("No campaigns with PostGrid trackers found");
       return new Response(
         JSON.stringify({
-          message: "No campaigns to sync",
+          message: "No PostGrid campaigns to sync",
           success: true,
           synced: 0,
         }),
@@ -86,7 +84,7 @@ Deno.serve(async (req) => {
       );
     }
 
-    console.log(`Found ${campaigns.length} campaigns to sync`);
+    console.log(`Found ${campaigns.length} PostGrid campaigns to sync`);
 
     let successCount = 0;
     let errorCount = 0;
@@ -95,89 +93,37 @@ Deno.serve(async (req) => {
     // Process each campaign
     for (const campaign of campaigns) {
       try {
-        console.log(
-          `Syncing campaign ${campaign.id} with tracker ${campaign.postgrid_tracker_id}`,
-        );
+        const trackerId = campaign.postgrid_tracker_id as string;
+        let totalClicks = 0;
 
-        // Call Linkly API to get click stats
-        const linklyUrl =
-          `https://app.linklyhq.com/api/v1/workspace/${linklyWorkspaceId}/clicks?link_id=${campaign.postgrid_tracker_id}&bots=false&unique=false&format=json&timezone=America%2FNew_York&frequency=day&api_key=${encodeURIComponent(linklyApiKey)}`;
-
-        console.log(`[Campaign ${campaign.id}] Requesting Linkly data...`);
-        console.log(
-          `[Campaign ${campaign.id}] URL: ${linklyUrl.replace(linklyApiKey, 'MASKED_KEY')}`,
-        );
-
-        const linklyResponse = await fetch(linklyUrl, {
-          method: "GET",
-          headers: {
-            "accept": "application/json",
-          },
+        console.log(`[Campaign ${campaign.id}] Fetching PostGrid analytics for tracker ${trackerId}`);
+        const postgridUrl = `https://api.postgrid.com/print-mail/v1/trackers/${trackerId}`;
+        const pgResponse = await fetch(postgridUrl, {
+          headers: { "x-api-key": postgridApiKey }
         });
 
-        if (!linklyResponse.ok) {
-          const errorText = await linklyResponse.text();
-          const errorMsg = `Campaign ${campaign.id}: Linkly API ${linklyResponse.status} - ${errorText}`;
-          console.error(errorMsg);
-          errorMessages.push(errorMsg);
-          errorCount++;
-          continue;
+        if (!pgResponse.ok) {
+          const errorText = await pgResponse.text();
+          throw new Error(`PostGrid API ${pgResponse.status} - ${errorText}`);
         }
 
-        const linklyData: LinklyTrafficData = await linklyResponse.json();
+        const pgData: PostGridTrackerData = await pgResponse.json();
+        totalClicks = pgData.visitCount || 0;
 
-        // Log the raw traffic data to verify structure and values
-        console.log(
-          `[Campaign ${campaign.id}] Raw Linkly Response Traffic Length: ${linklyData.traffic?.length}`,
-        );
-        if (linklyData.traffic && linklyData.traffic.length > 0) {
-          const lastDay = linklyData.traffic[linklyData.traffic.length - 1];
-          console.log(
-            `[Campaign ${campaign.id}] Last day data: ${
-              JSON.stringify(lastDay)
-            }`,
-          );
-        } else {
-          console.log(
-            `[Campaign ${campaign.id}] Traffic array is empty or undefined.`,
-          );
-        }
+        console.log(`[Campaign ${campaign.id}] Calculated Total Clicks: ${totalClicks}`);
 
-        // Calculate total leads (sum of all y values)
-        const totalClicks = linklyData.traffic.reduce(
-          (sum, item) => sum + item.y,
-          0,
-        );
-        console.log(
-          `[Campaign ${campaign.id}] Calculated Total Clicks: ${totalClicks}`,
-        );
-
-        // Calculate scan_rate = (leads_gen / postcards_sent) * 100
-        let scanRate = 0;
-        if (campaign.postcards_sent > 0) {
-          scanRate = (totalClicks / campaign.postcards_sent) * 100;
-        }
-
-        // Calculate estimated ROI
-        // Cost: postcards_sent * $3 per postcard
-        // Revenue: leads_gen * $1000 assumed revenue per lead
-        // ROI = ((revenue - cost) / cost) * 100
+        // Calculate metrics
+        const postcardsSent = campaign.postcards_sent || 0;
+        const scanRate = postcardsSent > 0 ? (totalClicks / postcardsSent) * 100 : 0;
+        
+        // ROI Calculation
         const costPerPostcard = 3;
         const assumedRevenuePerLead = 1000;
-        let estimatedROI = 0;
-
-        const totalCost = campaign.postcards_sent * costPerPostcard;
+        const totalCost = postcardsSent * costPerPostcard;
         const estimatedRevenue = totalClicks * assumedRevenuePerLead;
+        const estimatedROI = totalCost > 0 ? ((estimatedRevenue - totalCost) / totalCost) * 100 : 0;
 
-        if (totalCost > 0) {
-          estimatedROI = ((estimatedRevenue - totalCost) / totalCost) * 100;
-        }
-
-        console.log(
-          `[Campaign ${campaign.id}] Updating metrics - Leads: ${totalClicks}, Scan Rate: ${scanRate}, ROI: ${estimatedROI}`,
-        );
-
-        // Update campaign with new metrics
+        // Update campaign
         const { error: updateError } = await supabase
           .from("campaigns")
           .update({
@@ -189,37 +135,25 @@ Deno.serve(async (req) => {
           .eq("id", campaign.id);
 
         if (updateError) {
-          const errorMsg = `Campaign ${campaign.id}: DB update error - ${updateError.message}`;
-          console.error(errorMsg);
-          errorMessages.push(errorMsg);
-          errorCount++;
-        } else {
-          console.log(
-            `Successfully synced campaign ${campaign.id}: ${totalClicks} leads, ${
-              scanRate.toFixed(2)
-            }% scan rate, ${estimatedROI.toFixed(2)}% ROI`,
-          );
-          // console.log(`Update result:`, updateData);
-          successCount++;
+          throw new Error(`DB update error - ${updateError.message}`);
         }
 
-        // Add 1 second delay to avoid Linkly Rate Limits (429)
-        await new Promise((resolve) => setTimeout(resolve, 1000));
+        console.log(`Successfully synced campaign ${campaign.id} (PostGrid): ${totalClicks} leads`);
+        successCount++;
+
+        // Rate limiting delay
+        await new Promise((resolve) => setTimeout(resolve, 200));
       } catch (error) {
-        const errorMsg = `Campaign ${campaign.id}: ${error instanceof Error ? error.message : 'Unknown error'}`;
+        const errorMsg = `Campaign ${campaign.id}: ${error instanceof Error ? error.message : String(error)}`;
         console.error(errorMsg);
         errorMessages.push(errorMsg);
         errorCount++;
       }
     }
 
-    console.log(
-      `Sync complete: ${successCount} successful, ${errorCount} errors`,
-    );
-
     return new Response(
       JSON.stringify({
-        message: "Linkly analytics sync completed",
+        message: "Analytics sync completed",
         success: true,
         synced: successCount,
         errors: errorCount,
@@ -229,13 +163,9 @@ Deno.serve(async (req) => {
       { status: 200, headers: { "Content-Type": "application/json" } },
     );
   } catch (error) {
-    console.error("Unexpected error in syncLinklyAnalytics:", error);
-
+    console.error("Unexpected error in syncAnalytics:", error);
     return new Response(
-      JSON.stringify({
-        error: error instanceof Error ? error.message : "Unknown error",
-        success: false,
-      }),
+      JSON.stringify({ error: String(error), success: false }),
       { status: 500, headers: { "Content-Type": "application/json" } },
     );
   }

@@ -9,7 +9,7 @@ export function successResponse(data: unknown, status: number = 200): Response {
     headers: {
       "Content-Type": "application/json",
       "Access-Control-Allow-Origin": "*",
-      "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-google-api-key, x-postgrid-api-key, x-linkly-api-key, x-linkly-workspace-id, accept",
+      "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-google-api-key, x-postgrid-api-key, accept",
       "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
     },
   });
@@ -29,7 +29,7 @@ export function errorResponse(
     headers: {
       "Content-Type": "application/json",
       "Access-Control-Allow-Origin": "*",
-      "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-google-api-key, x-postgrid-api-key, x-linkly-api-key, x-linkly-workspace-id, accept",
+      "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-google-api-key, x-postgrid-api-key, accept",
       "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
     },
   });
@@ -44,7 +44,7 @@ export function corsResponse(): Response {
     headers: {
       "Access-Control-Allow-Origin": "*",
       "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
-      "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-google-api-key, x-postgrid-api-key, x-linkly-api-key, x-linkly-workspace-id, accept",
+      "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-google-api-key, x-postgrid-api-key, accept",
       "Access-Control-Max-Age": "86400",
     },
   });

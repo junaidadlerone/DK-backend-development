@@ -1,4 +1,4 @@
-import { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
+import { SupabaseClient } from "npm:@supabase/supabase-js@2.39.3";
 
 /**
  * Gets the organization ID for the authenticated user
@@ -21,45 +21,42 @@ export async function getUserOrganizationId(
       .maybeSingle();
 
     if (profile?.active_organization_id) {
-      const hasAccess = await validateOrganizationAccess(
-        supabase,
-        profile.active_organization_id,
-        userId
-      );
-      if (hasAccess) return profile.active_organization_id;
+      // Use a simple membership check (any role) — not validateOrganizationAccess
+      // which excludes TECHNICIAN and would cause an unnecessary fallback scan.
+      const { data: org } = await supabase
+        .from("organizations")
+        .select("owner_id, organization_members")
+        .eq("id", profile.active_organization_id)
+        .maybeSingle();
+
+      if (org) {
+        const isOwner = org.owner_id === userId;
+        const members: any[] = Array.isArray(org.organization_members) ? org.organization_members : [];
+        const isMember = members.some((m: any) => m?.member_uid === userId);
+        if (isOwner || isMember) return profile.active_organization_id;
+      }
     }
 
-    // 2. Fallback: find org by ownership or membership
-    const [
-      { data: ownerOrg, error: ownerError },
-      { data: memberOrgs, error: memberError }
-    ] = await Promise.all([
-      supabase
-        .from("organizations")
-        .select("id")
-        .eq("owner_id", userId)
-        .maybeSingle(),
+    // 2. Fallback: scan all orgs for ownership or membership.
+    // Client-side filtering is used because JSONB array @> containment queries
+    // on nested objects are unreliable via PostgREST .contains().
+    const { data: allOrgs, error: allOrgsError } = await supabase
+      .from("organizations")
+      .select("id, owner_id, organization_members");
 
-      supabase
-        .from("organizations")
-        .select("id, organization_members")
-        .not("organization_members", "is", null)
-    ]);
+    if (allOrgsError || !allOrgs) return null;
 
     let foundOrgId: string | null = null;
 
-    if (!ownerError && ownerOrg) {
-      foundOrgId = ownerOrg.id;
-    } else if (!memberError && memberOrgs && memberOrgs.length > 0) {
-      for (const org of memberOrgs) {
-        const members = org.organization_members || [];
-        if (
-          Array.isArray(members) &&
-          members.some((m: any) => m && typeof m === "object" && m.member_uid === userId)
-        ) {
-          foundOrgId = org.id;
-          break;
-        }
+    for (const org of allOrgs) {
+      if (org.owner_id === userId) {
+        foundOrgId = org.id;
+        break;
+      }
+      const members: any[] = Array.isArray(org.organization_members) ? org.organization_members : [];
+      if (members.some((m: any) => m?.member_uid === userId)) {
+        foundOrgId = org.id;
+        break;
       }
     }
 
@@ -93,6 +90,15 @@ export async function validateOrganizationAccess(
   userId: string
 ): Promise<boolean> {
   try {
+    // Super admins have access to all organizations
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("is_super_admin")
+      .eq("id", userId)
+      .maybeSingle();
+
+    if (profile?.is_super_admin) return true;
+
     const { data: org, error } = await supabase
       .from("organizations")
       .select("owner_id, organization_members")
@@ -112,7 +118,7 @@ export async function validateOrganizationAccess(
     if (org.organization_members && Array.isArray(org.organization_members)) {
       const members = org.organization_members as Array<{member_uid: string, member_role: string}>;
       const member = members.find(m => m.member_uid === userId);
-      
+
       if (member && (member.member_role === "ADMIN" || member.member_role === "MARKETER")) {
         return true;
       }
@@ -144,13 +150,26 @@ export async function getUserOrganizations(
   role: "OWNER" | "ADMIN" | "MARKETER" | "TECHNICIAN";
   is_active: boolean;
   deletion_scheduled_at: string | null;
+  onboarding_step: number;
+  isAgencyAccount: boolean;
 }>> {
   try {
-    const { data: orgs, error } = await supabase
-      .from("organizations")
-      .select("id, business_name, business_email, owner_id, organization_members, deletion_scheduled_at");
+    const [{ data: orgs, error }, { data: onboardingRows }] = await Promise.all([
+      supabase
+        .from("organizations")
+        .select("id, business_name, business_email, owner_id, organization_members, deletion_scheduled_at, is_agency"),
+      supabase
+        .from("onboarding")
+        .select("organization_id, business_name, street_address, company_logo, team_onboarding_completed"),
+    ]);
 
     if (error || !orgs) return [];
+
+    // Build a lookup map for onboarding data keyed by org id
+    const onboardingMap = new Map<string, any>();
+    for (const row of onboardingRows ?? []) {
+      onboardingMap.set(row.organization_id, row);
+    }
 
     const result = [];
 
@@ -174,6 +193,16 @@ export async function getUserOrganizations(
       // Non-owners do not see orgs pending deletion
       if (org.deletion_scheduled_at && role !== "OWNER") continue;
 
+      // Compute onboarding step for this org from the onboarding table
+      const ob = onboardingMap.get(org.id);
+      let onboarding_step = 0;
+      if (ob) {
+        if (ob.team_onboarding_completed) onboarding_step = 4;
+        else if (ob.company_logo) onboarding_step = 3;
+        else if (ob.street_address) onboarding_step = 2;
+        else if (ob.business_name) onboarding_step = 1;
+      }
+
       result.push({
         id: org.id,
         business_name: org.business_name ?? null,
@@ -181,6 +210,8 @@ export async function getUserOrganizations(
         role,
         is_active: org.id === activeOrgId,
         deletion_scheduled_at: org.deletion_scheduled_at ?? null,
+        onboarding_step,
+        isAgencyAccount: org.is_agency ?? false,
       });
     }
 

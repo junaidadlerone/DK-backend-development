@@ -383,114 +383,114 @@ verify_jwt = false
 verify_jwt = false
 
 [functions.createReferral]
-verify_jwt = true
+verify_jwt = false
 
 [functions.getReferralById]
-verify_jwt = true
+verify_jwt = false
 
 [functions.getAllReferrals]
-verify_jwt = true
+verify_jwt = false
 
 [functions.updateReferralById]
-verify_jwt = true
+verify_jwt = false
 
 [functions.searchReferral]
-verify_jwt = true
+verify_jwt = false
 
 [functions.uploadImage]
-verify_jwt = true
+verify_jwt = false
 
 [functions.getPhotoGallery]
-verify_jwt = true
+verify_jwt = false
 
 [functions.changePhotoTypeById]
-verify_jwt = true
+verify_jwt = false
 
 [functions.deleteImage]
-verify_jwt = true
+verify_jwt = false
 
 [functions.deleteReferral]
-verify_jwt = true
+verify_jwt = false
 
 [functions.getReferralHistory]
-verify_jwt = true
+verify_jwt = false
 
 [functions.createCampaign]
-verify_jwt = true
+verify_jwt = false
 
 [functions.getCampaignStep]
-verify_jwt = true
+verify_jwt = false
 
 [functions.getCampaignById]
-verify_jwt = true
+verify_jwt = false
 
 [functions.getCampaignInformationByReferralId]
-verify_jwt = true
+verify_jwt = false
 
 [functions.getAllCampaigns]
-verify_jwt = true
+verify_jwt = false
 
 [functions.searchCampaign]
-verify_jwt = true
+verify_jwt = false
 
 [functions.getCampaignHistory]
-verify_jwt = true
+verify_jwt = false
 
 [functions.updateCampaignById]
-verify_jwt = true
+verify_jwt = false
 
 [functions.deleteCampaign]
-verify_jwt = true
+verify_jwt = false
 
 # Protected endpoints - JWT verification required
 [functions.createUser]
-verify_jwt = true
+verify_jwt = false
 
 [functions.getUser]
-verify_jwt = true
+verify_jwt = false
 
 [functions.logout]
-verify_jwt = true
+verify_jwt = false
 
 [functions.saveOrganization]
-verify_jwt = true
+verify_jwt = false
 
 [functions.getOrganization]
-verify_jwt = true
+verify_jwt = false
 
 [functions.getAppContent]
-verify_jwt = true
+verify_jwt = false
 
 [functions.getAllAddresses]
-verify_jwt = true
+verify_jwt = false
 
 # Template Bundle endpoints - JWT verification required
 [functions.createNewTemplateBundle]
-verify_jwt = true
+verify_jwt = false
 
 [functions.createNewUniversalTemplateBundle]
-verify_jwt = true
+verify_jwt = false
 
 [functions.updateTemplateBundle]
-verify_jwt = true
+verify_jwt = false
 
 [functions.deleteTemplateBundle]
-verify_jwt = true
+verify_jwt = false
 
 [functions.getAllTemplatesBundles]
-verify_jwt = true
+verify_jwt = false
 
 [functions.createCampaignV2]
-verify_jwt = true
+verify_jwt = false
 
 [functions.linkQRCodeToCampaign]
-verify_jwt = true
+verify_jwt = false
 
 [functions.getTemplateBundleById]
-verify_jwt = true
+verify_jwt = false
 
 [functions.getTemplateBundleHistory]
-verify_jwt = true
+verify_jwt = false
 
 [functions.signUpWithGoogle]
 verify_jwt = false
@@ -508,4 +508,40 @@ verify_jwt = false
 verify_jwt = false
 
 [functions.setMaintenanceEmailStatus]
+verify_jwt = false
+
+[functions.enableMultiOrg]
+verify_jwt = false
+
+[functions.disableMultiOrg]
+verify_jwt = false
+
+[functions.importAddressList]
+verify_jwt = false
+
+[functions.removeAllDuplicateAddresses]
+verify_jwt = false
+
+[functions.editAddress]
+verify_jwt = false
+
+[functions.getCSVAddressListDetails]
+verify_jwt = false
+
+[functions.deleteCSVAddresses]
+verify_jwt = false
+
+[functions.getCoordinates]
+verify_jwt = false
+
+[functions.removeAllInvalidAddresses]
+verify_jwt = false
+
+[functions.getCSVAddressListById]
+verify_jwt = false
+
+[functions.updateCampaignVerification]
+verify_jwt = false
+
+[functions.auditUniversalTemplates]
 verify_jwt = false

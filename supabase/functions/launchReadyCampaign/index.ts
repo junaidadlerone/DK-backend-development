@@ -9,6 +9,7 @@ import {
   getUserOrganizationId,
   validateOrganizationAccess,
 } from "../_shared/organization.ts";
+import { AddressRow } from "../_shared/addressLists.ts";
 
 /**
  * Launch Ready Campaign Edge Function
@@ -33,20 +34,9 @@ import {
  * - x-postgrid-api-key (REQUIRED) - PostGrid API key for address verification
  */
 
-interface AddressInput {
-  lat: number;
-  long: number;
-  address: string;
-  residential: boolean;
-  building_type?: string;
-  osm_id?: string;
-  verified?: boolean;
-  verification_details?: any;
-}
-
-interface VerifiedAddress extends AddressInput {
+// Use AddressRow from shared types
+interface VerifiedAddress extends AddressRow {
   verified: boolean;
-  verification_details?: any;
 }
 
 /**
@@ -101,12 +91,13 @@ function parseAddress(formattedAddress: string) {
 /**
  * Verify single address with PostGrid
  */
-async function verifyWithPostGrid(
-  address: AddressInput,
+async function _verifyWithPostGrid(
+  address: AddressRow,
   postgridApiKey: string,
 ): Promise<VerifiedAddress> {
   try {
-    const addressComponents = parseAddress(address.address);
+    const addressStr = address.address || "";
+    const addressComponents = parseAddress(addressStr);
 
     const response = await fetch(
       "https://api.postgrid.com/v1/addver/verifications",
@@ -233,7 +224,7 @@ Deno.serve(async (req) => {
     // const postgridApiKey = req.headers.get("x-postgrid-api-key");
 
     // Parse request body
-    let body: any;
+    let body: { campaign_id: string; amount_per_postcard?: number };
     try {
       body = await req.json();
     } catch (parseError) {
@@ -265,10 +256,9 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Fetch campaign and verify it belongs to user's organization
     const { data: campaign, error: campaignError } = await supabase
       .from("campaigns")
-      .select("id, zone_id, organization_id, campaign_name, business_data")
+      .select("id, zone_id, csv_address_list_id, organization_id, campaign_name, business_data")
       .eq("id", campaign_id)
       .eq("organization_id", organizationId)
       .single();
@@ -282,33 +272,57 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Check if campaign has zone_id
-    if (!campaign.zone_id) {
+    // Check if campaign has zone_id or csv_address_list_id
+    if (!campaign.zone_id && !campaign.csv_address_list_id) {
       return errorResponse(
         "INVALID_CAMPAIGN",
-        "Campaign does not have a zone_id set. Please link a location zone first.",
+        "Campaign does not have a location zone or address list set.",
         400,
       );
     }
 
-    // Fetch zone
-    const { data: zone, error: zoneError } = await supabase
-      .from("location_zones")
-      .select("id, addresses")
-      .eq("id", campaign.zone_id)
-      .single();
+    let allAddresses: AddressRow[] = [];
+    let sourceId: string | null = null;
+    let sourceType: "zone" | "list" = "zone";
+    let skipVerification = false;
 
-    if (zoneError || !zone) {
-      console.error("Error fetching zone:", zoneError);
-      return errorResponse(
-        "ZONE_NOT_FOUND",
-        "Zone not found",
-        404,
-      );
+    if (campaign.csv_address_list_id) {
+      // Fetch from CSV Address List
+      const { data: list, error: listError } = await supabase
+        .from("campaign_csv_address_lists")
+        .select("id, addresses, skip_address_verification")
+        .eq("id", campaign.csv_address_list_id)
+        .single();
+
+      if (listError || !list) {
+        return errorResponse("NOT_FOUND", "CSV Address List not found", 404);
+      }
+
+      // Extract skip_verification flag
+      skipVerification = list.skip_address_verification === true || false;
+      console.log(`Skip verification flag from CSV list: ${skipVerification}`);
+
+
+      
+      allAddresses = list.addresses as AddressRow[];
+      allAddresses = allAddresses.filter(addr => addr.is_reachable !== false);      
+      sourceId = list.id;
+      sourceType = "list";
+    } else {
+      // Fetch from traditional location Zone
+      const { data: zone, error: zoneError } = await supabase
+        .from("location_zones")
+        .select("id, addresses")
+        .eq("id", campaign.zone_id)
+        .single();
+
+      if (zoneError || !zone) {
+        return errorResponse("ZONE_NOT_FOUND", "Zone not found", 404);
+      }
+      allAddresses = zone.addresses || [];
+      sourceId = zone.id;
+      sourceType = "zone";
     }
-
-    // Get addresses from zone
-    const allAddresses = zone.addresses || [];
 
     if (allAddresses.length === 0) {
       return errorResponse(
@@ -327,26 +341,56 @@ Deno.serve(async (req) => {
     }
 
     console.log(
-      `Processing ${allAddresses.length} addresses in zone ${zone.id} for campaign ${campaign_id}`,
+      `Processing ${allAddresses.length} addresses in ${sourceType} ${sourceId} for campaign ${campaign_id}`,
     );
 
-    // Filter addresses: Skip Opt-out, Keep only already verified
+    // Filter addresses based on source type and skip_verification flag
     const onlyVerifiedAddresses: VerifiedAddress[] = [];
     let optOutCount = 0;
+    let validatedCount = 0;
 
     for (const addr of allAddresses) {
-      if (addr.status === "Opt-out") {
-        optOutCount++;
-        continue;
-      }
 
-      // Check if address is already verified (from socket3 or verifyAddresses)
-      if (addr.verified === true) {
+      // Respect exclusion/deletion flags for CSV lists
+      if (sourceType === "list") {
+        if (addr.is_included === false || addr.is_deleted === true) {
+          continue;
+        }
+
+        // Add to the list of addresses to be stored (shows up in getCampaignLaunchData)
         onlyVerifiedAddresses.push(addr as VerifiedAddress);
+
+        // Count for cost based on skip_verification flag (CSV CAMPAIGNS ONLY)
+        // Uses !== false / !== true so addresses that haven't been through the
+        // WebSocket verification step (flags are undefined) are treated as eligible.
+        if (skipVerification) {
+          // If skip_verification is TRUE: count all addresses not explicitly invalid or duplicate
+          if (addr.is_valid !== false && addr.is_duplicate !== true) {
+            validatedCount++;
+          }
+        } else {
+          // If skip_verification is FALSE: count non-invalid, non-duplicate, non-unreachable addresses.
+          // Mirrors the pre-filter (is_reachable !== false) so addresses without
+          // is_reachable set (e.g. no WS verification run) are treated as eligible.
+          if (addr.is_valid !== false && addr.is_duplicate !== true && addr.is_reachable !== false) {
+            validatedCount++;
+          }
+        }
+      } else {
+        // ZONE CAMPAIGNS: Keep original behavior (ignore skip_verification)
+        if (addr.status === "Opt-out") {
+          optOutCount++;
+          continue;
+        }
+
+        // For traditional zones, keep existing behavior (requires verification)
+        if (addr.verified === true || addr.is_valid === true) {
+          onlyVerifiedAddresses.push(addr as VerifiedAddress);
+          validatedCount++;
+        }
       }
     }
 
-    const validatedCount = onlyVerifiedAddresses.length;
     const finalCost = validatedCount * amount_per_postcard;
 
     console.log(
@@ -357,18 +401,21 @@ Deno.serve(async (req) => {
     const mergeVariable = campaign.business_data?.merge_variable || null;
 
     // Upsert to launch_ready_campaign_data table (update if exists, insert if not)
+    const launchDataPayload: any = {
+      campaign_id: campaign_id,
+      zone_id: sourceType === "zone" ? sourceId : null,
+      csv_address_list_id: sourceType === "list" ? sourceId : null,
+      validated_addresses: validatedCount,
+      final_cost: finalCost,
+      amount_per_postcard: amount_per_postcard,
+      verified_addresses: onlyVerifiedAddresses,
+      merge_variable: mergeVariable,
+      updated_at: new Date().toISOString(),
+    };
+
     const { data: launchData, error: upsertError } = await supabase
       .from("launch_ready_campaign_data")
-      .upsert({
-        campaign_id: campaign_id,
-        zone_id: zone.id,
-        validated_addresses: validatedCount,
-        final_cost: finalCost,
-        amount_per_postcard: amount_per_postcard,
-        verified_addresses: onlyVerifiedAddresses,
-        merge_variable: mergeVariable,
-        updated_at: new Date().toISOString(),
-      }, {
+      .upsert(launchDataPayload, {
         onConflict: "campaign_id",
       })
       .select()
@@ -402,7 +449,7 @@ Deno.serve(async (req) => {
 
     const processingTimeMs = Date.now() - startTime;
 
-    return successResponse({
+    const responsePayload: any = {
       status: "success",
       message:
         `Campaign launch data prepared: ${validatedCount} addresses verified`,
@@ -411,7 +458,9 @@ Deno.serve(async (req) => {
       list_of_verified_addresses: onlyVerifiedAddresses,
       launch_ready_id: launchData.id,
       processingTimeMs,
-    }, 201);
+    };
+
+    return successResponse(responsePayload, 201);
   } catch (error) {
     console.error("Unexpected error in launchReadyCampaign:", error);
     return errorResponse(
