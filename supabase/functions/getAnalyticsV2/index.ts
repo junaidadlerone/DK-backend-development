@@ -90,10 +90,10 @@ function parseFilters(body: AnalyticsV2Request): AnalyticsFilters {
     filters.timeFilter = "last_24hours";
     filters.period = "last_24hours";
   } else if (body.last_week === true) {
-    const startOfWeek = new Date();
-    startOfWeek.setUTCHours(0, 0, 0, 0);
-    startOfWeek.setUTCDate(startOfWeek.getUTCDate() - startOfWeek.getUTCDay());
-    filters.since = startOfWeek.toISOString();
+    const weekStart = new Date(now);
+    weekStart.setUTCHours(0, 0, 0, 0);
+    weekStart.setUTCDate(weekStart.getUTCDate() - 6);
+    filters.since = weekStart.toISOString();
     filters.timeFilter = "last_week";
     filters.period = "last_week";
   } else if (body.last_month === true) {
@@ -1642,6 +1642,7 @@ async function computeScanTrend(
     );
   } else {
     // Filtered paths (last_24hours, last_week, last_month): use /visits with since filter.
+    console.log(`[scan_trend] period=${filters.period} since=${filters.since} campaigns=${campaigns.length}`);
     await Promise.all(
       campaigns.map(async (campaign) => {
         try {
@@ -1657,10 +1658,12 @@ async function computeScanTrend(
             ? (result as Array<Record<string, unknown>>)
             : [];
 
+          console.log(`[scan_trend] tracker=${campaign.postgrid_tracker_id} raw_visits=${visits.length} since=${filters.since}`);
           const filtered = visits.filter((v) => {
             const ts = (v.createdAt ?? v.created_at) as string | undefined;
             return ts && ts >= filters.since!;
           });
+          console.log(`[scan_trend] tracker=${campaign.postgrid_tracker_id} filtered_visits=${filtered.length}`);
 
           totalScans += filtered.length;
 
