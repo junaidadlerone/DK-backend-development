@@ -604,13 +604,12 @@ async function computeDashboardCards(
     .eq("organization_id", organizationId);
   let paymentsQuery = supabase
     .from("payment_history")
-    .select("amount_paid")
+    .select("campaign_id, amount_paid")
     .eq("organization_id", organizationId);
   let campaignsQuery = supabase
     .from("campaigns")
-    .select("postgrid_tracker_id")
-    .eq("organization_id", organizationId)
-    .not("postgrid_tracker_id", "is", null);
+    .select("id, postgrid_tracker_id, postcards_sent")
+    .eq("organization_id", organizationId);
 
   if (filters.campaign_ids) {
     postcardsQuery = postcardsQuery.in("campaign_id", filters.campaign_ids);
@@ -619,7 +618,7 @@ async function computeDashboardCards(
   }
   if (filters.since) {
     postcardsQuery = postcardsQuery.gte("created_at", filters.since);
-    paymentsQuery = paymentsQuery.gte("created_at", filters.since);
+    campaignsQuery = campaignsQuery.gte("created_at", filters.since);
   }
 
   const [postcardsResult, paymentsResult, campaignsResult] = await Promise.all([
@@ -632,14 +631,10 @@ async function computeDashboardCards(
     console.error("Error fetching postcard_sends:", postcardsResult.error);
     throw new Error("Failed to fetch postcard data");
   }
-  if (paymentsResult.error) {
-    console.error("Error fetching payment_history:", paymentsResult.error);
-    throw new Error("Failed to fetch payment data");
-  }
 
   const postcards: Array<{ postgrid_status: string }> = postcardsResult.data ?? [];
-  const payments: Array<{ amount_paid: number }> = paymentsResult.data ?? [];
-  const campaignList: Array<{ postgrid_tracker_id: string }> = campaignsResult.data ?? [];
+  const payments: Array<{ campaign_id: string; amount_paid: number }> = paymentsResult.data ?? [];
+  const campaignList: Array<{ id: string; postgrid_tracker_id: string | null; postcards_sent: number }> = campaignsResult.data ?? [];
 
   let inFlight = 0;
   let delivered = 0;
@@ -656,17 +651,26 @@ async function computeDashboardCards(
   const deliveryRate =
     totalSent > 0 ? Math.round((delivered / totalSent) * 10000) / 100 : 0;
 
-  const spentToDate = payments.reduce(
-    (sum, p) => sum + (Number(p.amount_paid) || 0),
-    0,
-  );
-  const spentRounded = Math.round(spentToDate * 100) / 100;
+  // Build per-campaign payment totals
+  const paymentTotals: Record<string, number> = {};
+  for (const row of payments) {
+    paymentTotals[row.campaign_id] = (paymentTotals[row.campaign_id] || 0) + Number(row.amount_paid);
+  }
+
+  // Per campaign: use payment_history sum if it exists, else postcards_sent * $3
+  const spentRounded = Math.round(
+    campaignList.reduce((sum, c) => {
+      return sum + (c.id in paymentTotals
+        ? paymentTotals[c.id]
+        : (c.postcards_sent || 0) * PRICE_PER_POSTCARD);
+    }, 0) * 100,
+  ) / 100;
 
   // Fetch visits per tracker — needed for total_scans, scan_rate, average_scans_per_day, peak_hour
   const allVisits: Array<Record<string, any>> = [];
   if (postgridApiKey && campaignList.length > 0) {
     await Promise.all(
-      campaignList.map(async (c) => {
+      campaignList.filter((c) => c.postgrid_tracker_id).map(async (c) => {
         try {
           const response = await fetch(
             `${POSTGRID_TRACKER_BASE_URL}/${c.postgrid_tracker_id}/visits?limit=1000&skip=0`,
