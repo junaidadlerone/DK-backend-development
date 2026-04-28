@@ -9,6 +9,15 @@ const OSM_NOMINATIM_URL = 'https://nominatim.openstreetmap.org';
 const OSM_OVERPASS_URL = 'https://overpass-api.de/api/interpreter';
 const USER_AGENT_BASE = 'DoorKnockerApp';
 const getRandomUserAgent = () => `${USER_AGENT_BASE}/1.0-${Math.floor(Math.random() * 90000) + 10000}`;
+const GOOGLE_MAPS_API_KEY = process.env.GOOGLE_MAPS_API_KEY;
+
+// Rentcast — primary property source for US residential addresses
+const RENTCAST_API_KEY = process.env.RENTCAST_API_KEY;
+const RENTCAST_BASE_URL = 'https://api.rentcast.io/v1';
+const METERS_PER_MILE = 1609.344;
+const RENTCAST_RESIDENTIAL_TYPES = new Set([
+    'Single Family', 'Condo', 'Townhouse', 'Manufactured', 'Multi-Family', 'Apartment'
+]);
 
 // Retry configuration
 const MAX_RETRIES = 5;
@@ -19,7 +28,7 @@ const NOMINATIM_MAX_RETRY_DELAY = 60000;  // Cap Nominatim backoff at 60s
 // Random delay between Nominatim calls: 1000–3000ms (randomness avoids looking like bulk scraping)
 const getNominatimDelay = () => Math.floor(Math.random() * 2000) + 1000;
 
-// Building classifications
+// Building classifications (used by OSM fallback path)
 const RESIDENTIAL_BUILDINGS = new Set([
     'apartments', 'house', 'detached', 'residential', 'semidetached_house',
     'terrace', 'dormitory', 'bungalow', 'static_caravan', 'cabin', 'houseboat',
@@ -33,7 +42,6 @@ function getUserFromToken(authToken)
 {
     try
     {
-        // Decode JWT token (without verification, as it's already verified by the client)
         const payload = JSON.parse(Buffer.from(authToken.split('.')[1], 'base64').toString());
 
         const userId = payload.sub;
@@ -117,11 +125,10 @@ async function retryNominatim(fn, ws, retryAfterRef)
         {
             if (attempt > 0)
             {
-                // Use Retry-After from response header if available, otherwise exponential backoff
                 const backoff = Math.min(INITIAL_RETRY_DELAY * Math.pow(2, attempt - 1), NOMINATIM_MAX_RETRY_DELAY);
                 const jitter = backoff * (0.75 + Math.random() * 0.5);
                 const delay = retryAfterRef.value ? retryAfterRef.value * 1000 : Math.floor(jitter);
-                retryAfterRef.value = null;  // Reset after consuming
+                retryAfterRef.value = null;
 
                 ws.send(JSON.stringify({
                     type: 'retry',
@@ -136,7 +143,6 @@ async function retryNominatim(fn, ws, retryAfterRef)
         {
             lastError = error;
 
-            // Don't retry on non-rate-limit client errors
             if (error.status >= 400 && error.status < 500 && error.status !== 429)
             {
                 throw error;
@@ -181,6 +187,30 @@ async function parseAddress(addressInput, ws)
         message: 'Geocoding address...'
     }));
 
+    // Try Google Maps first — far more comprehensive for US addresses and new developments
+    if (GOOGLE_MAPS_API_KEY)
+    {
+        try
+        {
+            const googleResp = await fetch(
+                `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(addressInput)}&key=${GOOGLE_MAPS_API_KEY}`
+            );
+            if (googleResp.ok)
+            {
+                const googleData = await googleResp.json();
+                if (googleData.status === 'OK' && googleData.results?.length > 0)
+                {
+                    const loc = googleData.results[0].geometry.location;
+                    return { lat: loc.lat, lng: loc.lng };
+                }
+            }
+        } catch (googleError)
+        {
+            console.warn('Google Maps geocoding failed, falling back to Nominatim:', googleError.message);
+        }
+    }
+
+    // Fallback: Nominatim (OSM)
     const geocode = async () =>
     {
         const response = await fetch(
@@ -209,6 +239,138 @@ async function parseAddress(addressInput, ws)
 
     return await retryWithBackoff(geocode, ws, 'Address geocoding');
 }
+
+// ==================== RENTCAST (PRIMARY) ====================
+
+async function fetchRentcastProperties(center, data, ws)
+{
+    const { radius, count, searchType = 'ALL' } = data;
+    const isCountMode = !!(count && !radius);
+
+    // Convert radius from meters to miles; for count mode estimate a sensible search radius
+    let radiusMiles;
+    if (isCountMode)
+    {
+        // Assume ~800 homes/sq-mile suburban density → radius = sqrt(count / (π × 800))
+        radiusMiles = Math.min(25, Math.max(1, Math.ceil(Math.sqrt(count / (Math.PI * 800)))));
+    } else
+    {
+        radiusMiles = Math.min(100, radius / METERS_PER_MILE);
+    }
+
+    ws.send(JSON.stringify({
+        type: 'progress',
+        message: isCountMode
+            ? `Searching for ~${count} properties within ${radiusMiles.toFixed(1)} mile radius...`
+            : `Searching for properties within ${radiusMiles.toFixed(1)} miles...`
+    }));
+
+    // Fetch up to 4× the requested count (for count mode) or 2 000 (for radius mode)
+    const targetFetch = isCountMode ? Math.min(count * 4, 2000) : 2000;
+    const PAGE_SIZE = 500;
+    let allProperties = [];
+    let offset = 0;
+    let totalCount = null;
+
+    while (allProperties.length < targetFetch)
+    {
+        const params = new URLSearchParams({
+            latitude: center.lat.toFixed(6),
+            longitude: center.lng.toFixed(6),
+            radius: radiusMiles.toFixed(2),
+            limit: PAGE_SIZE,
+            offset,
+            includeTotalCount: 'true'
+        });
+
+        const response = await fetch(`${RENTCAST_BASE_URL}/properties?${params}`, {
+            headers: { 'X-Api-Key': RENTCAST_API_KEY }
+        });
+
+        if (!response.ok)
+        {
+            const body = await response.text();
+            const err = new Error(`Rentcast API ${response.status}: ${body || response.statusText}`);
+            err.status = response.status;
+            throw err;
+        }
+
+        if (totalCount === null)
+        {
+            const hdr = response.headers.get('X-Total-Count');
+            totalCount = hdr ? parseInt(hdr, 10) : null;
+        }
+
+        const page = await response.json();
+        if (!Array.isArray(page) || page.length === 0) break;
+
+        allProperties = allProperties.concat(page);
+        offset += PAGE_SIZE;
+
+        if (page.length < PAGE_SIZE) break; // last page
+    }
+
+    // Apply searchType filter
+    let filtered = allProperties;
+    if (searchType === 'RESIDENTIAL')
+    {
+        filtered = allProperties.filter(p => RENTCAST_RESIDENTIAL_TYPES.has(p.propertyType));
+    } else if (searchType === 'OTHER')
+    {
+        filtered = allProperties.filter(p => !RENTCAST_RESIDENTIAL_TYPES.has(p.propertyType));
+    }
+
+    // Annotate distance and sort closest-first
+    filtered = filtered
+        .map(p => ({ ...p, _dist: calculateDistance(center.lat, center.lng, p.latitude, p.longitude) }))
+        .sort((a, b) => a._dist - b._dist);
+
+    // Slice to requested count
+    if (isCountMode && filtered.length > count)
+    {
+        filtered = filtered.slice(0, count);
+    }
+
+    return {
+        properties: filtered,
+        totalFound: totalCount !== null ? totalCount : allProperties.length,
+        mode: isCountMode ? 'count' : 'radius',
+        searchRadius: isCountMode ? Math.round(radiusMiles * METERS_PER_MILE) : radius
+    };
+}
+
+function convertRentcastToAddress(property, center, createdBy, zoneName, zoneTypeStr)
+{
+    const isResidential = RENTCAST_RESIDENTIAL_TYPES.has(property.propertyType);
+    const address = property.formattedAddress ||
+        [property.addressLine1, property.city, property.state, property.zipCode]
+            .filter(Boolean).join(', ');
+
+    return {
+        lat: property.latitude,
+        long: property.longitude,
+        address,
+        residential: isResidential,
+        building_type: property.propertyType || 'Unknown',
+        propertyType: property.propertyType || 'Unknown',
+        distanceFromCenter: property._dist ?? calculateDistance(center.lat, center.lng, property.latitude, property.longitude),
+        targeting_zone_name: zoneName || 'Unnamed Zone',
+        campaigns_used_in: [],
+        zoneType: zoneTypeStr || 'radius',
+        postcards_sent: 0,
+        first_post_card_sent_date: null,
+        status: 'Unverified',
+        createdBy: createdBy || {
+            id: null,
+            user_role: 'TECHNICIAN',
+            full_name: 'System',
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
+        }
+    };
+}
+
+// ==================== OPENSTREETMAP (FALLBACK) ====================
 
 async function fetchOpenStreetMapBuildings(center, data, ws)
 {
@@ -380,7 +542,6 @@ async function convertOsmToAddress(building, center, ws, createdBy, zoneName, zo
 
     if (housenumber && street)
     {
-        // OSM tags have full address info — build it directly
         const parts = [
             housenumber + ' ' + street,
             city,
@@ -390,15 +551,12 @@ async function convertOsmToAddress(building, center, ws, createdBy, zoneName, zo
         address = parts.join(', ');
     } else if (tags.name && housenumber)
     {
-        // Named building with a house number
         const parts = [housenumber + ' ' + tags.name, city, state, postcode].filter(Boolean);
         address = parts.join(', ');
     }
 
-    // Fallback: use Nominatim reverse geocoding (OSM-only, no Google)
     if (!address)
     {
-        // retryAfterRef lets the fetch handler pass the Retry-After header value back to the retry loop
         const retryAfterRef = { value: null };
 
         const reverseGeocode = async () =>
@@ -415,7 +573,6 @@ async function convertOsmToAddress(building, center, ws, createdBy, zoneName, zo
 
             if (!response.ok)
             {
-                // Capture Retry-After header on 429 so the retry loop can honour it
                 if (response.status === 429)
                 {
                     const retryAfter = response.headers.get('Retry-After');
@@ -434,7 +591,6 @@ async function convertOsmToAddress(building, center, ws, createdBy, zoneName, zo
             if (data && data.address)
             {
                 const a = data.address;
-                // Build a structured address from Nominatim's response fields
                 const houseNum = a.house_number || '';
                 const roadName = a.road || a.pedestrian || a.footway || a.path || '';
                 const line1 = houseNum && roadName
@@ -448,7 +604,6 @@ async function convertOsmToAddress(building, center, ws, createdBy, zoneName, zo
                 return parts.join(', ');
             }
 
-            // Last resort: use display_name from Nominatim
             if (data && data.display_name)
             {
                 return data.display_name;
@@ -466,7 +621,6 @@ async function convertOsmToAddress(building, center, ws, createdBy, zoneName, zo
         }
     }
 
-    // Absolute last resort: coordinates
     if (!address)
     {
         address = `${building.lat.toFixed(6)}, ${building.lon.toFixed(6)}`;
@@ -568,42 +722,87 @@ async function handleGetAddressesFromZone(ws, message)
             throw new Error('Authorization token required');
         }
 
-        // Use service role key from environment (same as edge function)
         if (!SUPABASE_SERVICE_ROLE_KEY)
         {
             console.error('SUPABASE_SERVICE_ROLE_KEY environment variable not set');
             throw new Error('Server configuration error: Service role key not configured');
         }
 
-        // No Google API key needed — reverse geocoding uses Nominatim (OSM)
-
         ws.send(JSON.stringify({
             type: 'info',
             message: 'Starting address discovery process...'
         }));
 
-        // Parse address
+        // ── 1. Geocode input address ─────────────────────────────────────────
         const center = await parseAddress(address, ws);
 
-        // Fetch buildings
-        const { buildings, totalFound, mode, searchRadius } = await fetchOpenStreetMapBuildings(
-            center,
-            data,
-            ws
-        );
+        // ── 2. Fetch properties: Rentcast first, OSM as fallback ─────────────
+        let fetchSource = 'osm';
+        let rentcastProperties = null;
+        let osmBuildings = null;
+        let totalFound = 0;
+        let mode, searchRadius;
 
-        if (buildings.length === 0)
+        if (RENTCAST_API_KEY)
+        {
+            try
+            {
+                const rentcastResult = await fetchRentcastProperties(center, data, ws);
+
+                if (rentcastResult.properties.length > 0)
+                {
+                    fetchSource = 'rentcast';
+                    rentcastProperties = rentcastResult.properties;
+                    totalFound = rentcastResult.totalFound;
+                    mode = rentcastResult.mode;
+                    searchRadius = rentcastResult.searchRadius;
+
+                    ws.send(JSON.stringify({
+                        type: 'progress',
+                        message: `Found ${rentcastResult.properties.length} properties`
+                    }));
+                } else
+                {
+                    ws.send(JSON.stringify({
+                        type: 'progress',
+                        message: 'Searching OpenStreetMap...'
+                    }));
+                }
+            } catch (rentcastError)
+            {
+                console.warn('Property search unavailable, falling back to OSM:', rentcastError.message);
+                ws.send(JSON.stringify({
+                    type: 'progress',
+                    message: 'Searching OpenStreetMap...'
+                }));
+            }
+        }
+
+        if (fetchSource === 'osm')
+        {
+            const osmResult = await fetchOpenStreetMapBuildings(center, data, ws);
+            osmBuildings = osmResult.buildings;
+            totalFound = osmResult.totalFound;
+            mode = osmResult.mode;
+            searchRadius = osmResult.searchRadius;
+        }
+
+        const resultCount = fetchSource === 'rentcast'
+            ? rentcastProperties.length
+            : (osmBuildings?.length ?? 0);
+
+        if (resultCount === 0)
         {
             ws.send(JSON.stringify({
                 type: 'complete',
                 status: 'error',
                 error: 'NO_BUILDINGS_FOUND',
-                message: 'No buildings found in the specified area. Try increasing the radius or adjusting the search area.'
+                message: 'No properties found in the specified area. Try increasing the radius or adjusting the search area.'
             }));
             return;
         }
 
-        // Get user info and organization
+        // ── 3. Auth + org lookup ─────────────────────────────────────────────
         let organizationId = null;
         let createdByInfo = null;
 
@@ -726,7 +925,6 @@ async function handleGetAddressesFromZone(ws, message)
                     } else
                     {
                         console.error('No profile found for user:', userFromToken.userId);
-                        // Fallback createdByInfo if no profile
                         createdByInfo = {
                             id: userFromToken.userId,
                             user_role: 'TECHNICIAN',
@@ -749,7 +947,7 @@ async function handleGetAddressesFromZone(ws, message)
             console.error('Failed to decode user from JWT token');
         }
 
-        // Calculate zone details (Moved up to be available for address conversion)
+        // ── 4. Zone metadata ─────────────────────────────────────────────────
         const zoneName = address.includes(',') && !address.match(/^(-?\d+\.?\d*)\s*,\s*(-?\d+\.?\d*)$/)
             ? address.substring(0, 50)
             : `Zone at ${center.lat.toFixed(4)}, ${center.lng.toFixed(4)}`;
@@ -758,47 +956,58 @@ async function handleGetAddressesFromZone(ws, message)
             ? `radius(${(searchRadius / 1000).toFixed(1)}km)`
             : `point(${data.count} addresses)`;
 
-        // Convert to addresses
+        // ── 5. Convert to addresses ──────────────────────────────────────────
         ws.send(JSON.stringify({
             type: 'progress',
-            message: `Converting ${buildings.length} buildings to addresses...`
+            message: `Converting ${resultCount} properties to addresses...`
         }));
 
         const addresses = [];
-        // Process buildings sequentially to respect Nominatim's 1 req/s rate limit.
-        // Buildings with OSM address tags skip Nominatim entirely, so the delay only
-        // applies to those that actually need reverse geocoding.
-        let lastNominatimCallTime = 0;
 
-        for (let i = 0; i < buildings.length; i++)
+        if (fetchSource === 'rentcast')
         {
-            const building = buildings[i];
-            const tags = building.tags || {};
-            const needsNominatim = !(tags['addr:housenumber'] || tags.housenumber) ||
-                                   !(tags['addr:street'] || tags.street);
-
-            // Enforce a random gap between Nominatim calls (1–3s) to avoid rate limiting
-            if (needsNominatim)
+            for (const property of rentcastProperties)
             {
-                const now = Date.now();
-                const elapsed = now - lastNominatimCallTime;
-                const delay = getNominatimDelay();
-                if (elapsed < delay)
-                {
-                    await sleep(delay - elapsed);
-                }
-                lastNominatimCallTime = Date.now();
+                addresses.push(convertRentcastToAddress(property, center, createdByInfo, zoneName, zoneTypeStr));
             }
+            ws.send(JSON.stringify({
+                type: 'progress',
+                message: `Processed ${addresses.length} addresses`
+            }));
+        } else
+        {
+            // OSM path — sequential to respect Nominatim's 1 req/s rate limit
+            let lastNominatimCallTime = 0;
 
-            const result = await convertOsmToAddress(building, center, ws, createdByInfo, zoneName, zoneTypeStr);
-            addresses.push(result);
-
-            if ((i + 1) % 10 === 0 || i === buildings.length - 1)
+            for (let i = 0; i < osmBuildings.length; i++)
             {
-                ws.send(JSON.stringify({
-                    type: 'progress',
-                    message: `Processed ${i + 1}/${buildings.length} addresses...`
-                }));
+                const building = osmBuildings[i];
+                const tags = building.tags || {};
+                const needsNominatim = !(tags['addr:housenumber'] || tags.housenumber) ||
+                                       !(tags['addr:street'] || tags.street);
+
+                if (needsNominatim)
+                {
+                    const now = Date.now();
+                    const elapsed = now - lastNominatimCallTime;
+                    const delay = getNominatimDelay();
+                    if (elapsed < delay)
+                    {
+                        await sleep(delay - elapsed);
+                    }
+                    lastNominatimCallTime = Date.now();
+                }
+
+                const result = await convertOsmToAddress(building, center, ws, createdByInfo, zoneName, zoneTypeStr);
+                addresses.push(result);
+
+                if ((i + 1) % 10 === 0 || i === osmBuildings.length - 1)
+                {
+                    ws.send(JSON.stringify({
+                        type: 'progress',
+                        message: `Processed ${i + 1}/${osmBuildings.length} addresses...`
+                    }));
+                }
             }
         }
 
@@ -806,8 +1015,7 @@ async function handleGetAddressesFromZone(ws, message)
         const otherCount = addresses.length - residentialCount;
         const processingTimeMs = Date.now() - startTime;
 
-        // If campaign_id is provided, unlink ALL existing zones from this campaign first
-        // This ensures only the newest search zone is linked to the campaign
+        // ── 6. Unlink old zones from campaign ────────────────────────────────
         if (campaign_id && organizationId)
         {
             try
@@ -827,7 +1035,6 @@ async function handleGetAddressesFromZone(ws, message)
                 {
                     const errorText = await unlinkResponse.text();
                     console.error("Error unlinking existing zones from campaign:", unlinkResponse.status, errorText);
-                    // Don't fail the request, just log the error
                 }
             } catch (unlinkError)
             {
@@ -835,7 +1042,7 @@ async function handleGetAddressesFromZone(ws, message)
             }
         }
 
-        // Save zone to database
+        // ── 7. Save zone ─────────────────────────────────────────────────────
         let zoneRecord = null;
         try
         {
@@ -854,18 +1061,18 @@ async function handleGetAddressesFromZone(ws, message)
                     addressesReturned: addresses.length,
                     residentialCount,
                     otherCount,
-                    processingTimeMs
+                    processingTimeMs,
+                    source: fetchSource
                 },
                 addresses: addresses,
                 zone_name: zoneName,
                 zone_type: zoneTypeStr,
                 address: address,
-                manual_search: !campaign_id || campaign_id === '' // true if campaign_id is empty string or not provided
+                manual_search: !campaign_id || campaign_id === ''
             };
 
             zoneRecord = await saveZoneToSupabase(zoneData, ws);
 
-            // Update campaign with zone_id if campaign_id was provided
             if (campaign_id && zoneRecord?.id)
             {
                 try
@@ -886,7 +1093,6 @@ async function handleGetAddressesFromZone(ws, message)
                 }
             }
 
-            // Create notification (MARKETER_AND_ADMIN)
             if (organizationId && zoneRecord?.id)
             {
                 try
@@ -905,7 +1111,8 @@ async function handleGetAddressesFromZone(ws, message)
                             campaign_id: campaign_id || null,
                             center_lat: center.lat,
                             center_lng: center.lng,
-                            radius: mode === 'radius' ? data.radius : null
+                            radius: mode === 'radius' ? data.radius : null,
+                            source: fetchSource
                         },
                         is_read: false
                     };
@@ -931,11 +1138,12 @@ async function handleGetAddressesFromZone(ws, message)
             console.error('Database operations failed:', dbError);
         }
 
-        // Send final response in edge function format
-        const finalResponse = {
+        // ── 8. Final response ────────────────────────────────────────────────
+        ws.send(JSON.stringify({
             type: 'complete',
             status: 'success',
             message: `Found ${addresses.length} addresses`,
+            source: fetchSource,
             center: {
                 lat: center.lat,
                 long: center.lng,
@@ -948,13 +1156,12 @@ async function handleGetAddressesFromZone(ws, message)
                 addressesReturned: addresses.length,
                 residentialCount,
                 otherCount,
-                processingTimeMs
+                processingTimeMs,
+                source: fetchSource
             },
             addresses,
             zone_id: zoneRecord?.id || null
-        };
-
-        ws.send(JSON.stringify(finalResponse));
+        }));
 
     } catch (error)
     {
@@ -970,10 +1177,8 @@ async function handleGetAddressesFromZone(ws, message)
 
 // ==================== HTTP + WEBSOCKET SERVER ====================
 
-// Create HTTP server for health checks and WebSocket upgrade
 const server = http.createServer((req, res) =>
 {
-    // Health check endpoint for Cloud Run
     if (req.url === '/' || req.url === '/health')
     {
         res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -989,7 +1194,6 @@ const server = http.createServer((req, res) =>
     }
 });
 
-// Create WebSocket server using the HTTP server
 const wss = new WebSocketServer({ server });
 
 wss.on('connection', (ws) =>
@@ -1042,7 +1246,6 @@ wss.on('connection', (ws) =>
     });
 });
 
-// Start the server
 server.listen(PORT, '0.0.0.0', () =>
 {
     console.log(`\n🚀 Address WebSocket Server running on port ${PORT}`);
@@ -1057,7 +1260,6 @@ server.listen(PORT, '0.0.0.0', () =>
     console.log(`}\n`);
 });
 
-// Graceful shutdown handling for Cloud Run
 process.on('SIGTERM', () =>
 {
     console.log('SIGTERM signal received: closing HTTP server');
