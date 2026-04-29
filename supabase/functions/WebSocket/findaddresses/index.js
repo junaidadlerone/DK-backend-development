@@ -246,96 +246,118 @@ async function fetchRentcastProperties(center, data, ws)
 {
     const { radius, count, searchType = 'ALL' } = data;
     const isCountMode = !!(count && !radius);
-
-    // Convert radius from meters to miles; for count mode estimate a sensible search radius
-    let radiusMiles;
-    if (isCountMode)
-    {
-        // Assume ~800 homes/sq-mile suburban density → radius = sqrt(count / (π × 800))
-        radiusMiles = Math.min(25, Math.max(1, Math.ceil(Math.sqrt(count / (Math.PI * 800)))));
-    } else
-    {
-        radiusMiles = Math.min(100, radius / METERS_PER_MILE);
-    }
-
-    ws.send(JSON.stringify({
-        type: 'progress',
-        message: isCountMode
-            ? `Searching for ~${count} properties within ${radiusMiles.toFixed(1)} mile radius...`
-            : `Searching for properties within ${radiusMiles.toFixed(1)} miles...`
-    }));
-
-    // Fetch up to 4× the requested count (for count mode) or 2 000 (for radius mode)
-    const targetFetch = isCountMode ? Math.min(count * 4, 2000) : 2000;
     const PAGE_SIZE = 500;
-    let allProperties = [];
-    let offset = 0;
-    let totalCount = null;
 
-    while (allProperties.length < targetFetch)
+    // Paginate Rentcast up to maxResults for a given radius
+    const fetchPage = async (radiusMiles, maxResults) =>
     {
-        const params = new URLSearchParams({
-            latitude: center.lat.toFixed(6),
-            longitude: center.lng.toFixed(6),
-            radius: radiusMiles.toFixed(2),
-            limit: PAGE_SIZE,
-            offset,
-            includeTotalCount: 'true'
-        });
+        let allProperties = [];
+        let offset = 0;
+        let totalCount = null;
 
-        const response = await fetch(`${RENTCAST_BASE_URL}/properties?${params}`, {
-            headers: { 'X-Api-Key': RENTCAST_API_KEY }
-        });
-
-        if (!response.ok)
+        while (allProperties.length < maxResults)
         {
-            const body = await response.text();
-            const err = new Error(`Rentcast API ${response.status}: ${body || response.statusText}`);
-            err.status = response.status;
-            throw err;
+            const params = new URLSearchParams({
+                latitude: center.lat.toFixed(6),
+                longitude: center.lng.toFixed(6),
+                radius: radiusMiles.toFixed(2),
+                limit: PAGE_SIZE,
+                offset,
+                includeTotalCount: 'true'
+            });
+
+            const response = await fetch(`${RENTCAST_BASE_URL}/properties?${params}`, {
+                headers: { 'X-Api-Key': RENTCAST_API_KEY }
+            });
+
+            if (!response.ok)
+            {
+                const body = await response.text();
+                const err = new Error(`Rentcast API ${response.status}: ${body || response.statusText}`);
+                err.status = response.status;
+                throw err;
+            }
+
+            if (totalCount === null)
+            {
+                const hdr = response.headers.get('X-Total-Count');
+                totalCount = hdr ? parseInt(hdr, 10) : null;
+            }
+
+            const page = await response.json();
+            if (!Array.isArray(page) || page.length === 0) break;
+
+            allProperties = allProperties.concat(page);
+            offset += PAGE_SIZE;
+            if (page.length < PAGE_SIZE) break;
         }
 
-        if (totalCount === null)
+        return { allProperties, totalCount };
+    };
+
+    const applyFilter = (properties) =>
+    {
+        if (searchType === 'RESIDENTIAL') return properties.filter(p => RENTCAST_RESIDENTIAL_TYPES.has(p.propertyType));
+        if (searchType === 'OTHER') return properties.filter(p => !RENTCAST_RESIDENTIAL_TYPES.has(p.propertyType));
+        return properties;
+    };
+
+    const annotateAndSort = (properties) =>
+        properties
+            .map(p => ({ ...p, _dist: calculateDistance(center.lat, center.lng, p.latitude, p.longitude) }))
+            .sort((a, b) => a._dist - b._dist);
+
+    if (!isCountMode)
+    {
+        // Radius mode: fixed radius, return everything within it
+        const radiusMiles = Math.min(100, radius / METERS_PER_MILE);
+        ws.send(JSON.stringify({ type: 'progress', message: `Searching for properties within ${radiusMiles.toFixed(2)} miles...` }));
+
+        const { allProperties, totalCount } = await fetchPage(radiusMiles, 2000);
+        const filtered = annotateAndSort(applyFilter(allProperties));
+
+        return {
+            properties: filtered,
+            totalFound: totalCount !== null ? totalCount : allProperties.length,
+            mode: 'radius',
+            searchRadius: radius
+        };
+    }
+
+    // Count mode: start with a tight 0.1-mile radius and expand outward until we
+    // have at least `count` properties, then return the N closest.
+    // This mirrors radius mode behaviour — addresses hug the center point.
+    ws.send(JSON.stringify({ type: 'progress', message: `Searching for ${count} nearby properties...` }));
+
+    let radiusMiles = 0.1;
+    const MAX_RADIUS_MILES = 25;
+    let best = { properties: [], totalCount: null };
+
+    while (radiusMiles <= MAX_RADIUS_MILES)
+    {
+        const { allProperties, totalCount } = await fetchPage(radiusMiles, count * 2);
+        const filtered = annotateAndSort(applyFilter(allProperties));
+        best = { properties: filtered, totalCount };
+
+        if (filtered.length >= count) break;
+
+        // Estimate the radius needed using observed density; enforce minimum 1.5× growth
+        if (filtered.length > 0)
         {
-            const hdr = response.headers.get('X-Total-Count');
-            totalCount = hdr ? parseInt(hdr, 10) : null;
+            const density = filtered.length / (Math.PI * radiusMiles * radiusMiles);
+            const needed = Math.sqrt(count / (Math.PI * density)) * 1.1;
+            radiusMiles = Math.min(MAX_RADIUS_MILES, Math.max(radiusMiles * 1.5, needed));
+        } else
+        {
+            radiusMiles = Math.min(MAX_RADIUS_MILES, radiusMiles * 2);
         }
-
-        const page = await response.json();
-        if (!Array.isArray(page) || page.length === 0) break;
-
-        allProperties = allProperties.concat(page);
-        offset += PAGE_SIZE;
-
-        if (page.length < PAGE_SIZE) break; // last page
-    }
-
-    // Apply searchType filter
-    let filtered = allProperties;
-    if (searchType === 'RESIDENTIAL')
-    {
-        filtered = allProperties.filter(p => RENTCAST_RESIDENTIAL_TYPES.has(p.propertyType));
-    } else if (searchType === 'OTHER')
-    {
-        filtered = allProperties.filter(p => !RENTCAST_RESIDENTIAL_TYPES.has(p.propertyType));
-    }
-
-    // Annotate distance and sort closest-first
-    filtered = filtered
-        .map(p => ({ ...p, _dist: calculateDistance(center.lat, center.lng, p.latitude, p.longitude) }))
-        .sort((a, b) => a._dist - b._dist);
-
-    // Slice to requested count
-    if (isCountMode && filtered.length > count)
-    {
-        filtered = filtered.slice(0, count);
     }
 
     return {
-        properties: filtered,
-        totalFound: totalCount !== null ? totalCount : allProperties.length,
-        mode: isCountMode ? 'count' : 'radius',
-        searchRadius: isCountMode ? Math.round(radiusMiles * METERS_PER_MILE) : radius
+        properties: best.properties.slice(0, count),
+        totalFound: best.totalCount !== null ? best.totalCount : best.properties.length,
+        mode: 'count',
+        searchRadius: Math.round(radiusMiles * METERS_PER_MILE)
     };
 }
 
@@ -496,10 +518,7 @@ async function fetchOpenStreetMapBuildings(center, data, ws)
     if (isCountMode && filtered.length > count)
     {
         filtered = filtered
-            .map(b => ({
-                ...b,
-                distance: calculateDistance(center.lat, center.lng, b.lat, b.lon)
-            }))
+            .map(b => ({ ...b, distance: calculateDistance(center.lat, center.lng, b.lat, b.lon) }))
             .sort((a, b) => a.distance - b.distance)
             .slice(0, count);
     }

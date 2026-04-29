@@ -1,0 +1,2252 @@
+[
+  {
+    "id": "1",
+    "address": "41355 DOLLY VARDEN WAY, SOLDOTNA, AK 99669",
+    "success": true,
+    "error": null,
+    "addressesFound": 1,
+    "zone_id": "8ab3f1dd-c93a-4840-beb5-ff68987db093",
+    "duration_ms": 6492
+  },
+  {
+    "id": "2",
+    "address": "1512 WEST RIVER DR, Eagle River, AK 99577",
+    "success": true,
+    "error": null,
+    "addressesFound": 6,
+    "zone_id": "e555beed-6d61-47ff-b4c4-dc6e29f8322e",
+    "duration_ms": 16874
+  },
+  {
+    "id": "3",
+    "address": "18178 E E Walling Rd Rd, PALMER, AK",
+    "success": true,
+    "error": null,
+    "addressesFound": 6,
+    "zone_id": "cde6ca9a-50c7-456e-9c24-13353a74bb92",
+    "duration_ms": 13055
+  },
+  {
+    "id": "4",
+    "address": "39500 HOPKINS ALY 0 182500 222000, 0, AK",
+    "success": false,
+    "error": "NO_BUILDINGS_FOUND",
+    "addressesFound": 0,
+    "zone_id": null,
+    "duration_ms": 2441
+  },
+  {
+    "id": "5",
+    "address": "6023 GLENKERRY DR, Anchorage, AK 99504",
+    "success": true,
+    "error": null,
+    "addressesFound": 120,
+    "zone_id": "e47b9340-7df2-4c07-96c5-765f7e6d0065",
+    "duration_ms": 2131
+  },
+  {
+    "id": "6",
+    "address": "5323 CONNIE CIR, MONTGOMERY, AL 36108",
+    "success": true,
+    "error": null,
+    "addressesFound": 77,
+    "zone_id": "56e9e6f9-32e6-4164-8cb8-bb06fe31fc8a",
+    "duration_ms": 2118
+  },
+  {
+    "id": "7",
+    "address": "311 CLAY HILL RD., THOMASVILLE, AL",
+    "success": true,
+    "error": null,
+    "addressesFound": 4,
+    "zone_id": "a81a2f81-572f-461d-9c22-e613ee2f34b6",
+    "duration_ms": 8960
+  },
+  {
+    "id": "8",
+    "address": "574 DUNCAN ROAD, FALKVILLE, AL 35622",
+    "success": false,
+    "error": "NO_BUILDINGS_FOUND",
+    "addressesFound": 0,
+    "zone_id": null,
+    "duration_ms": 2083
+  },
+  {
+    "id": "9",
+    "address": "393 PANDOREA DR., LINDEN, AL",
+    "success": true,
+    "error": null,
+    "addressesFound": 16,
+    "zone_id": "3583b645-cdc9-47f4-9911-0bfe2247510e",
+    "duration_ms": 30804
+  },
+  {
+    "id": "10",
+    "address": "2311 BROOKSIDE DR SE, DECATUR, AL 35601",
+    "success": true,
+    "error": null,
+    "addressesFound": 9,
+    "zone_id": "53b2a9d9-ca26-4554-a68a-e56502df5ee0",
+    "duration_ms": 1622
+  },
+  {
+    "id": "11",
+    "address": "6780 Oakwood Dr, Boone County, AR 72662",
+    "success": true,
+    "error": null,
+    "addressesFound": 2,
+    "zone_id": "a73d44b3-da49-4980-a5e5-80a81158c136",
+    "duration_ms": 1590
+  },
+  {
+    "id": "12",
+    "address": "14483 T Z Ranch Dr, Boone County, AR 72644",
+    "success": false,
+    "error": "NO_BUILDINGS_FOUND",
+    "addressesFound": 0,
+    "zone_id": null,
+    "duration_ms": 1101
+  },
+  {
+    "id": "13",
+    "address": "4703 Pollock Rd, Boone County, AR 72601",
+    "success": false,
+    "error": "NO_BUILDINGS_FOUND",
+    "addressesFound": 0,
+    "zone_id": null,
+    "duration_ms": 2174
+  },
+  {
+    "id": "14",
+    "address": "801 W 6th St, Hope, AR 71801",
+    "success": true,
+    "error": null,
+    "addressesFound": 28,
+    "zone_id": "ef7a97b7-6757-4b70-b1c4-86f5be16e4c9",
+    "duration_ms": 1976
+  },
+  {
+    "id": "15",
+    "address": "101 LONG ISLAND DR APT 405, HOT SPRINGS, AR 71913",
+    "success": true,
+    "error": null,
+    "addressesFound": 28,
+    "zone_id": "f3d33c83-0285-4ed9-b17f-0804655edad4",
+    "duration_ms": 1596
+  },
+  {
+    "id": "16",
+    "address": "5210 East DAPHNE Lane, Flagstaff, AZ 86005",
+    "success": true,
+    "error": null,
+    "addressesFound": 1,
+    "zone_id": "d9141bff-2fc9-498c-8ef0-797b1cc4e303",
+    "duration_ms": 1507
+  },
+  {
+    "id": "17",
+    "address": "3935 East Rough Rider Road 1081, Boulder Hills, AZ 85050",
+    "success": true,
+    "error": null,
+    "addressesFound": 182,
+    "zone_id": "f5266e24-0edc-480b-abf9-f1bb932f061d",
+    "duration_ms": 2610
+  },
+  {
+    "id": "18",
+    "address": "13211 South Shore Parkway, Unincorporated, AZ 86436",
+    "success": true,
+    "error": null,
+    "addressesFound": 5,
+    "zone_id": "96fa49ea-385c-411f-82cf-bd1865001df1",
+    "duration_ms": 1689
+  },
+  {
+    "id": "19",
+    "address": "2462 CLEAR CREEK Drive, Blue Ridge, AZ 86024",
+    "success": true,
+    "error": null,
+    "addressesFound": 14,
+    "zone_id": "eb1ffb11-e413-4591-86d4-302bb0313037",
+    "duration_ms": 1732
+  },
+  {
+    "id": "20",
+    "address": "3619 North San Pedro Road, Unincorporated, AZ 86413",
+    "success": true,
+    "error": null,
+    "addressesFound": 7,
+    "zone_id": "23fb285b-7426-4173-ac76-21e9a392f823",
+    "duration_ms": 1602
+  },
+  {
+    "id": "21",
+    "address": "4013 CAPELLA DR, VANDENBERG VILLAGE, CA 93436",
+    "success": true,
+    "error": null,
+    "addressesFound": 100,
+    "zone_id": "9900eb4a-8db6-483d-9507-9807c4e3a119",
+    "duration_ms": 2056
+  },
+  {
+    "id": "22",
+    "address": "630 CASTILLO ST, SANTA BARBARA, CA 93101",
+    "success": true,
+    "error": null,
+    "addressesFound": 196,
+    "zone_id": "3d36c6df-6380-4869-8ce0-cdbb468f3c4e",
+    "duration_ms": 2193
+  },
+  {
+    "id": "23",
+    "address": "411 N H ST C, LOMPOC, CA 93436",
+    "success": true,
+    "error": null,
+    "addressesFound": 87,
+    "zone_id": "620bde69-8ea4-4575-8477-d183ad4303a7",
+    "duration_ms": 1876
+  },
+  {
+    "id": "24",
+    "address": "1454 TOPANGA LN, LINCOLN, CA 95648",
+    "success": true,
+    "error": null,
+    "addressesFound": 78,
+    "zone_id": "dcb1103d-08f0-4a78-9103-6a6124a4b804",
+    "duration_ms": 1902
+  },
+  {
+    "id": "25",
+    "address": "360 N CIVIC DR, WALNUT CREEK, CA 94596",
+    "success": true,
+    "error": null,
+    "addressesFound": 416,
+    "zone_id": "5ac1ff01-848f-4f4e-9675-11dbbecfe942",
+    "duration_ms": 2654
+  },
+  {
+    "id": "26",
+    "address": "8201 S SANTA FE DR 59, LITTLETON, CO 80120-5519",
+    "success": true,
+    "error": null,
+    "addressesFound": 2,
+    "zone_id": "9ab27229-457a-4444-86e5-cb71a7c49b1f",
+    "duration_ms": 1714
+  },
+  {
+    "id": "27",
+    "address": "265 GEORGES LN, COLUMBINE RANCH, CO 80863",
+    "success": true,
+    "error": null,
+    "addressesFound": 4,
+    "zone_id": "f68713b0-1932-437d-929c-642e37f12b13",
+    "duration_ms": 1605
+  },
+  {
+    "id": "28",
+    "address": "1440 STOCKYARD RD, PUEBLO, CO 81001",
+    "success": false,
+    "error": "NO_BUILDINGS_FOUND",
+    "addressesFound": 0,
+    "zone_id": null,
+    "duration_ms": 1072
+  },
+  {
+    "id": "29",
+    "address": "843 DANDY JIM DR, CRIPPLE CREEK MTN ESTATES, CO 80813",
+    "success": true,
+    "error": null,
+    "addressesFound": 2,
+    "zone_id": "e6d513e6-04a6-47a9-b7d3-fabb9638f247",
+    "duration_ms": 1606
+  },
+  {
+    "id": "30",
+    "address": "705 HUNTER DR APT 911, PUEBLO, CO 81001",
+    "success": true,
+    "error": null,
+    "addressesFound": 372,
+    "zone_id": "0f951610-e14d-4120-904b-b008530ae3e2",
+    "duration_ms": 2070
+  },
+  {
+    "id": "31",
+    "address": "3 CHEPACHET ROAD, AVON, CT",
+    "success": true,
+    "error": null,
+    "addressesFound": 9,
+    "zone_id": "bc4c58ec-fb94-43ed-8e4e-9055e1696e49",
+    "duration_ms": 1850
+  },
+  {
+    "id": "32",
+    "address": "52 WEBB ST 0000, HAMDEN, CT",
+    "success": true,
+    "error": null,
+    "addressesFound": 112,
+    "zone_id": "b2900576-f22b-4ecd-897c-e8c062e4d745",
+    "duration_ms": 1929
+  },
+  {
+    "id": "33",
+    "address": "30 PRESTON Drive, STRATFORD, CT",
+    "success": true,
+    "error": null,
+    "addressesFound": 20,
+    "zone_id": "46668052-feb0-4245-9573-9e14d30fb74b",
+    "duration_ms": 1631
+  },
+  {
+    "id": "34",
+    "address": "52 MOUNTAIN VIEW AVENUE, AVON, CT",
+    "success": true,
+    "error": null,
+    "addressesFound": 36,
+    "zone_id": "262a9744-6610-474b-8cfd-bc5facd132b4",
+    "duration_ms": 1615
+  },
+  {
+    "id": "35",
+    "address": "150 RIVERSIDE DR EXT, MILFORD, CT",
+    "success": true,
+    "error": null,
+    "addressesFound": 89,
+    "zone_id": "85134c37-4650-41a6-aca1-2d69507e7133",
+    "duration_ms": 1904
+  },
+  {
+    "id": "36",
+    "address": "738 HICKMAN DR, OCEAN VIEW, DE 19970",
+    "success": true,
+    "error": null,
+    "addressesFound": 51,
+    "zone_id": "36d74810-23ee-4c02-bb46-162035764f8a",
+    "duration_ms": 1782
+  },
+  {
+    "id": "37",
+    "address": "1414 RIVERVIEW AVE, WILMINGTON, DE 19806.0",
+    "success": true,
+    "error": null,
+    "addressesFound": 142,
+    "zone_id": "d0cee8b6-f4f1-4184-aaf7-01278121bb50",
+    "duration_ms": 2093
+  },
+  {
+    "id": "38",
+    "address": "4410 BERRYTOWN RD, Camden Wyoming, DE 19934.0",
+    "success": true,
+    "error": null,
+    "addressesFound": 1,
+    "zone_id": "0888fe87-e13a-48b3-84e0-81759ee1d901",
+    "duration_ms": 1615
+  },
+  {
+    "id": "39",
+    "address": "37117 MISSISSIPPI DR, FRANKFORD, DE 19945",
+    "success": true,
+    "error": null,
+    "addressesFound": 55,
+    "zone_id": "1bd097c1-152b-4145-a06f-3034d5fc60c2",
+    "duration_ms": 1777
+  },
+  {
+    "id": "40",
+    "address": "1006 Hayes Cir, Dover, DE 19904.0",
+    "success": true,
+    "error": null,
+    "addressesFound": 39,
+    "zone_id": "5fea6b47-a181-4212-a067-e8a666434645",
+    "duration_ms": 1651
+  },
+  {
+    "id": "41",
+    "address": "1173 NE RIVER BLUFF DR DR NE, ARCADIA, FL 34266",
+    "success": true,
+    "error": null,
+    "addressesFound": 7,
+    "zone_id": "60a51ef4-be2c-46d4-98ee-3fefd977d5c8",
+    "duration_ms": 1584
+  },
+  {
+    "id": "42",
+    "address": "4282 NORTH RD, GREEN COVE SPRINGS, FL 32043",
+    "success": true,
+    "error": null,
+    "addressesFound": 16,
+    "zone_id": "f473020b-c04e-436a-859a-ac9ee5497d5e",
+    "duration_ms": 1813
+  },
+  {
+    "id": "43",
+    "address": "2347 NW HAILE DEAN RD RD NW, ARCADIA, FL 34266",
+    "success": false,
+    "error": "NO_BUILDINGS_FOUND",
+    "addressesFound": 0,
+    "zone_id": null,
+    "duration_ms": 1273
+  },
+  {
+    "id": "44",
+    "address": "1331 SW M L KING JR ST ST SW, ARCADIA, FL 34266",
+    "success": true,
+    "error": null,
+    "addressesFound": 17,
+    "zone_id": "0b9f76bb-a81e-41fe-8243-6d59e51b6c9b",
+    "duration_ms": 1649
+  },
+  {
+    "id": "45",
+    "address": "2070 THORNHILL DR, FLEMING ISLAND, FL 32003",
+    "success": true,
+    "error": null,
+    "addressesFound": 59,
+    "zone_id": "6a6d7195-98e4-426c-a19c-ac860eeb1a0f",
+    "duration_ms": 1780
+  },
+  {
+    "id": "46",
+    "address": "431 AIRPORT RD, BALDWIN, GA",
+    "success": true,
+    "error": null,
+    "addressesFound": 18,
+    "zone_id": "df9b74a9-1bcb-4eb1-8fe6-894bd4a38780",
+    "duration_ms": 1762
+  },
+  {
+    "id": "47",
+    "address": "7253 DEERING CT, DOUGLASVILLE, GA 30134",
+    "success": true,
+    "error": null,
+    "addressesFound": 39,
+    "zone_id": "949e4abb-169d-4bb0-8504-a109eff95c39",
+    "duration_ms": 1637
+  },
+  {
+    "id": "48",
+    "address": "272 HILLS AND DALES FARM RD A, LAGRANGE, GA 30240",
+    "success": false,
+    "error": "NO_BUILDINGS_FOUND",
+    "addressesFound": 0,
+    "zone_id": null,
+    "duration_ms": 2128
+  },
+  {
+    "id": "49",
+    "address": "9100 Eifel Court, Johns Creek, GA 30022",
+    "success": true,
+    "error": null,
+    "addressesFound": 17,
+    "zone_id": "48aa0648-f683-470a-bef6-be4eeeda819c",
+    "duration_ms": 2145
+  },
+  {
+    "id": "50",
+    "address": "7967 POST RD, WINSTON, GA 30187",
+    "success": true,
+    "error": null,
+    "addressesFound": 9,
+    "zone_id": "fc977d58-3324-4576-ba05-3fa1bfa7d30a",
+    "duration_ms": 1664
+  },
+  {
+    "id": "51",
+    "address": "3434 PUU KAPELE AVE, HOOLEHUA, HI 96729",
+    "success": false,
+    "error": "NO_BUILDINGS_FOUND",
+    "addressesFound": 0,
+    "zone_id": null,
+    "duration_ms": 1119
+  },
+  {
+    "id": "52",
+    "address": "2119 N KING ST, Honolulu / Tripler, HI 96819",
+    "success": true,
+    "error": null,
+    "addressesFound": 291,
+    "zone_id": "eb296461-3585-4d16-b27b-402676849fcd",
+    "duration_ms": 2399
+  },
+  {
+    "id": "53",
+    "address": "71 KOPI LN, WAILUKU, HI 96793",
+    "success": true,
+    "error": null,
+    "addressesFound": 85,
+    "zone_id": "6c14e2a2-9be9-4296-9bd1-0ab0c56d9f34",
+    "duration_ms": 1892
+  },
+  {
+    "id": "54",
+    "address": "859 AALAPAPA DR, Kailua, HI 96734",
+    "success": true,
+    "error": null,
+    "addressesFound": 31,
+    "zone_id": "5df27d73-cb48-4cd3-b297-d818cd5f13fb",
+    "duration_ms": 1786
+  },
+  {
+    "id": "55",
+    "address": "100 HANA HWY A, PAIA, HI 96779",
+    "success": true,
+    "error": null,
+    "addressesFound": 74,
+    "zone_id": "d5934bfa-d91c-4ddb-bd5a-f0dc85909d72",
+    "duration_ms": 1785
+  },
+  {
+    "id": "56",
+    "address": "503 Drury Ln 503 Drury Ln, Le Grand, IA 50142-7761",
+    "success": true,
+    "error": null,
+    "addressesFound": 13,
+    "zone_id": "a4cd3378-f1af-41c3-8179-7817d3ad7a29",
+    "duration_ms": 1754
+  },
+  {
+    "id": "57",
+    "address": "1131 N QUINCY, OTTUMWA, IA 52501",
+    "success": true,
+    "error": null,
+    "addressesFound": 6,
+    "zone_id": "2c771fe3-984b-4fb9-8053-9277d711ec79",
+    "duration_ms": 3399
+  },
+  {
+    "id": "58",
+    "address": "33573 Electric Park 33573 Electric Park, Ruthven, IA 51358-8514",
+    "success": true,
+    "error": null,
+    "addressesFound": 2,
+    "zone_id": "2d5b33f2-1e5d-4861-aa78-f4fcbf4f3d57",
+    "duration_ms": 1593
+  },
+  {
+    "id": "59",
+    "address": "1044 Park Ave 1044 Park Ave, Cherokee, IA 51012-1127",
+    "success": true,
+    "error": null,
+    "addressesFound": 19,
+    "zone_id": "de3c49c8-eff3-4789-a77f-f27616f99f91",
+    "duration_ms": 1679
+  },
+  {
+    "id": "60",
+    "address": "2851 Jessup Ave 2851 Jessup Ave, Melbourne, IA 50162-9564",
+    "success": true,
+    "error": null,
+    "addressesFound": 4,
+    "zone_id": "0200b14d-2bf4-49d6-81cb-aa2d4ebbaf21",
+    "duration_ms": 8183
+  },
+  {
+    "id": "61",
+    "address": "240 S 1st  W, Soda Springs, ID",
+    "success": true,
+    "error": null,
+    "addressesFound": 48,
+    "zone_id": "8eda1e19-53ba-487e-b2f8-e6612c13a8ef",
+    "duration_ms": 2182
+  },
+  {
+    "id": "62",
+    "address": "8189 N CROWN POINTE ST, POST FALLS, ID 83854",
+    "success": true,
+    "error": null,
+    "addressesFound": 76,
+    "zone_id": "a05bfc0d-2d01-4db3-98ce-916ded73f9c5",
+    "duration_ms": 1901
+  },
+  {
+    "id": "63",
+    "address": "5163 E Allcott Dr, Iona, ID 83427",
+    "success": true,
+    "error": null,
+    "addressesFound": 24,
+    "zone_id": "18c3ff89-47d3-4f94-b454-32590b4c550e",
+    "duration_ms": 1830
+  },
+  {
+    "id": "64",
+    "address": "3881 N Nicklaus Dr, Coeur D Alene, ID 83815",
+    "success": true,
+    "error": null,
+    "addressesFound": 36,
+    "zone_id": "2e5af88f-f213-4730-965c-cecbeb738e52",
+    "duration_ms": 1812
+  },
+  {
+    "id": "65",
+    "address": "3410 W RIDGE DR, POST FALLS, ID 83854",
+    "success": true,
+    "error": null,
+    "addressesFound": 83,
+    "zone_id": "c741364a-5046-45eb-a55d-dda4cb3967e3",
+    "duration_ms": 2018
+  },
+  {
+    "id": "66",
+    "address": "709 SPALDING AVENUE, PEORIA, IL 61603",
+    "success": true,
+    "error": null,
+    "addressesFound": 59,
+    "zone_id": "4ddbcb1b-1230-461b-bbaf-37f6cb3e92f6",
+    "duration_ms": 1780
+  },
+  {
+    "id": "67",
+    "address": "932 AUTUMN LN, AURORA, IL 60505",
+    "success": true,
+    "error": null,
+    "addressesFound": 59,
+    "zone_id": "ad3c798f-86b8-4fe1-8cdc-cb85f7ebea9f",
+    "duration_ms": 1804
+  },
+  {
+    "id": "68",
+    "address": "39W214 FABYAN PKWY, GENEVA, IL 60134",
+    "success": true,
+    "error": null,
+    "addressesFound": 15,
+    "zone_id": "36f52e00-fa3b-4e37-aa1c-e3915c85620a",
+    "duration_ms": 1554
+  },
+  {
+    "id": "69",
+    "address": "121 W CLEVELAND ST, SPRING VALLEY, IL",
+    "success": true,
+    "error": null,
+    "addressesFound": 97,
+    "zone_id": "9966673e-8754-427d-955e-874e4f58d29e",
+    "duration_ms": 1886
+  },
+  {
+    "id": "70",
+    "address": "1539 NORTH GREAT OAK ROAD, PEORIA, IL 61604",
+    "success": true,
+    "error": null,
+    "addressesFound": 25,
+    "zone_id": "3e770b2f-7797-46cb-b9a6-a9132d0cd4bf",
+    "duration_ms": 1726
+  },
+  {
+    "id": "71",
+    "address": "2728 GRAND BLVD, HIGHLAND, IN 46322",
+    "success": true,
+    "error": null,
+    "addressesFound": 96,
+    "zone_id": "f0075b1e-37c8-4fc4-8db1-81ea6b6f2184",
+    "duration_ms": 1986
+  },
+  {
+    "id": "72",
+    "address": "7026 EFFINGHAM SQUARE, INDIANAPOLIS, IN 46260",
+    "success": true,
+    "error": null,
+    "addressesFound": 197,
+    "zone_id": "3d70c3e2-63f9-47f1-96da-4a0665a28f66",
+    "duration_ms": 1955
+  },
+  {
+    "id": "73",
+    "address": "819 ISABELLE DR, ANDERSON, IN 46013",
+    "success": true,
+    "error": null,
+    "addressesFound": 44,
+    "zone_id": "44d30c87-2859-4e5c-b485-98a3f9670f46",
+    "duration_ms": 2118
+  },
+  {
+    "id": "74",
+    "address": "BARN ELVERNAN DR, WEST LAFAYETTE, IN 47906",
+    "success": true,
+    "error": null,
+    "addressesFound": 1,
+    "zone_id": "323858cb-0aa7-4491-be7b-0f461016d904",
+    "duration_ms": 1544
+  },
+  {
+    "id": "75",
+    "address": "600 E  JACKSON ST E17, ALEXANDRIA, IN 46001",
+    "success": true,
+    "error": null,
+    "addressesFound": 64,
+    "zone_id": "6facb5e1-4a24-43ef-bbde-eabc50d631cd",
+    "duration_ms": 2390
+  },
+  {
+    "id": "76",
+    "address": "540 N BIRCH, Ottawa, KS 66067",
+    "success": true,
+    "error": null,
+    "addressesFound": 50,
+    "zone_id": "6ec6066a-ea83-4763-9772-3d356aa0330d",
+    "duration_ms": 1851
+  },
+  {
+    "id": "77",
+    "address": "4201 Kaw Rd, Manhattan, KS 66502",
+    "success": true,
+    "error": null,
+    "addressesFound": 2,
+    "zone_id": "d6e7519b-efc3-4937-9076-b5954b2397c5",
+    "duration_ms": 1579
+  },
+  {
+    "id": "78",
+    "address": "19672 K4 HWY, Nortonville, KS 66060",
+    "success": false,
+    "error": "NO_BUILDINGS_FOUND",
+    "addressesFound": 0,
+    "zone_id": null,
+    "duration_ms": 1120
+  },
+  {
+    "id": "79",
+    "address": "347 E  5TH AVE, AUGUSTA, KS 67010",
+    "success": true,
+    "error": null,
+    "addressesFound": 8,
+    "zone_id": "1a0d28de-2217-4856-abdd-0f8869cd0051",
+    "duration_ms": 1595
+  },
+  {
+    "id": "80",
+    "address": "3773 Eagle Rdg, Manhattan, KS 66503",
+    "success": true,
+    "error": null,
+    "addressesFound": 2,
+    "zone_id": "a5342d9e-4a3a-43f8-840d-59b064993207",
+    "duration_ms": 6673
+  },
+  {
+    "id": "81",
+    "address": "604 S CHAPEL ST, FALMOUTH, KY 41040",
+    "success": true,
+    "error": null,
+    "addressesFound": 36,
+    "zone_id": "9edcb05d-5432-41f5-8861-c6a1b0acf8ba",
+    "duration_ms": 1679
+  },
+  {
+    "id": "82",
+    "address": "368 HILLCREST RD, BOWLING GREEN, KY 42103",
+    "success": false,
+    "error": "NO_BUILDINGS_FOUND",
+    "addressesFound": 0,
+    "zone_id": null,
+    "duration_ms": 15388
+  },
+  {
+    "id": "83",
+    "address": "129 HARRISON CT, BEREA, KY 40403",
+    "success": true,
+    "error": null,
+    "addressesFound": 22,
+    "zone_id": "2e8f5821-e265-4546-a956-0358f5c7e157",
+    "duration_ms": 2033
+  },
+  {
+    "id": "84",
+    "address": "8292 NOB HILL RD, ALVATON, KY 42122",
+    "success": true,
+    "error": null,
+    "addressesFound": 2,
+    "zone_id": "68dcfdee-aaf1-42e4-9fa1-83b81d3cc9a9",
+    "duration_ms": 1623
+  },
+  {
+    "id": "85",
+    "address": "2375 JACKSON TWP RD 131, JUNCTION CITY, KY 43748",
+    "success": true,
+    "error": null,
+    "addressesFound": 4,
+    "zone_id": "fd08eb41-e455-4eaa-a9eb-90afdb3806f8",
+    "duration_ms": 1718
+  },
+  {
+    "id": "86",
+    "address": "46304 KIN TALLY DR, HAMMOND, LA 70401",
+    "success": true,
+    "error": null,
+    "addressesFound": 11,
+    "zone_id": "ad097d3f-f21a-4be9-9b24-e3c35d7d200a",
+    "duration_ms": 1728
+  },
+  {
+    "id": "87",
+    "address": "439 STONEY CREEK AVE, BATON ROUGE, LA 70808",
+    "success": true,
+    "error": null,
+    "addressesFound": 117,
+    "zone_id": "6c58ed49-bc86-41eb-8994-0747b331731b",
+    "duration_ms": 2129
+  },
+  {
+    "id": "88",
+    "address": "12055 HWY 40, INDEPENDENCE, LA 70443",
+    "success": false,
+    "error": "NO_BUILDINGS_FOUND",
+    "addressesFound": 0,
+    "zone_id": null,
+    "duration_ms": 1959
+  },
+  {
+    "id": "89",
+    "address": "3575 N ACADIAN THWY, BATON ROUGE, LA 70805",
+    "success": true,
+    "error": null,
+    "addressesFound": 78,
+    "zone_id": "e27db721-c128-4df9-80e9-023e5e43fd5b",
+    "duration_ms": 2271
+  },
+  {
+    "id": "90",
+    "address": "582 SPRING BRANCH RD, SPRINGHILL, LA 71075",
+    "success": true,
+    "error": null,
+    "addressesFound": 15,
+    "zone_id": "21ca0462-fd17-4379-9096-c9ec1ea31306",
+    "duration_ms": 1688
+  },
+  {
+    "id": "91",
+    "address": "520 CANTON STREET REAR, WESTWOOD, MA 02090",
+    "success": true,
+    "error": null,
+    "addressesFound": 3,
+    "zone_id": "0f47b6f5-0d02-4701-ad62-983a9fce58ee",
+    "duration_ms": 1692
+  },
+  {
+    "id": "92",
+    "address": "70 PLEASANT STREET, QUINCY, MA 02169",
+    "success": true,
+    "error": null,
+    "addressesFound": 201,
+    "zone_id": "2123c905-0571-484a-82f8-dc3a57210a5c",
+    "duration_ms": 2311
+  },
+  {
+    "id": "93",
+    "address": "24 School St, Easton, MA",
+    "success": true,
+    "error": null,
+    "addressesFound": 24,
+    "zone_id": "68cb9928-57dd-4089-a4dd-209e91229864",
+    "duration_ms": 6519
+  },
+  {
+    "id": "94",
+    "address": "76 Center St, Easton, MA",
+    "success": true,
+    "error": null,
+    "addressesFound": 77,
+    "zone_id": "db66cfbe-682c-48c4-bf46-b89b2c772e7b",
+    "duration_ms": 2012
+  },
+  {
+    "id": "95",
+    "address": "130 ENDICOTT STREET 412, BOSTON, MA 02113",
+    "success": true,
+    "error": null,
+    "addressesFound": 1696,
+    "zone_id": "019a4964-7638-4539-bd8e-1c8b5069fc9b",
+    "duration_ms": 5129
+  },
+  {
+    "id": "96",
+    "address": "11157 GOLDENROD Way, Unincorporated, MD 21740",
+    "success": true,
+    "error": null,
+    "addressesFound": 12,
+    "zone_id": "da83b270-d13f-4861-8d61-0eedb5e9ec38",
+    "duration_ms": 1722
+  },
+  {
+    "id": "97",
+    "address": "66 WAVERLEY DR UNIT 640, FREDERICK, MD 21702",
+    "success": true,
+    "error": null,
+    "addressesFound": 28,
+    "zone_id": "f77f6fd3-6293-4dc7-9f51-8f4a9240243c",
+    "duration_ms": 1667
+  },
+  {
+    "id": "98",
+    "address": "633 AUDREY LANE, OXON HILL, MD 20745",
+    "success": true,
+    "error": null,
+    "addressesFound": 298,
+    "zone_id": "5478f6fb-997e-4829-88eb-631be9a7dd34",
+    "duration_ms": 2107
+  },
+  {
+    "id": "99",
+    "address": "3527 DEAN DRIVE, HYATTSVILLE, MD 20782",
+    "success": true,
+    "error": null,
+    "addressesFound": 375,
+    "zone_id": "5cd83c51-a66e-4595-be88-e901393c1b0d",
+    "duration_ms": 2208
+  },
+  {
+    "id": "100",
+    "address": "20131 KELLYS Lane, Unincorporated, MD 21742",
+    "success": true,
+    "error": null,
+    "addressesFound": 151,
+    "zone_id": "f1f036a5-16f4-4375-b900-7aae72738f9e",
+    "duration_ms": 1944
+  },
+  {
+    "id": "101",
+    "address": "761 Western Ave 22, Hampden, ME 04444",
+    "success": true,
+    "error": null,
+    "addressesFound": 4,
+    "zone_id": "c09f6e8a-a01d-4bda-92c7-c5a4f13ecd64",
+    "duration_ms": 1739
+  },
+  {
+    "id": "102",
+    "address": "12 McEnroe Rd, Southwest Harbor, ME 04679",
+    "success": true,
+    "error": null,
+    "addressesFound": 1,
+    "zone_id": "d652ce87-4563-4e46-9898-4569ef34c91d",
+    "duration_ms": 1675
+  },
+  {
+    "id": "103",
+    "address": "14 Evans Rd, Bridgton, ME 04009",
+    "success": true,
+    "error": null,
+    "addressesFound": 2,
+    "zone_id": "5802ced1-08d3-4145-a21b-cfb3aed5aec1",
+    "duration_ms": 1615
+  },
+  {
+    "id": "104",
+    "address": "15 Cushman Pl APT 5, Auburn, ME 04210",
+    "success": true,
+    "error": null,
+    "addressesFound": 53,
+    "zone_id": "a09b76a6-e4ed-40e0-a892-9fc84f4174a5",
+    "duration_ms": 1764
+  },
+  {
+    "id": "105",
+    "address": "185 Beedle Rd, Richmond, ME 04357",
+    "success": false,
+    "error": "NO_BUILDINGS_FOUND",
+    "addressesFound": 0,
+    "zone_id": null,
+    "duration_ms": 2369
+  },
+  {
+    "id": "106",
+    "address": "600 CLAYTON AVE NW, GRAND RAPIDS, MI 49534",
+    "success": true,
+    "error": null,
+    "addressesFound": 80,
+    "zone_id": "60a5a981-9115-4b5a-b97a-23208f0279e9",
+    "duration_ms": 2151
+  },
+  {
+    "id": "107",
+    "address": "1274 SKYHILLS DR NE, COMSTOCK PARK, MI 49321",
+    "success": true,
+    "error": null,
+    "addressesFound": 2,
+    "zone_id": "a4f9e193-13de-495e-aa5e-01956ac02115",
+    "duration_ms": 1533
+  },
+  {
+    "id": "108",
+    "address": "1964 BELDEN AVE SW, WYOMING, MI 49509",
+    "success": true,
+    "error": null,
+    "addressesFound": 87,
+    "zone_id": "222de3af-b751-4657-857a-c115a698c400",
+    "duration_ms": 1884
+  },
+  {
+    "id": "109",
+    "address": "4075 CHATFIELD, TROY, MI 48098",
+    "success": true,
+    "error": null,
+    "addressesFound": 22,
+    "zone_id": "9e9f6ac1-88fe-4266-a88a-65f81a5738e9",
+    "duration_ms": 1599
+  },
+  {
+    "id": "110",
+    "address": "1251 ARBOR AVE, MONROE, MI 48162",
+    "success": true,
+    "error": null,
+    "addressesFound": 84,
+    "zone_id": "1791ed38-79c9-4cd7-8544-15aedb014115",
+    "duration_ms": 1932
+  },
+  {
+    "id": "111",
+    "address": "600 30th Avenue South 432, Moorhead, MN 56560",
+    "success": true,
+    "error": null,
+    "addressesFound": 118,
+    "zone_id": "3195bb90-1eba-4df9-b214-2e211f759611",
+    "duration_ms": 1861
+  },
+  {
+    "id": "112",
+    "address": "9259 SOUTHWEST 37TH AVENUE, HOPE, MN 56046",
+    "success": true,
+    "error": null,
+    "addressesFound": 2,
+    "zone_id": "d23e70d2-d6f9-48e0-afcc-c7a9340fae7a",
+    "duration_ms": 1536
+  },
+  {
+    "id": "113",
+    "address": "1791 210th St, HALLOCK, MN",
+    "success": false,
+    "error": "NO_BUILDINGS_FOUND",
+    "addressesFound": 0,
+    "zone_id": null,
+    "duration_ms": 1102
+  },
+  {
+    "id": "114",
+    "address": "34241 COUNTY RD 18, STARBUCK, MN 56381",
+    "success": false,
+    "error": "NO_BUILDINGS_FOUND",
+    "addressesFound": 0,
+    "zone_id": null,
+    "duration_ms": 1838
+  },
+  {
+    "id": "115",
+    "address": "31794 275TH ST, STARBUCK, MN 56381",
+    "success": false,
+    "error": "NO_BUILDINGS_FOUND",
+    "addressesFound": 0,
+    "zone_id": null,
+    "duration_ms": 1093
+  },
+  {
+    "id": "116",
+    "address": "3101 S OLD 63 APT F302, COLUMBIA, MO 65201",
+    "success": true,
+    "error": null,
+    "addressesFound": 2,
+    "zone_id": "67be070d-cdc3-4b08-9621-7f162979e7fb",
+    "duration_ms": 1625
+  },
+  {
+    "id": "117",
+    "address": "6460 CEDAR LAKE DR, BONNE TERRE, MO 63628",
+    "success": true,
+    "error": null,
+    "addressesFound": 1,
+    "zone_id": "7252df03-64fb-4cdc-a077-c635bb846950",
+    "duration_ms": 1605
+  },
+  {
+    "id": "118",
+    "address": "7109 HARECLIFF DR, Kansas City, MO",
+    "success": true,
+    "error": null,
+    "addressesFound": 11,
+    "zone_id": "74424dac-0259-4b4e-9f4c-2d33ddde2f65",
+    "duration_ms": 1669
+  },
+  {
+    "id": "119",
+    "address": "8028 N EVERTON AVE, Kansas City, MO",
+    "success": true,
+    "error": null,
+    "addressesFound": 50,
+    "zone_id": "2bfeebb8-ed8c-4ea2-8a94-f60db9e5efbd",
+    "duration_ms": 1929
+  },
+  {
+    "id": "120",
+    "address": "3611 TOPANGA DR, COLUMBIA, MO 65202",
+    "success": true,
+    "error": null,
+    "addressesFound": 81,
+    "zone_id": "41dd0778-4a34-4c46-b1af-091e1d5526d5",
+    "duration_ms": 1826
+  },
+  {
+    "id": "121",
+    "address": "513 SOUTH CHURCH STREET, EGYPT, MS 38860",
+    "success": true,
+    "error": null,
+    "addressesFound": 3,
+    "zone_id": "318ca4e3-583e-4957-9bd5-cc01c92be4c0",
+    "duration_ms": 1575
+  },
+  {
+    "id": "122",
+    "address": "226 JESSIE MALONE ROAD, BILOXI, MS 39443",
+    "success": false,
+    "error": "NO_BUILDINGS_FOUND",
+    "addressesFound": 0,
+    "zone_id": null,
+    "duration_ms": 1246
+  },
+  {
+    "id": "123",
+    "address": "11035 LOT 10 PATTISON HERMANVILLE ROAD LOT 10, COUNTY, MS 39086",
+    "success": false,
+    "error": "NO_BUILDINGS_FOUND",
+    "addressesFound": 0,
+    "zone_id": null,
+    "duration_ms": 1471
+  },
+  {
+    "id": "124",
+    "address": "0 LUM LANE, PORT GIBSON, MS 39150",
+    "success": true,
+    "error": null,
+    "addressesFound": 20,
+    "zone_id": "0a9ad284-4a68-4b99-96db-9825b103b21e",
+    "duration_ms": 1603
+  },
+  {
+    "id": "125",
+    "address": "1419 WILLOW STREET, LAUREL, MS 39439",
+    "success": false,
+    "error": "NO_BUILDINGS_FOUND",
+    "addressesFound": 0,
+    "zone_id": null,
+    "duration_ms": 1175
+  },
+  {
+    "id": "126",
+    "address": "104 FIRST ST W, Clyde Park, MT 59018",
+    "success": true,
+    "error": null,
+    "addressesFound": 3,
+    "zone_id": "9c2513b1-1fb0-4153-a176-62cf4ff97bf4",
+    "duration_ms": 1657
+  },
+  {
+    "id": "127",
+    "address": "779 Vandyke Road, Bozeman, MT",
+    "success": true,
+    "error": null,
+    "addressesFound": 2,
+    "zone_id": "338dd91c-975e-4766-954e-3420c21eca15",
+    "duration_ms": 4455
+  },
+  {
+    "id": "128",
+    "address": "27 Luedtke Road, Cut Bank, MT",
+    "success": false,
+    "error": "NO_BUILDINGS_FOUND",
+    "addressesFound": 0,
+    "zone_id": null,
+    "duration_ms": 1287
+  },
+  {
+    "id": "129",
+    "address": "5584 Larson Lane, Florence, MT",
+    "success": false,
+    "error": "NO_BUILDINGS_FOUND",
+    "addressesFound": 0,
+    "zone_id": null,
+    "duration_ms": 8431
+  },
+  {
+    "id": "130",
+    "address": "2409 38th Street, Missoula, MT",
+    "success": true,
+    "error": null,
+    "addressesFound": 83,
+    "zone_id": "043b29c4-8fdb-4fd8-8741-3d5402b8c65c",
+    "duration_ms": 2053
+  },
+  {
+    "id": "131",
+    "address": "160 N  MAY ST, SP, NC 28387",
+    "success": true,
+    "error": null,
+    "addressesFound": 106,
+    "zone_id": "92504053-e644-4567-a257-bb2f90340bcc",
+    "duration_ms": 2086
+  },
+  {
+    "id": "132",
+    "address": "2533 PINEWAY DR, BURLINGTON, NC 27215",
+    "success": true,
+    "error": null,
+    "addressesFound": 13,
+    "zone_id": "ed863be2-e28c-4154-a4ed-20eea0968d86",
+    "duration_ms": 1605
+  },
+  {
+    "id": "133",
+    "address": "62 SALERNO   DRIVE, CLAYTON, NC 27527",
+    "success": true,
+    "error": null,
+    "addressesFound": 53,
+    "zone_id": "d0635956-1b28-4823-a941-53e8a4027e57",
+    "duration_ms": 1834
+  },
+  {
+    "id": "134",
+    "address": "1013 EAST    24TH   STREET, NEWTON, NC 28658",
+    "success": true,
+    "error": null,
+    "addressesFound": 14,
+    "zone_id": "33570050-0462-41a2-bac2-d8d0b2c195f7",
+    "duration_ms": 1616
+  },
+  {
+    "id": "135",
+    "address": "6530 NC 700, RUFFIN, NC 27326",
+    "success": true,
+    "error": null,
+    "addressesFound": 6,
+    "zone_id": "85b92f76-41b9-43ee-b0ee-d3764e553e59",
+    "duration_ms": 1716
+  },
+  {
+    "id": "136",
+    "address": "16240 28TH ST SW, BEACH, ND 58621",
+    "success": false,
+    "error": "NO_BUILDINGS_FOUND",
+    "addressesFound": 0,
+    "zone_id": null,
+    "duration_ms": 1313
+  },
+  {
+    "id": "137",
+    "address": "710 6TH ST NW, BEACH, ND 58621",
+    "success": true,
+    "error": null,
+    "addressesFound": 2,
+    "zone_id": "b84d45ab-f2d5-4862-9c65-a1eda87feea5",
+    "duration_ms": 9728
+  },
+  {
+    "id": "138",
+    "address": "540 3RD AVE SE, DICKINSON, ND",
+    "success": true,
+    "error": null,
+    "addressesFound": 60,
+    "zone_id": "f4011a23-76d9-43fd-93df-22ac7ef2d19e",
+    "duration_ms": 2120
+  },
+  {
+    "id": "139",
+    "address": "747 24TH ST W, DICKINSON, ND",
+    "success": true,
+    "error": null,
+    "addressesFound": 130,
+    "zone_id": "827aa0a1-9c9e-4cf6-8d4c-52caa32728e3",
+    "duration_ms": 2090
+  },
+  {
+    "id": "140",
+    "address": "314 LIND BLVD, HARWOOD, ND 58042",
+    "success": true,
+    "error": null,
+    "addressesFound": 7,
+    "zone_id": "97b45e7a-2441-4060-8c5b-d4a0624db0d3",
+    "duration_ms": 1618
+  },
+  {
+    "id": "141",
+    "address": "811 JUDSON ST, LINCOLN, NE 68521",
+    "success": true,
+    "error": null,
+    "addressesFound": 48,
+    "zone_id": "f5886cf2-5092-4903-bfd2-39df9590d458",
+    "duration_ms": 1844
+  },
+  {
+    "id": "142",
+    "address": "9333 BLACKWOOD AVE, LINCOLN, NE 68526",
+    "success": true,
+    "error": null,
+    "addressesFound": 62,
+    "zone_id": "5eaf69a6-930a-4479-a23c-53d338f348e8",
+    "duration_ms": 1826
+  },
+  {
+    "id": "143",
+    "address": "12424 Frances Cir, Omaha, NE 68144",
+    "success": true,
+    "error": null,
+    "addressesFound": 63,
+    "zone_id": "8c8b6c48-c3ff-404a-8438-31248903c193",
+    "duration_ms": 1924
+  },
+  {
+    "id": "144",
+    "address": "9409 Pratt Cir, Omaha, NE 68134",
+    "success": true,
+    "error": null,
+    "addressesFound": 66,
+    "zone_id": "9508e04f-49e3-485c-9f43-1b8a246863cb",
+    "duration_ms": 1797
+  },
+  {
+    "id": "145",
+    "address": "3542 Fontenelle Blvd, Omaha, NE 68104",
+    "success": true,
+    "error": null,
+    "addressesFound": 52,
+    "zone_id": "1d348cb7-632b-426d-ae60-be266b48e007",
+    "duration_ms": 1762
+  },
+  {
+    "id": "146",
+    "address": "227 MOUNTAIN RD, Jaffrey, NH",
+    "success": true,
+    "error": null,
+    "addressesFound": 5,
+    "zone_id": "d7736290-8193-4b90-8812-c759fff2a8c2",
+    "duration_ms": 10003
+  },
+  {
+    "id": "147",
+    "address": "659 PINGREE HILL ROAD, AUBURN, NH",
+    "success": false,
+    "error": "NO_BUILDINGS_FOUND",
+    "addressesFound": 0,
+    "zone_id": null,
+    "duration_ms": 10869
+  },
+  {
+    "id": "148",
+    "address": "104 WINDSOR DRIVE, AUBURN, NH",
+    "success": true,
+    "error": null,
+    "addressesFound": 10,
+    "zone_id": "6e72aea3-73da-4505-8e0e-bab4b5333427",
+    "duration_ms": 1645
+  },
+  {
+    "id": "149",
+    "address": "21 GOODNOW ST, Jaffrey, NH",
+    "success": true,
+    "error": null,
+    "addressesFound": 29,
+    "zone_id": "df5bcd0d-3ee5-4e4c-be9f-9a7e8d64c889",
+    "duration_ms": 1991
+  },
+  {
+    "id": "150",
+    "address": "44 STONEY BROOK LANE, AUBURN, NH",
+    "success": false,
+    "error": "NO_BUILDINGS_FOUND",
+    "addressesFound": 0,
+    "zone_id": null,
+    "duration_ms": 2462
+  },
+  {
+    "id": "151",
+    "address": "18 Lesko Ter, Ogdensburg Borough, NJ",
+    "success": true,
+    "error": null,
+    "addressesFound": 29,
+    "zone_id": "1e00d579-968c-48d6-80ec-4fba63a7b878",
+    "duration_ms": 1703
+  },
+  {
+    "id": "152",
+    "address": "4 EGRET DR, LOWER TWP, NJ",
+    "success": true,
+    "error": null,
+    "addressesFound": 62,
+    "zone_id": "4da56f5a-2d2c-40e2-ae02-905f7ae6769f",
+    "duration_ms": 1921
+  },
+  {
+    "id": "153",
+    "address": "19 Park Street, Edgewater, NJ 07020",
+    "success": true,
+    "error": null,
+    "addressesFound": 203,
+    "zone_id": "5aa5043c-e6ff-4d43-8b8b-e6b10b534127",
+    "duration_ms": 2145
+  },
+  {
+    "id": "154",
+    "address": "7203 ATLANTIC AVE, WILDWOOD CREST, NJ",
+    "success": true,
+    "error": null,
+    "addressesFound": 327,
+    "zone_id": "133b270c-1be5-4bce-b2ed-dff141c865b3",
+    "duration_ms": 2454
+  },
+  {
+    "id": "155",
+    "address": "140 Franklin Avenue Apartment 2C, Nutley, NJ 07110",
+    "success": true,
+    "error": null,
+    "addressesFound": 137,
+    "zone_id": "569c417c-d265-4c5d-87ca-2b051120a1cd",
+    "duration_ms": 2026
+  },
+  {
+    "id": "156",
+    "address": "2924 CARDENAS DR NE, ALBUQUERQUE, NM 87110",
+    "success": true,
+    "error": null,
+    "addressesFound": 91,
+    "zone_id": "c09fbb33-e0ce-4810-ba4c-2983cd39476f",
+    "duration_ms": 1966
+  },
+  {
+    "id": "157",
+    "address": "16 ROAD 6299, KIRTLAND, NM 87417",
+    "success": false,
+    "error": "NO_BUILDINGS_FOUND",
+    "addressesFound": 0,
+    "zone_id": null,
+    "duration_ms": 3030
+  },
+  {
+    "id": "158",
+    "address": "610 E 30TH St APT 38, FARMINGTON, NM 87401",
+    "success": true,
+    "error": null,
+    "addressesFound": 90,
+    "zone_id": "d3448d5c-5d46-4446-baba-b1e2e752d1fd",
+    "duration_ms": 1789
+  },
+  {
+    "id": "159",
+    "address": "602 MILLER, BLOOMFIELD, NM 87413",
+    "success": true,
+    "error": null,
+    "addressesFound": 2,
+    "zone_id": "1e2ed58a-75e3-4d61-9edb-db7819c60e63",
+    "duration_ms": 1566
+  },
+  {
+    "id": "160",
+    "address": "367 RIDGECREST AVE, LOS ALAMOS, NM 87547",
+    "success": true,
+    "error": null,
+    "addressesFound": 13,
+    "zone_id": "0b00c73b-3879-4d01-ac4a-143b0a1bca72",
+    "duration_ms": 1600
+  },
+  {
+    "id": "161",
+    "address": "466 F ST, HAWTHORNE, NV",
+    "success": true,
+    "error": null,
+    "addressesFound": 49,
+    "zone_id": "f165c50d-78de-45c1-9249-0320340c6af8",
+    "duration_ms": 1713
+  },
+  {
+    "id": "162",
+    "address": "12421 Eagle St, Ursine, NV",
+    "success": true,
+    "error": null,
+    "addressesFound": 6,
+    "zone_id": "8b8055ae-0336-40d7-b74e-0a91d8e64973",
+    "duration_ms": 14701
+  },
+  {
+    "id": "163",
+    "address": "940 SPENCER ST, HAWTHORNE, NV",
+    "success": true,
+    "error": null,
+    "addressesFound": 21,
+    "zone_id": "0db5da14-73d0-4004-8d7a-737cbe5f169e",
+    "duration_ms": 1744
+  },
+  {
+    "id": "164",
+    "address": "1201 KENO DR SP 11, JACKPOT, NV 89825",
+    "success": true,
+    "error": null,
+    "addressesFound": 6,
+    "zone_id": "885f1874-721d-4084-84ee-8144e2c9496a",
+    "duration_ms": 12437
+  },
+  {
+    "id": "165",
+    "address": "4175 NEIL RD D15, RENO, NV 89502",
+    "success": true,
+    "error": null,
+    "addressesFound": 249,
+    "zone_id": "5bb37fd7-5993-4b4d-8d1e-edc278968860",
+    "duration_ms": 2338
+  },
+  {
+    "id": "166",
+    "address": "8929 LYONS MARENGO RD, GALEN, NY 14489",
+    "success": true,
+    "error": null,
+    "addressesFound": 2,
+    "zone_id": "4079a397-28d5-4f33-a6ea-38cd17fb8ee5",
+    "duration_ms": 1614
+  },
+  {
+    "id": "167",
+    "address": "221 Mossy Brook Rd, Rosendale, NY",
+    "success": true,
+    "error": null,
+    "addressesFound": 9,
+    "zone_id": "d349d6f2-6aa0-4cfc-9b38-264bb68e4449",
+    "duration_ms": 28986
+  },
+  {
+    "id": "168",
+    "address": "126 Sterling Pl, Lloyd, NY",
+    "success": true,
+    "error": null,
+    "addressesFound": 139,
+    "zone_id": "5b419192-3041-4dec-a31c-c151b4e62bda",
+    "duration_ms": 2753
+  },
+  {
+    "id": "169",
+    "address": "5 WOOD AV, COLD SPRING, NY 10516",
+    "success": true,
+    "error": null,
+    "addressesFound": 2,
+    "zone_id": "9d636cb1-ef36-433f-9d6b-d9abb857668b",
+    "duration_ms": 1670
+  },
+  {
+    "id": "170",
+    "address": "258 Rte 208, New Paltz, NY",
+    "success": true,
+    "error": null,
+    "addressesFound": 1,
+    "zone_id": "3e70254b-13dd-48a1-b7db-4925d935e43d",
+    "duration_ms": 1631
+  },
+  {
+    "id": "171",
+    "address": "1510 WESTGATE DR, DEFIANCE, OH",
+    "success": true,
+    "error": null,
+    "addressesFound": 51,
+    "zone_id": "ebdf9686-477c-448d-9592-22af7f241dea",
+    "duration_ms": 1846
+  },
+  {
+    "id": "172",
+    "address": "83 ANDOVER RD UNIT, HEATH, OH 43056",
+    "success": true,
+    "error": null,
+    "addressesFound": 149,
+    "zone_id": "31229611-5c6b-45d0-996a-ca6a41fb520a",
+    "duration_ms": 2130
+  },
+  {
+    "id": "173",
+    "address": "601 FIRST ST, NAPOLEON, OH 43545",
+    "success": false,
+    "error": "NO_BUILDINGS_FOUND",
+    "addressesFound": 0,
+    "zone_id": null,
+    "duration_ms": 1735
+  },
+  {
+    "id": "174",
+    "address": "515 EASTERN AVE, ASHLAND, OH",
+    "success": true,
+    "error": null,
+    "addressesFound": 96,
+    "zone_id": "9a620880-1120-44da-abf8-d72125dd62bf",
+    "duration_ms": 2113
+  },
+  {
+    "id": "175",
+    "address": "413 N WATER ST, LOUDONVILLE, OH",
+    "success": true,
+    "error": null,
+    "addressesFound": 45,
+    "zone_id": "b709f0ed-b7a7-4894-a4e6-dd466c4f8773",
+    "duration_ms": 1709
+  },
+  {
+    "id": "176",
+    "address": "5311 EAST 47TH PLACE SOUTH, TULSA, OK 74135",
+    "success": true,
+    "error": null,
+    "addressesFound": 441,
+    "zone_id": "e2310166-8681-4a52-928d-fde62d9caa1a",
+    "duration_ms": 2805
+  },
+  {
+    "id": "177",
+    "address": "337 SAHOMA TER, EDMOND, OK 73013",
+    "success": true,
+    "error": null,
+    "addressesFound": 54,
+    "zone_id": "f20a72b9-395f-48bf-9d45-a22c2c376085",
+    "duration_ms": 1904
+  },
+  {
+    "id": "178",
+    "address": "1920 E 2ND ST, EDMOND, OK 73034",
+    "success": true,
+    "error": null,
+    "addressesFound": 23,
+    "zone_id": "3fadfcbf-17ae-4d15-a39b-b7f870792cb4",
+    "duration_ms": 47800
+  },
+  {
+    "id": "179",
+    "address": "224 S LEXINGTON WAY, EDMOND, OK 73012",
+    "success": true,
+    "error": null,
+    "addressesFound": 49,
+    "zone_id": "42d7db95-1277-48f4-9c8b-c91f9ba50d49",
+    "duration_ms": 1742
+  },
+  {
+    "id": "180",
+    "address": "1102 SOUTH MARINA DRIVE, OOLOGAH, OK 74053",
+    "success": true,
+    "error": null,
+    "addressesFound": 41,
+    "zone_id": "9692ad0e-3084-4297-851a-b7a24640d657",
+    "duration_ms": 1848
+  },
+  {
+    "id": "181",
+    "address": "210 SOUTHWEST 6TH STREET, GRANTS PASS, OR 97526",
+    "success": true,
+    "error": null,
+    "addressesFound": 146,
+    "zone_id": "53226a32-6a5e-40af-ba72-1f7a83b71e97",
+    "duration_ms": 1854
+  },
+  {
+    "id": "182",
+    "address": "16267 TERRACE ST, BROOKINGS, OR 97415",
+    "success": true,
+    "error": null,
+    "addressesFound": 24,
+    "zone_id": "e28f52fb-50e9-4b13-9f6f-b61f5652695f",
+    "duration_ms": 1690
+  },
+  {
+    "id": "183",
+    "address": "458 S BUENA VISTA AVE, Burns, OR 97720",
+    "success": true,
+    "error": null,
+    "addressesFound": 46,
+    "zone_id": "bcace8bb-4f58-428b-aabe-31ab886fe610",
+    "duration_ms": 1823
+  },
+  {
+    "id": "184",
+    "address": "60664 ANDERSON VALLEY RD, Princeton, OR 97721",
+    "success": false,
+    "error": "NO_BUILDINGS_FOUND",
+    "addressesFound": 0,
+    "zone_id": null,
+    "duration_ms": 13638
+  },
+  {
+    "id": "185",
+    "address": "101 ARBOR RIDGE DRIVE, GRANTS PASS, OR 97527",
+    "success": false,
+    "error": "NO_BUILDINGS_FOUND",
+    "addressesFound": 0,
+    "zone_id": null,
+    "duration_ms": 7584
+  },
+  {
+    "id": "186",
+    "address": "20419 State Route 706, MONTROSE, PA 18801",
+    "success": true,
+    "error": null,
+    "addressesFound": 1,
+    "zone_id": "23547766-2b2d-44a8-9cb5-a6cebed534b0",
+    "duration_ms": 1771
+  },
+  {
+    "id": "187",
+    "address": "572 Island Road, Dunnstable Township, PA",
+    "success": false,
+    "error": "NO_BUILDINGS_FOUND",
+    "addressesFound": 0,
+    "zone_id": null,
+    "duration_ms": 9712
+  },
+  {
+    "id": "188",
+    "address": "256 State Route 2024, MONTROSE, PA 18801",
+    "success": true,
+    "error": null,
+    "addressesFound": 2,
+    "zone_id": "66098ba7-a8ed-44b8-83d5-5af8a07f532b",
+    "duration_ms": 1609
+  },
+  {
+    "id": "189",
+    "address": "110 PEACH ALY, LEHIGHTON, PA 18235",
+    "success": true,
+    "error": null,
+    "addressesFound": 22,
+    "zone_id": "f402ded3-f242-4315-bcd6-6f69fdb80d4a",
+    "duration_ms": 1573
+  },
+  {
+    "id": "190",
+    "address": "340 Proctor Street, Lock Haven, PA",
+    "success": true,
+    "error": null,
+    "addressesFound": 1,
+    "zone_id": "368ed14a-7a3e-4bfe-809c-ee05b7696dd9",
+    "duration_ms": 1619
+  },
+  {
+    "id": "191",
+    "address": "23 EDWIN ST, BARRINGTON, RI 02806",
+    "success": true,
+    "error": null,
+    "addressesFound": 57,
+    "zone_id": "4ea5e7fc-407c-42c5-ad35-9b7681c3abe6",
+    "duration_ms": 1913
+  },
+  {
+    "id": "192",
+    "address": "2138 PROVIDENCE PIKE, NORTH SMITHFIELD, RI 02896",
+    "success": true,
+    "error": null,
+    "addressesFound": 6,
+    "zone_id": "2b15acbb-da68-45f6-99af-62849f27f203",
+    "duration_ms": 1656
+  },
+  {
+    "id": "193",
+    "address": "30 ZIPPORAH ST, NORTH PROVIDENCE, RI 02911",
+    "success": true,
+    "error": null,
+    "addressesFound": 79,
+    "zone_id": "4b08ba25-d8a6-4aa9-a0d8-1b11ed606ec2",
+    "duration_ms": 2051
+  },
+  {
+    "id": "194",
+    "address": "41 -U55 41 BREAKNECK HILL RD, LINCOLN, RI 02865",
+    "success": true,
+    "error": null,
+    "addressesFound": 7,
+    "zone_id": "40d77b95-0f08-494c-950a-88907f0432bb",
+    "duration_ms": 1573
+  },
+  {
+    "id": "195",
+    "address": "211 SWEET ALLEN FARM RD, SOUTH KINGSTOWN, RI 02879",
+    "success": true,
+    "error": null,
+    "addressesFound": 10,
+    "zone_id": "ab84e301-e520-4df0-8fb7-0c5590ea3729",
+    "duration_ms": 1625
+  },
+  {
+    "id": "196",
+    "address": "3574 WAMBLE HILL, CHESTERFIELD, SC 29709",
+    "success": true,
+    "error": null,
+    "addressesFound": 3,
+    "zone_id": "a07685f3-4d64-46e8-ac62-3277887d24ee",
+    "duration_ms": 1625
+  },
+  {
+    "id": "197",
+    "address": "146 BYRD MURRAY RD, COUNTY, SC",
+    "success": true,
+    "error": null,
+    "addressesFound": 10,
+    "zone_id": "a497865b-a1d3-4972-8bd7-c2520e6f891a",
+    "duration_ms": 25777
+  },
+  {
+    "id": "198",
+    "address": "62 ROCKY PRONG, PATRICK, SC 29584",
+    "success": false,
+    "error": "NO_BUILDINGS_FOUND",
+    "addressesFound": 0,
+    "zone_id": null,
+    "duration_ms": 1573
+  },
+  {
+    "id": "199",
+    "address": "407 KING CHARLES CIR, SUMMERVILLE, SC",
+    "success": true,
+    "error": null,
+    "addressesFound": 41,
+    "zone_id": "2cc5a70f-6482-4ff4-b93f-808974dec478",
+    "duration_ms": 2182
+  },
+  {
+    "id": "200",
+    "address": "223 MANDALAY LN, LAURENS, SC",
+    "success": true,
+    "error": null,
+    "addressesFound": 130,
+    "zone_id": "5e72ca4b-88e5-4aa3-9fdd-cfb5d1df7739",
+    "duration_ms": 2203
+  },
+  {
+    "id": "201",
+    "address": "640 MAIN ST, ALEXANDRIA, SD 57311",
+    "success": true,
+    "error": null,
+    "addressesFound": 3,
+    "zone_id": "a772de17-4872-411b-81a7-3eabf8d8b8f9",
+    "duration_ms": 2412
+  },
+  {
+    "id": "202",
+    "address": "1906 BRADLEY ST, YANKTON, SD 57078",
+    "success": true,
+    "error": null,
+    "addressesFound": 12,
+    "zone_id": "620849d5-4238-49b2-9460-31341bb05f2c",
+    "duration_ms": 1585
+  },
+  {
+    "id": "203",
+    "address": "741 POPLAR ST, ALEXANDRIA, SD 57311",
+    "success": true,
+    "error": null,
+    "addressesFound": 3,
+    "zone_id": "89f38196-ae3b-4856-8419-7ec011b34751",
+    "duration_ms": 2010
+  },
+  {
+    "id": "204",
+    "address": "126 BASS BLVD, PIERRE, SD 57501",
+    "success": true,
+    "error": null,
+    "addressesFound": 33,
+    "zone_id": "da994f5d-75e7-4ab9-a4d4-f0281586a0fb",
+    "duration_ms": 1752
+  },
+  {
+    "id": "205",
+    "address": "304 E 23RD ST, YANKTON, SD 57078",
+    "success": true,
+    "error": null,
+    "addressesFound": 52,
+    "zone_id": "429e253a-b2f3-4496-b302-a7b1ac869154",
+    "duration_ms": 2149
+  },
+  {
+    "id": "206",
+    "address": "207 NATIONAL DR APT 91, MURFREESBORO, TN 37128",
+    "success": true,
+    "error": null,
+    "addressesFound": 178,
+    "zone_id": "20900ff8-2c57-408b-8f76-b206c58c5e10",
+    "duration_ms": 2667
+  },
+  {
+    "id": "207",
+    "address": "206 W LOKEY AVE, MURFREESBORO, TN 37130",
+    "success": true,
+    "error": null,
+    "addressesFound": 112,
+    "zone_id": "41cc1e78-ab79-42db-9cf4-a48fafd3d383",
+    "duration_ms": 1919
+  },
+  {
+    "id": "208",
+    "address": "200 KEDRON PKWY APT G151, SPRING HILL, TN 37174",
+    "success": true,
+    "error": null,
+    "addressesFound": 244,
+    "zone_id": "817103e7-c5ba-4971-be8d-0c78a4c2fd45",
+    "duration_ms": 2443
+  },
+  {
+    "id": "209",
+    "address": "1519 GEORGETOWN LN, MURFREESBORO, TN 37129",
+    "success": true,
+    "error": null,
+    "addressesFound": 43,
+    "zone_id": "309b12a2-479d-4ed9-9d01-63f8eeeb6e7b",
+    "duration_ms": 1787
+  },
+  {
+    "id": "210",
+    "address": "5040 FLAT CREEK RD, SPRING HILL, TN 37174",
+    "success": false,
+    "error": "NO_BUILDINGS_FOUND",
+    "addressesFound": 0,
+    "zone_id": null,
+    "duration_ms": 1191
+  },
+  {
+    "id": "211",
+    "address": "78 BARACUDA DRIVE, PALACIOS, TX 77465",
+    "success": true,
+    "error": null,
+    "addressesFound": 30,
+    "zone_id": "929de1a9-a26b-4a2c-b34e-2a4ed25fa028",
+    "duration_ms": 1896
+  },
+  {
+    "id": "212",
+    "address": "1314 WILSON ST A, BASTROP, TX 78602",
+    "success": true,
+    "error": null,
+    "addressesFound": 41,
+    "zone_id": "5b37c7db-fa39-47b9-baea-0f916ff04f25",
+    "duration_ms": 1750
+  },
+  {
+    "id": "213",
+    "address": "26 MULLET LANE, PALACIOS, TX 77465",
+    "success": true,
+    "error": null,
+    "addressesFound": 20,
+    "zone_id": "73fb2a05-f626-4d32-9151-b739ee61f805",
+    "duration_ms": 1613
+  },
+  {
+    "id": "214",
+    "address": "3900 S   SH 304, ROSANKY, TX 78953",
+    "success": false,
+    "error": "NO_BUILDINGS_FOUND",
+    "addressesFound": 0,
+    "zone_id": null,
+    "duration_ms": 7758
+  },
+  {
+    "id": "215",
+    "address": "1930 CR 218 RD, HUNGERFORD, TX 77448",
+    "success": true,
+    "error": null,
+    "addressesFound": 40,
+    "zone_id": "4209176c-5c19-4556-a376-2a9619ece1dd",
+    "duration_ms": 1676
+  },
+  {
+    "id": "216",
+    "address": "524 E RIZZINI WAY, VINEYARD, UT 84059",
+    "success": true,
+    "error": null,
+    "addressesFound": 94,
+    "zone_id": "d06c451a-64a7-4dff-99a3-f0b587b9ddfe",
+    "duration_ms": 1943
+  },
+  {
+    "id": "217",
+    "address": "2833 E RIDGEDALE LN, ST GEORGE, UT 84790",
+    "success": true,
+    "error": null,
+    "addressesFound": 41,
+    "zone_id": "7f7e7ca6-b599-49d6-9165-51cc90bb9435",
+    "duration_ms": 1910
+  },
+  {
+    "id": "218",
+    "address": "211 E 830  S, SMITHFIELD, UT 84335",
+    "success": true,
+    "error": null,
+    "addressesFound": 86,
+    "zone_id": "79da60bc-abb4-40e2-a810-b1a2472afa32",
+    "duration_ms": 1833
+  },
+  {
+    "id": "219",
+    "address": "426 S 200  W, LOGAN, UT 84321",
+    "success": true,
+    "error": null,
+    "addressesFound": 50,
+    "zone_id": "f1bde948-3803-4e2e-a9d6-b3c445d4f92c",
+    "duration_ms": 1597
+  },
+  {
+    "id": "220",
+    "address": "257 E MUNICH DR, ST GEORGE, UT 84790",
+    "success": true,
+    "error": null,
+    "addressesFound": 41,
+    "zone_id": "377bf921-2f13-4a43-90c4-2f2c2cb4872a",
+    "duration_ms": 1759
+  },
+  {
+    "id": "221",
+    "address": "1691 SNEAD SPRING RD, CREWE, VA 23930",
+    "success": false,
+    "error": "NO_BUILDINGS_FOUND",
+    "addressesFound": 0,
+    "zone_id": null,
+    "duration_ms": 2140
+  },
+  {
+    "id": "222",
+    "address": "108 W TENNESSEE AVE, CREWE, VA 23930",
+    "success": true,
+    "error": null,
+    "addressesFound": 95,
+    "zone_id": "3612ddb7-7fde-472e-bde8-e77512fa2558",
+    "duration_ms": 1839
+  },
+  {
+    "id": "223",
+    "address": "44 HIGH ST, LYNCHBURG, VA 24501",
+    "success": true,
+    "error": null,
+    "addressesFound": 168,
+    "zone_id": "0d52c957-fc59-435d-ab77-9ff2a6510c2e",
+    "duration_ms": 2069
+  },
+  {
+    "id": "224",
+    "address": "6 DIGGES CT, Williamsburg, VA 23188",
+    "success": true,
+    "error": null,
+    "addressesFound": 24,
+    "zone_id": "f2eb45e0-221c-466a-b288-606b3a8cf284",
+    "duration_ms": 1593
+  },
+  {
+    "id": "225",
+    "address": "151 BEAVERBROOK CT, DANVILLE, VA 24541",
+    "success": true,
+    "error": null,
+    "addressesFound": 21,
+    "zone_id": "38c080fc-598d-43db-bd2d-0acc077dbee9",
+    "duration_ms": 1685
+  },
+  {
+    "id": "226",
+    "address": "305 FOSTER RD, EAST MONTPELIER, VT 05651",
+    "success": true,
+    "error": null,
+    "addressesFound": 4,
+    "zone_id": "bfc72897-8ede-47be-b2cd-070a1974e2b5",
+    "duration_ms": 4045
+  },
+  {
+    "id": "227",
+    "address": "660 GUILFORD CENTER RD, GUILFORD, VT 05301",
+    "success": false,
+    "error": "NO_BUILDINGS_FOUND",
+    "addressesFound": 0,
+    "zone_id": null,
+    "duration_ms": 1097
+  },
+  {
+    "id": "228",
+    "address": "1202 SHELBURNE FALLS RD, HINESBURG, VT 05461",
+    "success": false,
+    "error": "NO_BUILDINGS_FOUND",
+    "addressesFound": 0,
+    "zone_id": null,
+    "duration_ms": 8685
+  },
+  {
+    "id": "229",
+    "address": "5545 VT ROUTE 100, PLYMOUTH, VT 05056",
+    "success": true,
+    "error": null,
+    "addressesFound": 8,
+    "zone_id": "0461a958-59b2-4c68-b091-e9ace89046c8",
+    "duration_ms": 8422
+  },
+  {
+    "id": "230",
+    "address": "3176 GREENBUSH RD, CHARLOTTE, VT 05445",
+    "success": true,
+    "error": null,
+    "addressesFound": 6,
+    "zone_id": "5a3bfa7d-fcf5-4827-96d5-b61c7c6e7edd",
+    "duration_ms": 9061
+  },
+  {
+    "id": "231",
+    "address": "4433 87TH AVE SE, Olympia, WA 98501",
+    "success": true,
+    "error": null,
+    "addressesFound": 8,
+    "zone_id": "51c13710-115c-47a1-aa31-642e71818a5a",
+    "duration_ms": 1616
+  },
+  {
+    "id": "232",
+    "address": "3012 NIAGARA ST, Bellingham, WA",
+    "success": true,
+    "error": null,
+    "addressesFound": 36,
+    "zone_id": "0800e2ad-7d88-40de-a598-2c7c2bf73d1d",
+    "duration_ms": 1683
+  },
+  {
+    "id": "233",
+    "address": "1600 Road, POMEROY, WA 99347",
+    "success": true,
+    "error": null,
+    "addressesFound": 5,
+    "zone_id": "1044c68e-91fd-40f8-b735-f2c8b74c695b",
+    "duration_ms": 1583
+  },
+  {
+    "id": "234",
+    "address": "800 Lane, DAYTON, WA 99328",
+    "success": false,
+    "error": "NO_BUILDINGS_FOUND",
+    "addressesFound": 0,
+    "zone_id": null,
+    "duration_ms": 1027
+  },
+  {
+    "id": "235",
+    "address": "3435 H STREET RD, Blaine, WA",
+    "success": true,
+    "error": null,
+    "addressesFound": 8,
+    "zone_id": "87b711f6-8e05-4fe0-9bac-ad0ba0673b7f",
+    "duration_ms": 1853
+  },
+  {
+    "id": "236",
+    "address": "735 DECORAH RD W, WEST BEND, WI 53095",
+    "success": true,
+    "error": null,
+    "addressesFound": 29,
+    "zone_id": "805ef4b6-92c7-4021-b41a-b6e20cb77b80",
+    "duration_ms": 1740
+  },
+  {
+    "id": "237",
+    "address": "437 N CENTER AVE, JEFFERSON, WI 53549",
+    "success": true,
+    "error": null,
+    "addressesFound": 60,
+    "zone_id": "9b3250b3-ed7a-462b-a33f-a508770223d9",
+    "duration_ms": 1838
+  },
+  {
+    "id": "238",
+    "address": "217 COLLEGE AVE, WATERTOWN, WI 53094",
+    "success": true,
+    "error": null,
+    "addressesFound": 119,
+    "zone_id": "08ce39ab-9c0f-4700-943a-9c3bee124521",
+    "duration_ms": 1987
+  },
+  {
+    "id": "239",
+    "address": "406 S KRANZ AVE, JEFFERSON, WI 53549",
+    "success": true,
+    "error": null,
+    "addressesFound": 42,
+    "zone_id": "628e5e63-bd79-418f-99ac-4e33e22f45ed",
+    "duration_ms": 1702
+  },
+  {
+    "id": "240",
+    "address": "2320 SILVER CREEK RD, MANITOWOC, WI 54220",
+    "success": true,
+    "error": null,
+    "addressesFound": 22,
+    "zone_id": "1fb300bb-a8c2-4f19-adcd-727cd9e67623",
+    "duration_ms": 41469
+  },
+  {
+    "id": "241",
+    "address": "2588 GLADE RUN, MOATSVILLE, WV 26405",
+    "success": true,
+    "error": null,
+    "addressesFound": 1,
+    "zone_id": "5091ed0b-01bb-4698-8134-407de8c4ae72",
+    "duration_ms": 1914
+  },
+  {
+    "id": "242",
+    "address": "2185 POCAHONTAS TRL, WHITE SULPHUR SPRINGS, WV 24986",
+    "success": true,
+    "error": null,
+    "addressesFound": 1,
+    "zone_id": "1a24316d-8f45-4a6f-90ae-eae6542559e6",
+    "duration_ms": 1667
+  },
+  {
+    "id": "243",
+    "address": "155 ELLIOTT AVE, BELINGTON, WV 26250",
+    "success": true,
+    "error": null,
+    "addressesFound": 1,
+    "zone_id": "e5fec10e-f130-4e8d-bd02-3de96b3d3164",
+    "duration_ms": 1755
+  },
+  {
+    "id": "244",
+    "address": "2530 GREEN MOUNTAIN RD, KEYSER, WV 26726",
+    "success": false,
+    "error": "NO_BUILDINGS_FOUND",
+    "addressesFound": 0,
+    "zone_id": null,
+    "duration_ms": 1039
+  },
+  {
+    "id": "245",
+    "address": "118 W CUMBERLAND ST, WILEY FORD, WV 26767",
+    "success": true,
+    "error": null,
+    "addressesFound": 16,
+    "zone_id": "b0587a21-42b4-480f-949b-eb85d5ece001",
+    "duration_ms": 1588
+  },
+  {
+    "id": "246",
+    "address": "1 B BAR L LN, GILLETTE, WY 82716",
+    "success": true,
+    "error": null,
+    "addressesFound": 1,
+    "zone_id": "488033e0-06fc-446e-9867-fdc3388b8ca2",
+    "duration_ms": 1660
+  },
+  {
+    "id": "247",
+    "address": "514 BRIDGE ST, DAYTON, WY 82836",
+    "success": true,
+    "error": null,
+    "addressesFound": 2,
+    "zone_id": "06c03f95-a3ef-411d-b5c8-8a27373fed19",
+    "duration_ms": 1571
+  },
+  {
+    "id": "248",
+    "address": "7228 MCKENNA ROAD, TORRINGTON, WY",
+    "success": true,
+    "error": null,
+    "addressesFound": 9,
+    "zone_id": "fb3a9889-8324-4271-a374-cb776ec7d44a",
+    "duration_ms": 19861
+  },
+  {
+    "id": "249",
+    "address": "351 DUTCH CREEK RD, CLEARMONT, WY 82835",
+    "success": false,
+    "error": "NO_BUILDINGS_FOUND",
+    "addressesFound": 0,
+    "zone_id": null,
+    "duration_ms": 1447
+  },
+  {
+    "id": "250",
+    "address": "3811 ROPER LN, GILLETTE, WY 82718",
+    "success": true,
+    "error": null,
+    "addressesFound": 2,
+    "zone_id": "a042e1b5-3b93-4c7b-89ec-4eb7992133c2",
+    "duration_ms": 3423
+  }
+]
