@@ -2130,15 +2130,16 @@ async function computePerformanceTrend(
     }
   }
 
+  const totalScans = Array.from(scansByDate.values()).reduce((a, b) => a + b, 0);
+
   // Metrics for a single calendar date (YYYY-MM-DD)
   const metricsForDate = (dateStr: string) => {
     const dayCards = postcards.filter((p) => p.created_at.slice(0, 10) === dateStr);
     const vol = dayCards.length;
     const delivered = dayCards.filter((p) => p.postgrid_status === "completed").length;
-    const scans = scansByDate.get(dateStr) ?? 0;
     return {
       delivery_rate: rate4dp(delivered, vol),
-      scan_rate: rate4dp(scans, totalSent),
+      scan_rate: delivered > 0 ? rate4dp(totalScans, totalSent) : 0,
       total_volume: vol,
     };
   };
