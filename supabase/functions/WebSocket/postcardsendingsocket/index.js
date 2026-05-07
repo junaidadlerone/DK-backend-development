@@ -14,6 +14,8 @@ const SUPABASE_ANON_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const POSTGRID_API_KEY = process.env.POSTGRID_POSTCARD_API_KEY;
 const POSTGRID_URL = 'https://api.postgrid.com/print-mail/v1/postcards';
 
+const SUPABASE_REST_URL = SUPABASE_URL.replace('/functions/v1', '/rest/v1');
+
 // =============================================================================
 // HTTP SERVER WITH WEBSOCKET SUPPORT
 // =============================================================================
@@ -101,7 +103,7 @@ async function resolvePaperType(paperInput, apiKey) {
         });
         if (!res.ok) throw new Error(`Failed to fetch premium papers: ${res.status}`);
         const data = await res.json();
-        _premiumPaperId = data.data?.[0]?.id;
+        _premiumPaperId = data.data?.find(p => p.id !== 'standard')?.id;
         if (!_premiumPaperId) throw new Error('No premium papers available from PostGrid');
         console.log(`[paper] Resolved premium paper ID: ${_premiumPaperId}`);
     }
@@ -111,9 +113,33 @@ async function resolvePaperType(paperInput, apiKey) {
 // =============================================================================
 // CAMPAIGN PROCESSING LOGIC
 // =============================================================================
+async function savePaperType(campaignId, paperType) {
+    try {
+        const res = await fetch(`${SUPABASE_REST_URL}/campaigns?id=eq.${campaignId}`, {
+            method: 'PATCH',
+            headers: {
+                'Content-Type': 'application/json',
+                'apikey': SUPABASE_ANON_KEY,
+                'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                'Prefer': 'return=minimal'
+            },
+            body: JSON.stringify({ paper_type: paperType })
+        });
+        if (!res.ok) {
+            console.error(`[paper] savePaperType failed: HTTP ${res.status} — ${await res.text()}`);
+        } else {
+            console.log(`[paper] paper_type saved as '${paperType}' for campaign ${campaignId}`);
+        }
+    } catch (err) {
+        console.error('[paper] savePaperType error:', err.message);
+    }
+}
+
 async function processCampaign(ws, campaignId, postgridApiKey, paperInput)
 {
     const paper = await resolvePaperType(paperInput, postgridApiKey);
+    const paperType = paper === 'standard' ? 'standard' : 'premium';
+    savePaperType(campaignId, paperType);
     let count = 0;
     ws.send(JSON.stringify({ status: 'processing_started', campaign_id: campaignId }));
 

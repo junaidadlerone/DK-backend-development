@@ -1,0 +1,1 @@
+ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS paper_type TEXT NOT NULL DEFAULT 'standard';

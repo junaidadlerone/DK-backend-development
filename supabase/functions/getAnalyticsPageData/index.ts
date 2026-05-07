@@ -16,8 +16,13 @@ interface CampaignData {
   zone_id?: string;
   front_template_id?: string;
   back_template_id?: string;
+  paper_type?: string;
   created_at: string;
   updated_at: string;
+}
+
+function campaignCostPerPostcard(campaign: CampaignData): number {
+  return campaign.paper_type === 'premium' ? 3.50 : 3.00;
 }
 
 /**
@@ -233,7 +238,7 @@ async function computeOverviewAnalytics(
   // Build campaign query
   let campaignQuery = supabase
     .from("campaigns")
-    .select("id, postgrid_tracker_id, postcards_sent, leads_gen, scan_rate, referral_id, created_at, updated_at")
+    .select("id, postgrid_tracker_id, postcards_sent, leads_gen, scan_rate, referral_id, paper_type, created_at, updated_at")
     .eq("organization_id", organizationId);
 
   if (campaignId) {
@@ -268,6 +273,7 @@ async function computeOverviewAnalytics(
 
   // Track campaigns with leads for top performers
   const campaignsWithLeads: Array<{campaign: CampaignData, leads: number, roi: number}> = [];
+  let overviewTotalCost = 0;
 
   for (const campaign of allCampaigns) {
     totalPostcardsSent += campaign.postcards_sent || 0;
@@ -279,10 +285,10 @@ async function computeOverviewAnalytics(
     let leadsThisMonth = 0;
     let leadsInRange = 0;
 
-    // For historical breakdowns without real-time time-series, 
+    // For historical breakdowns without real-time time-series,
     // we use updated_at as a proxy for recent activity.
     const updatedAt = new Date(campaign.updated_at);
-    
+
     if (updatedAt >= todayStart) {
       leadsToday = campaignLeads;
     }
@@ -306,10 +312,10 @@ async function computeOverviewAnalytics(
     totalQrScansInRange += leadsInRange;
 
     // Calculate ROI for this campaign
-    // Cost per lead = $3, Revenue per lead = $1000
-    const costPerLead = 3;
+    const costPerPostcard = campaignCostPerPostcard(campaign);
     const revenuePerLead = 1000;
-    const totalCost = (campaign.postcards_sent || 0) * costPerLead;
+    const totalCost = (campaign.postcards_sent || 0) * costPerPostcard;
+    overviewTotalCost += totalCost;
     const totalRevenue = campaignLeads * revenuePerLead;
     const roi = totalCost > 0 ? ((totalRevenue - totalCost) / totalCost) * 100 : 0;
 
@@ -323,7 +329,7 @@ async function computeOverviewAnalytics(
   }
 
   // Calculate total estimated average ROI
-  const totalCost = totalPostcardsSent * 3;
+  const totalCost = overviewTotalCost;
   const totalRevenue = totalQrScans * 10;
   const totalEstimatedAverageROI = totalCost > 0 ? ((totalRevenue - totalCost) / totalCost) * 100 : 0;
 
@@ -525,7 +531,7 @@ async function computeCampaignPerformanceAnalytics(
   // Build campaign query
   let campaignQuery = supabase
     .from("campaigns")
-    .select("id, postgrid_tracker_id, postcards_sent, leads_gen, scan_rate, zone_id, front_template_id, back_template_id, created_at, updated_at")
+    .select("id, postgrid_tracker_id, postcards_sent, leads_gen, scan_rate, zone_id, front_template_id, back_template_id, paper_type, created_at, updated_at")
     .eq("organization_id", organizationId);
 
   if (campaignId) {
@@ -857,7 +863,7 @@ async function computeROIAnalytics(
   // Build campaign query
   let campaignQuery = supabase
     .from("campaigns")
-    .select("id, postgrid_tracker_id, postcards_sent, leads_gen, scan_rate, referral_id, created_at, updated_at")
+    .select("id, postgrid_tracker_id, postcards_sent, leads_gen, scan_rate, referral_id, paper_type, created_at, updated_at")
     .eq("organization_id", organizationId);
 
   if (campaignId) {
@@ -878,7 +884,7 @@ async function computeROIAnalytics(
   // Calculate total spent and total leads
   let totalPostcardsSent = 0;
   let totalLeadsGen = 0;
-  const costPerPostcard = 3;
+  let totalSpent = 0;
   const assumedRevenuePerLead = 1000;
 
   // For profit vs expense breakdown
@@ -903,7 +909,9 @@ async function computeROIAnalytics(
     totalLeadsGen += campaignLeads;
 
     // Calculate campaign-level metrics
+    const costPerPostcard = campaignCostPerPostcard(campaign);
     const campaignCost = postcardsSent * costPerPostcard;
+    totalSpent += campaignCost;
     const campaignRevenue = campaignLeads * assumedRevenuePerLead;
     const campaignProfit = campaignRevenue - campaignCost;
     const campaignROI = campaignCost > 0 ? (campaignProfit / campaignCost) * 100 : 0;
@@ -920,8 +928,7 @@ async function computeROIAnalytics(
     });
   }
 
-  // Calculate overall metrics
-  const totalSpent = totalPostcardsSent * costPerPostcard;
+  // Calculate overall metrics (totalSpent accumulated in loop above)
   const estimatedRevenueGenerated = totalLeadsGen * assumedRevenuePerLead;
   const totalProfit = estimatedRevenueGenerated - totalSpent;
   const avgEstimatedROI = totalSpent > 0 ? (totalProfit / totalSpent) * 100 : 0;
@@ -977,7 +984,7 @@ async function computeROIAnalytics(
 
     const monthData = profitVsExpenseByMonth.get(monthKey)!;
     const postcardsSent = campaign.postcards_sent || 0;
-    const expense = postcardsSent * costPerPostcard;
+    const expense = postcardsSent * campaignCostPerPostcard(campaign);
 
     // Get leads from database
     const campaignLeads = campaign.leads_gen || 0;
@@ -997,16 +1004,20 @@ async function computeROIAnalytics(
 
   // Cost Breakdown (chart-ready data)
   // Break down costs by campaign
-  const costBreakdown = allCampaigns.map(campaign => ({
-    campaign_id: campaign.id,
-    campaign_created_at: campaign.created_at,
-    postcards_sent: campaign.postcards_sent || 0,
-    cost_per_postcard: costPerPostcard,
-    total_campaign_cost: (campaign.postcards_sent || 0) * costPerPostcard,
-    percentage_of_total: totalSpent > 0
-      ? Math.round(((campaign.postcards_sent || 0) * costPerPostcard / totalSpent) * 10000) / 100
-      : 0
-  })).sort((a, b) => b.total_campaign_cost - a.total_campaign_cost);
+  const costBreakdown = allCampaigns.map(campaign => {
+    const costPerPostcard = campaignCostPerPostcard(campaign);
+    const totalCampaignCost = (campaign.postcards_sent || 0) * costPerPostcard;
+    return {
+      campaign_id: campaign.id,
+      campaign_created_at: campaign.created_at,
+      postcards_sent: campaign.postcards_sent || 0,
+      cost_per_postcard: costPerPostcard,
+      total_campaign_cost: totalCampaignCost,
+      percentage_of_total: totalSpent > 0
+        ? Math.round((totalCampaignCost / totalSpent) * 10000) / 100
+        : 0
+    };
+  }).sort((a, b) => b.total_campaign_cost - a.total_campaign_cost);
 
   // Estimated ROI Timeline Per Campaign (chart-ready data)
   const estimatedROITimelinePerCampaign = campaignROIData

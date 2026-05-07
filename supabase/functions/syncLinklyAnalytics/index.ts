@@ -57,7 +57,7 @@ Deno.serve(async (req) => {
     // Fetch all campaigns that have a postgrid_tracker_id
     const { data: campaigns, error: fetchError } = await supabase
       .from("campaigns")
-      .select("id, postgrid_tracker_id, postcards_sent, leads_gen")
+      .select("id, postgrid_tracker_id, postcards_sent, leads_gen, paper_type")
       .not("postgrid_tracker_id", "is", null);
 
     if (fetchError) {
@@ -117,7 +117,7 @@ Deno.serve(async (req) => {
         const scanRate = postcardsSent > 0 ? (totalClicks / postcardsSent) * 100 : 0;
         
         // ROI Calculation
-        const costPerPostcard = 3;
+        const costPerPostcard = campaign.paper_type === 'premium' ? 3.50 : 3.00;
         const assumedRevenuePerLead = 1000;
         const totalCost = postcardsSent * costPerPostcard;
         const estimatedRevenue = totalClicks * assumedRevenuePerLead;

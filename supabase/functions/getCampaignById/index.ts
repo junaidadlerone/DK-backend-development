@@ -106,9 +106,10 @@ Deno.serve(async (req) => {
       .from("payment_history")
       .select("amount_paid")
       .eq("campaign_id", id);
+    const costPerPostcard = campaign.paper_type === 'premium' ? 3.50 : 3.00;
     const total_spent = paymentRows && paymentRows.length > 0
       ? paymentRows.reduce((sum: number, r: any) => sum + Number(r.amount_paid), 0)
-      : (campaign.postcards_sent || 0) * 3;
+      : (campaign.postcards_sent || 0) * costPerPostcard;
 
     // Fetch user preferences
     const preferences = await getPreferences(supabase, user.userId);
