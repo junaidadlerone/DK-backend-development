@@ -69,7 +69,7 @@ wss.on('connection', (ws) =>
                 return;
             }
 
-            await processCampaign(ws, data.campaign_id, POSTGRID_API_KEY);
+            await processCampaign(ws, data.campaign_id, POSTGRID_API_KEY, data.paper);
         } catch (error)
         {
             console.error('Error processing message:', error);
@@ -89,10 +89,31 @@ wss.on('connection', (ws) =>
 });
 
 // =============================================================================
+// PAPER TYPE RESOLUTION
+// =============================================================================
+let _premiumPaperId = null;
+
+async function resolvePaperType(paperInput, apiKey) {
+    if (!paperInput || paperInput === 'standard') return 'standard';
+    if (!_premiumPaperId) {
+        const res = await fetch('https://api.postgrid.com/print-mail/v1/premium_papers', {
+            headers: { 'x-api-key': apiKey }
+        });
+        if (!res.ok) throw new Error(`Failed to fetch premium papers: ${res.status}`);
+        const data = await res.json();
+        _premiumPaperId = data.data?.[0]?.id;
+        if (!_premiumPaperId) throw new Error('No premium papers available from PostGrid');
+        console.log(`[paper] Resolved premium paper ID: ${_premiumPaperId}`);
+    }
+    return _premiumPaperId;
+}
+
+// =============================================================================
 // CAMPAIGN PROCESSING LOGIC
 // =============================================================================
-async function processCampaign(ws, campaignId, postgridApiKey)
+async function processCampaign(ws, campaignId, postgridApiKey, paperInput)
 {
+    const paper = await resolvePaperType(paperInput, postgridApiKey);
     let count = 0;
     ws.send(JSON.stringify({ status: 'processing_started', campaign_id: campaignId }));
 
@@ -178,7 +199,7 @@ async function processCampaign(ws, campaignId, postgridApiKey)
             const addr = addresses[i];
             try
             {
-                const postcardId = await sendPostcard(addr, campaign_templates, business_data, offer_data, postgridApiKey);
+                const postcardId = await sendPostcard(addr, campaign_templates, business_data, offer_data, postgridApiKey, paper);
                 if (postcardId)
                 {
                     count++;
@@ -234,7 +255,7 @@ async function processCampaign(ws, campaignId, postgridApiKey)
 // =============================================================================
 // POSTGRID INTEGRATION
 // =============================================================================
-async function sendPostcard(addressObj, templates, businessData, offerData, postgridApiKey)
+async function sendPostcard(addressObj, templates, businessData, offerData, postgridApiKey, paper)
 {
     // Map sizes according to PostGrid requirements
     const rawSize = templates.front_template_size || "4x6";
@@ -261,6 +282,7 @@ async function sendPostcard(addressObj, templates, businessData, offerData, post
             countryCode: 'US'
         },
         size: size,
+        paper: paper || 'standard',
         frontTemplate: templates.front_template_id,
         backTemplate: templates.back_template_id,
         description: offerData.offer_headline || "Campaign Postcard",
