@@ -350,198 +350,261 @@ s3_secret_key = "env(S3_SECRET_KEY)"
 
 # Public endpoints - No JWT verification required
 [functions.signUp]
+entrypoint = "./functions/signUp/index.ts"
 verify_jwt = false
 
 [functions.login]
+entrypoint = "./functions/login/index.ts"
 verify_jwt = false
 
 [functions.refreshToken]
+entrypoint = "./functions/refreshToken/index.ts"
 verify_jwt = false
 
 [functions.forgotPassword]
+entrypoint = "./functions/forgotPassword/index.ts"
 verify_jwt = false
 
 [functions.resetPassword]
+entrypoint = "./functions/resetPassword/index.ts"
 verify_jwt = false
 
 [functions.getIndustry]
+entrypoint = "./functions/getIndustry/index.ts"
 verify_jwt = false
 
 [functions.getAllJobs]
+entrypoint = "./functions/getAllJobs/index.ts"
 verify_jwt = false
 
 [functions.getAllJobStatus]
+entrypoint = "./functions/getAllJobStatus/index.ts"
 verify_jwt = false
 
 [functions.getAllStates]
+entrypoint = "./functions/getAllStates/index.ts"
 verify_jwt = false
 
 [functions.getAllCampaignStatus]
+entrypoint = "./functions/getAllCampaignStatus/index.ts"
 verify_jwt = false
 
 [functions.getAllConsents]
+entrypoint = "./functions/getAllConsents/index.ts"
 verify_jwt = false
 
 [functions.createReferral]
+entrypoint = "./functions/createReferral/index.ts"
 verify_jwt = false
 
 [functions.getReferralById]
+entrypoint = "./functions/getReferralById/index.ts"
 verify_jwt = false
 
 [functions.getAllReferrals]
+entrypoint = "./functions/getAllReferrals/index.ts"
 verify_jwt = false
 
 [functions.updateReferralById]
+entrypoint = "./functions/updateReferralById/index.ts"
 verify_jwt = false
 
 [functions.searchReferral]
+entrypoint = "./functions/searchReferral/index.ts"
 verify_jwt = false
 
 [functions.uploadImage]
+entrypoint = "./functions/uploadImage/index.ts"
 verify_jwt = false
 
 [functions.getPhotoGallery]
+entrypoint = "./functions/getPhotoGallery/index.ts"
 verify_jwt = false
 
 [functions.changePhotoTypeById]
+entrypoint = "./functions/changePhotoTypeById/index.ts"
 verify_jwt = false
 
 [functions.deleteImage]
+entrypoint = "./functions/deleteImage/index.ts"
 verify_jwt = false
 
 [functions.deleteReferral]
+entrypoint = "./functions/deleteReferral/index.ts"
 verify_jwt = false
 
 [functions.getReferralHistory]
+entrypoint = "./functions/getReferralHistory/index.ts"
 verify_jwt = false
 
 [functions.createCampaign]
+entrypoint = "./functions/createCampaign/index.ts"
 verify_jwt = false
 
 [functions.getCampaignStep]
+entrypoint = "./functions/getCampaignStep/index.ts"
 verify_jwt = false
 
 [functions.getCampaignById]
+entrypoint = "./functions/getCampaignById/index.ts"
 verify_jwt = false
 
 [functions.getCampaignInformationByReferralId]
+entrypoint = "./functions/getCampaignInformationByReferralId/index.ts"
 verify_jwt = false
 
 [functions.getAllCampaigns]
+entrypoint = "./functions/getAllCampaigns/index.ts"
 verify_jwt = false
 
 [functions.searchCampaign]
+entrypoint = "./functions/searchCampaign/index.ts"
 verify_jwt = false
 
 [functions.getCampaignHistory]
+entrypoint = "./functions/getCampaignHistory/index.ts"
 verify_jwt = false
 
 [functions.updateCampaignById]
+entrypoint = "./functions/updateCampaignById/index.ts"
 verify_jwt = false
 
 [functions.deleteCampaign]
+entrypoint = "./functions/deleteCampaign/index.ts"
 verify_jwt = false
 
-# Protected endpoints - JWT verification required
 [functions.createUser]
+entrypoint = "./functions/createUser/index.ts"
 verify_jwt = false
 
 [functions.getUser]
+entrypoint = "./functions/getUser/index.ts"
 verify_jwt = false
 
 [functions.logout]
+entrypoint = "./functions/logout/index.ts"
 verify_jwt = false
 
 [functions.saveOrganization]
+entrypoint = "./functions/saveOrganization/index.ts"
 verify_jwt = false
 
 [functions.getOrganization]
+entrypoint = "./functions/getOrganization/index.ts"
 verify_jwt = false
 
 [functions.getAppContent]
+entrypoint = "./functions/getAppContent/index.ts"
 verify_jwt = false
 
 [functions.getAllAddresses]
+entrypoint = "./functions/getAllAddresses/index.ts"
 verify_jwt = false
 
-# Template Bundle endpoints - JWT verification required
 [functions.createNewTemplateBundle]
+entrypoint = "./functions/createNewTemplateBundle/index.ts"
 verify_jwt = false
 
 [functions.createNewUniversalTemplateBundle]
+entrypoint = "./functions/createNewUniversalTemplateBundle/index.ts"
 verify_jwt = false
 
 [functions.updateTemplateBundle]
+entrypoint = "./functions/updateTemplateBundle/index.ts"
 verify_jwt = false
 
 [functions.deleteTemplateBundle]
+entrypoint = "./functions/deleteTemplateBundle/index.ts"
 verify_jwt = false
 
 [functions.getAllTemplatesBundles]
+entrypoint = "./functions/getAllTemplatesBundles/index.ts"
 verify_jwt = false
 
 [functions.createCampaignV2]
+entrypoint = "./functions/createCampaignV2/index.ts"
 verify_jwt = false
 
 [functions.linkQRCodeToCampaign]
+entrypoint = "./functions/linkQRCodeToCampaign/index.ts"
 verify_jwt = false
 
 [functions.getTemplateBundleById]
+entrypoint = "./functions/getTemplateBundleById/index.ts"
 verify_jwt = false
 
 [functions.getTemplateBundleHistory]
+entrypoint = "./functions/getTemplateBundleHistory/index.ts"
 verify_jwt = false
 
 [functions.signUpWithGoogle]
+entrypoint = "./functions/signUpWithGoogle/index.ts"
 verify_jwt = false
 
 [functions.loginWithGoogle]
+entrypoint = "./functions/loginWithGoogle/index.ts"
 verify_jwt = false
 
 [functions.generateOtp]
+entrypoint = "./functions/generateOtp/index.ts"
 verify_jwt = false
 
 [functions.verifyOtp]
+entrypoint = "./functions/verifyOtp/index.ts"
 verify_jwt = false
 
 [functions.sendMaintenanceCompletedEmail]
+entrypoint = "./functions/sendMaintenanceCompletedEmail/index.ts"
 verify_jwt = false
 
 [functions.setMaintenanceEmailStatus]
+entrypoint = "./functions/setMaintenanceEmailStatus/index.ts"
 verify_jwt = false
 
 [functions.enableMultiOrg]
+entrypoint = "./functions/enableMultiOrg/index.ts"
 verify_jwt = false
 
 [functions.disableMultiOrg]
+entrypoint = "./functions/disableMultiOrg/index.ts"
 verify_jwt = false
 
 [functions.importAddressList]
+entrypoint = "./functions/importAddressList/index.ts"
 verify_jwt = false
 
 [functions.removeAllDuplicateAddresses]
+entrypoint = "./functions/removeAllDuplicateAddresses/index.ts"
 verify_jwt = false
 
 [functions.editAddress]
+entrypoint = "./functions/editAddress/index.ts"
 verify_jwt = false
 
 [functions.getCSVAddressListDetails]
+entrypoint = "./functions/getCSVAddressListDetails/index.ts"
 verify_jwt = false
 
 [functions.deleteCSVAddresses]
+entrypoint = "./functions/deleteCSVAddresses/index.ts"
 verify_jwt = false
 
 [functions.getCoordinates]
+entrypoint = "./functions/getCoordinates/index.ts"
 verify_jwt = false
 
 [functions.removeAllInvalidAddresses]
+entrypoint = "./functions/removeAllInvalidAddresses/index.ts"
 verify_jwt = false
 
 [functions.getCSVAddressListById]
+entrypoint = "./functions/getCSVAddressListById/index.ts"
 verify_jwt = false
 
 [functions.updateCampaignVerification]
+entrypoint = "./functions/updateCampaignVerification/index.ts"
 verify_jwt = false
 
 [functions.auditUniversalTemplates]
+entrypoint = "./functions/auditUniversalTemplates/index.ts"
 verify_jwt = false
