@@ -501,6 +501,7 @@ verify_jwt = false
 entrypoint = "./functions/getAllAddresses/index.ts"
 verify_jwt = false
 
+# Template Bundle endpoints - JWT verification required
 [functions.createNewTemplateBundle]
 entrypoint = "./functions/createNewTemplateBundle/index.ts"
 verify_jwt = false
