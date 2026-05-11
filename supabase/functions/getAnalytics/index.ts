@@ -9,6 +9,45 @@ import { getUserOrganizationId } from "../_shared/organization.ts";
 import { getUserPreferences, UserPreferences } from "../_shared/preferences.ts";
 import { enrichCurrency } from "../_shared/currency.ts";
 
+// Mirrors getAnalyticsV2 dashboard_cards: actual payment_history total per campaign
+// when available, otherwise falls back to postcards_sent * $3.00.
+const PRICE_PER_POSTCARD = 3.0;
+
+async function computeTotalSpent(
+  supabase: any,
+  organizationId: string,
+  campaigns: Array<{ id: string; postcards_sent: number | null }>,
+): Promise<number> {
+  const campaignIds = campaigns.map((c) => c.id);
+
+  let paymentTotals: Record<string, number> = {};
+  if (campaignIds.length > 0) {
+    const { data: payments, error: paymentsError } = await supabase
+      .from("payment_history")
+      .select("campaign_id, amount_paid")
+      .eq("organization_id", organizationId)
+      .in("campaign_id", campaignIds);
+
+    if (paymentsError) {
+      console.error("Error fetching payment_history:", paymentsError);
+      throw new Error("Failed to fetch payment_history");
+    }
+
+    for (const row of payments || []) {
+      paymentTotals[row.campaign_id] =
+        (paymentTotals[row.campaign_id] || 0) + Number(row.amount_paid);
+    }
+  }
+
+  const total = campaigns.reduce((sum, c) => {
+    return sum + (c.id in paymentTotals
+      ? paymentTotals[c.id]
+      : (c.postcards_sent || 0) * PRICE_PER_POSTCARD);
+  }, 0);
+
+  return Math.round(total * 100) / 100;
+}
+
 /**
  * Get Analytics Edge Function
  * Returns computed analytics based on type
@@ -624,8 +663,7 @@ async function computeCampaignsAnalytics(
     }
   }
 
-  // Calculate total spent (postcards_sent * 3)
-  const totalSpent = totalPostcardsSent * 3;
+  const totalSpent = await computeTotalSpent(supabase, organizationId, allCampaigns);
 
   // Calculate average scan rate
   const avgScanRate = scanRateCount > 0 ? scanRateSum / scanRateCount : 0;
@@ -747,8 +785,7 @@ async function computeDashboardAnalytics(
     }
   }
 
-  // Calculate total spent (postcards_sent * 3)
-  const totalSpent = totalPostcardsSent * 3;
+  const totalSpent = await computeTotalSpent(supabase, organizationId, allCampaigns);
 
   // Calculate average scan rate
   const averageScanRate = scanRateCount > 0 ? scanRateSum / scanRateCount : 0;
