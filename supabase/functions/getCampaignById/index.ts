@@ -101,15 +101,35 @@ Deno.serve(async (req) => {
     // Fetch image_url from referral's gallery
     const image_url = await getImageUrlForReferral(supabase, campaign.referral_id);
 
-    // Compute total_spent from payment_history (reflects coupons)
+    // Compute cost breakdown from payment_history (reflects coupons)
     const { data: paymentRows } = await supabase
       .from("payment_history")
-      .select("amount_paid")
+      .select("amount_paid, payment_type, description")
       .eq("campaign_id", id);
+
     const costPerPostcard = campaign.paper_type === 'premium' ? 3.50 : 3.00;
-    const total_spent = paymentRows && paymentRows.length > 0
-      ? paymentRows.reduce((sum: number, r: any) => sum + Number(r.amount_paid), 0)
-      : (campaign.postcards_sent || 0) * costPerPostcard;
+
+    let cost_address_verification = 0;
+    let cost_postcards = 0;
+
+    if (paymentRows && paymentRows.length > 0) {
+      for (const row of paymentRows) {
+        const amount = Number(row.amount_paid);
+        const desc = (row.description || '').toLowerCase();
+        const isVerification = row.payment_type === 'address_verification'
+          || (row.payment_type === null && (desc.includes('address') || desc.includes('validation')));
+        if (isVerification) {
+          cost_address_verification += amount;
+        } else {
+          cost_postcards += amount;
+        }
+      }
+    } else {
+      // No payment records — estimate from campaign data
+      cost_postcards = (campaign.postcards_sent || 0) * costPerPostcard;
+    }
+
+    const total_spent = cost_address_verification + cost_postcards;
 
     // Fetch user preferences
     const preferences = await getPreferences(supabase, user.userId);
@@ -148,6 +168,8 @@ Deno.serve(async (req) => {
           ...campaign,
           is_editing: (campaign as any).campaign_csv_address_lists?.is_editing || false,
           skip_verification: (campaign as any).campaign_csv_address_lists?.skip_address_verification === true || false,
+          cost_address_verification,
+          cost_postcards,
           total_spent,
           image_url,
           template_bundle_id,

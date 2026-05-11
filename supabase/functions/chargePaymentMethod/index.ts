@@ -121,6 +121,11 @@ Deno.serve(async (req) => {
       coupon_code,
     } = body;
 
+    const desc = (description || '').toLowerCase();
+    const payment_type = desc.includes('address') || desc.includes('validation')
+      ? 'address_verification'
+      : 'postcard_sending';
+
     // Validate payment_method_id
     if (!payment_method_id || typeof payment_method_id !== "string") {
       return errorResponse(
@@ -337,6 +342,8 @@ Deno.serve(async (req) => {
             stripe_charge_id: chargeId || null,
             stripe_invoice_id: paidInvoice.id,
             coupon_applied: coupon_code || null,
+            payment_type: payment_type || null,
+            description: description || null,
           });
         }
 
@@ -501,6 +508,7 @@ Deno.serve(async (req) => {
           stripe_charge_id: chargeId || null,
           stripe_invoice_id: paidPlainInvoice.id,
           coupon_applied: null,
+          payment_type: payment_type || null,
         });
       }
 
