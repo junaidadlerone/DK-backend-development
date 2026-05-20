@@ -45,7 +45,8 @@ CREATE INDEX IF NOT EXISTS idx_template_audit_reports_run_at ON template_audit_r
 ALTER TABLE template_audit_reports ENABLE ROW LEVEL SECURITY;
 
 -- Service role: full access (used by the auditUniversalTemplates edge function)
-CREATE POLICY IF NOT EXISTS "Service role has full access to template audit reports"
+DROP POLICY IF EXISTS "Service role has full access to template audit reports" ON template_audit_reports;
+CREATE POLICY "Service role has full access to template audit reports"
   ON template_audit_reports
   FOR ALL
   TO service_role
@@ -53,7 +54,8 @@ CREATE POLICY IF NOT EXISTS "Service role has full access to template audit repo
   WITH CHECK (true);
 
 -- ADMIN: read all audit reports
-CREATE POLICY IF NOT EXISTS "Admins can view all template audit reports"
+DROP POLICY IF EXISTS "Admins can view all template audit reports" ON template_audit_reports;
+CREATE POLICY "Admins can view all template audit reports"
   ON template_audit_reports
   FOR SELECT
   TO authenticated
