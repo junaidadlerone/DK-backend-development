@@ -15234,6 +15234,479 @@ paths:
               schema:
                 type: object
 
+  /createUserV3:
+    post:
+      tags:
+        - Multi-Tenant V3
+      summary: Invite a new user and add them to one or more orgs
+      description: |
+        **Agency-only multi-org user invitation.**
+
+        Sends a single Supabase Auth invitation email and adds the new user as a member of every org in `organization_ids`. The same `role` is applied uniformly to every listed org.
+
+        ### Caller eligibility (gate)
+        Caller must have OWNER or ADMIN role on at least one organization where `is_agency = TRUE`. Otherwise `403 NOT_AGENCY_USER`.
+
+        ### Per-org check
+        For every `organization_id` in the body, the caller must be either:
+        - the `owner_id` of that org, OR
+        - present in its `organization_members` with `member_role: "ADMIN"`.
+
+        If any listed org fails, the whole call rejects with `403 NO_INVITE_PERMISSION` and no user is created.
+
+        ### Role hierarchy
+        - `OWNER` of an org → can grant any of `ADMIN`, `MARKETER`, `TECHNICIAN`.
+        - `ADMIN` of an org → can grant any of `ADMIN`, `MARKETER`, `TECHNICIAN` (ADMINs can manage peer ADMINs).
+        - The `OWNER` role itself can never be granted via this endpoint.
+
+        ### Request example
+        ```json
+        {
+          "email": "admin@example.com",
+          "fullName": "Alex Admin",
+          "role": "ADMIN",
+          "organization_ids": ["uuid-a", "uuid-b", "uuid-c"]
+        }
+        ```
+
+        ### Response example
+        ```json
+        {
+          "status": "success",
+          "message": "User invited and added to 3 organization(s)",
+          "user": {
+            "id": "<auth user id>",
+            "email": "admin@example.com",
+            "fullName": "Alex Admin",
+            "role": "ADMIN",
+            "organization_ids": ["uuid-a", "uuid-b", "uuid-c"]
+          }
+        }
+        ```
+      operationId: createUserV3
+      security:
+        - BearerAuth: []
+        - SupabaseAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, role, organization_ids]
+              properties:
+                email:
+                  type: string
+                  format: email
+                fullName:
+                  type: string
+                  nullable: true
+                role:
+                  type: string
+                  enum: [ADMIN, MARKETER, TECHNICIAN]
+                organization_ids:
+                  type: array
+                  minItems: 1
+                  uniqueItems: true
+                  items:
+                    type: string
+                    format: uuid
+      responses:
+        "201":
+          description: User invited and added to all listed orgs
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: success }
+                  message: { type: string }
+                  user:
+                    type: object
+                    properties:
+                      id: { type: string, format: uuid }
+                      email: { type: string, format: email }
+                      fullName: { type: string, nullable: true }
+                      role: { type: string, enum: [ADMIN, MARKETER, TECHNICIAN] }
+                      organization_ids:
+                        type: array
+                        items: { type: string, format: uuid }
+        "400":
+          description: Invalid input, unknown organization_id, or invalid role
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Caller is not an agency user (NOT_AGENCY_USER) or lacks invite permission on one of the listed orgs (NO_INVITE_PERMISSION)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Email already registered
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /getUserV3:
+    get:
+      tags:
+        - Multi-Tenant V3
+      summary: Read user with full org details for every accessible org
+      description: |
+        **Agency-only user reader.**
+
+        Returns the same identity fields as `GET /getUser`, but the `organizations` array contains the **full** organization object for each org the user belongs to (all columns from the `organizations` table) plus augmented `role`, `is_active`, and `onboarding_step` fields. `organization_members` is stripped from each entry to avoid leaking other users' UIDs.
+
+        ### Caller eligibility (gate)
+        Caller must have OWNER or ADMIN role on at least one `is_agency = TRUE` organization. Otherwise `403 NOT_AGENCY_USER`.
+
+        ### Query parameters
+        - `user_id` (optional): UUID of a user to read. If omitted, defaults to the authenticated user. ADMIN-only when querying someone else.
+      operationId: getUserV3
+      security:
+        - BearerAuth: []
+        - SupabaseAuth: []
+      parameters:
+        - in: query
+          name: user_id
+          required: false
+          schema:
+            type: string
+            format: uuid
+          description: User UUID to read (defaults to authenticated user).
+      responses:
+        "200":
+          description: User data with full per-org details
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: success }
+                  data:
+                    type: object
+                    properties:
+                      id: { type: string, format: uuid }
+                      email: { type: string, format: email }
+                      role: { type: string, enum: [ADMIN, MARKETER, TECHNICIAN] }
+                      full_name: { type: string, nullable: true }
+                      created_at: { type: string }
+                      created_at_tz: { type: object }
+                      is_verified: { type: boolean }
+                      onboarding: { type: boolean }
+                      auth_type: { type: string, nullable: true }
+                      is_super_admin: { type: boolean }
+                      multi_org_enabled: { type: boolean }
+                      active_organization_id:
+                        type: string
+                        format: uuid
+                        nullable: true
+                      organizations:
+                        type: array
+                        items:
+                          type: object
+                          description: |
+                            Full organization row (all columns except `organization_members`)
+                            augmented with `role`, `is_active`, `onboarding_step`.
+                          properties:
+                            id: { type: string, format: uuid }
+                            owner_id: { type: string, format: uuid }
+                            business_name: { type: string, nullable: true }
+                            business_email: { type: string, nullable: true }
+                            industry: { type: string, nullable: true }
+                            business_address: { type: string, nullable: true }
+                            phone_number: { type: string, nullable: true }
+                            website_url: { type: string, nullable: true }
+                            is_agency: { type: boolean }
+                            branding_settings:
+                              type: object
+                              nullable: true
+                            deletion_scheduled_at: { type: string, nullable: true }
+                            created_at: { type: string }
+                            updated_at: { type: string }
+                            role: { type: string, enum: [OWNER, ADMIN, MARKETER, TECHNICIAN] }
+                            is_active: { type: boolean }
+                            onboarding_step: { type: integer, minimum: 0, maximum: 4 }
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: NOT_AGENCY_USER or FORBIDDEN (non-admin trying to read another user)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: User not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /revokeUserAccessV3:
+    post:
+      tags:
+        - Multi-Tenant V3
+      summary: Revoke a user's access from one or more orgs
+      description: |
+        **Agency-only multi-org access revocation.**
+
+        Removes the target user from each listed org's `organization_members`. The user's profile and Supabase Auth account are NOT touched; access to any unlisted orgs is preserved.
+
+        ### Caller eligibility (gate)
+        Same as `createUserV3` — OWNER or ADMIN of at least one `is_agency = TRUE` org.
+
+        ### Per-org check
+        For every listed org, the caller must be OWNER or ADMIN of that org. ADMINs can revoke peer ADMINs.
+
+        ### Protected role
+        The `OWNER` of an org cannot be revoked. To remove an owner, use `transferOrganizationOwnership` first.
+
+        ### Whole-call rejection
+        If any listed org fails validation (unknown, no permission, target is the owner), the entire call rejects with the offending `organization_id` and **no revocation is applied**.
+
+        ### Idempotency
+        Re-revoking a user who is no longer a member returns success with `was_member: false` for that org.
+
+        ### Side effect
+        If the user's `profiles.active_organization_id` happens to be in the revoked list, it is cleared so the next login resolves to a still-valid org.
+
+        ### Request example
+        ```json
+        { "user_id": "uuid-of-user", "organization_ids": ["uuid-b", "uuid-c"] }
+        ```
+
+        ### Response example
+        ```json
+        {
+          "status": "success",
+          "message": "User access revoked from 2 organization(s)",
+          "user_id": "uuid-of-user",
+          "results": [
+            { "organization_id": "uuid-b", "was_member": true },
+            { "organization_id": "uuid-c", "was_member": true }
+          ]
+        }
+        ```
+      operationId: revokeUserAccessV3
+      security:
+        - BearerAuth: []
+        - SupabaseAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [user_id, organization_ids]
+              properties:
+                user_id:
+                  type: string
+                  format: uuid
+                organization_ids:
+                  type: array
+                  minItems: 1
+                  uniqueItems: true
+                  items:
+                    type: string
+                    format: uuid
+      responses:
+        "200":
+          description: Access revoked
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: success }
+                  message: { type: string }
+                  user_id: { type: string, format: uuid }
+                  results:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        organization_id: { type: string, format: uuid }
+                        was_member: { type: boolean }
+        "400":
+          description: Invalid input, self-revoke, or attempt to revoke an OWNER
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: NOT_AGENCY_USER or NO_REVOKE_PERMISSION on at least one org
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: One of the listed orgs not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /deleteUserV3:
+    post:
+      tags:
+        - Multi-Tenant V3
+      summary: Delete a user globally (also accepts DELETE)
+      description: |
+        **Agency-only global user deletion.**
+
+        Removes the user from every org they're a member of, deletes their `profiles` row, and deletes their Supabase Auth account.
+
+        Accepts both `POST` and `DELETE`.
+
+        ### Caller eligibility (gate)
+        Same as other V3 endpoints — OWNER or ADMIN of at least one `is_agency = TRUE` org.
+
+        ### Per-org check
+        For every org the target is a member of, the caller must be OWNER or ADMIN of that org. Otherwise `403 NO_DELETE_PERMISSION` and nothing is deleted. This prevents an agency admin from deleting a user who works under a different agency.
+
+        ### Protected role
+        If the target user owns any org → `400 CANNOT_DELETE_OWNER`. Use `transferOrganizationOwnership` to move ownership before deleting.
+
+        ### Request example
+        ```json
+        { "user_id": "uuid-of-user" }
+        ```
+
+        ### Response example
+        ```json
+        {
+          "status": "success",
+          "message": "User deleted",
+          "user_id": "uuid-of-user",
+          "removed_from_organization_ids": ["uuid-a", "uuid-b"]
+        }
+        ```
+      operationId: deleteUserV3
+      security:
+        - BearerAuth: []
+        - SupabaseAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [user_id]
+              properties:
+                user_id:
+                  type: string
+                  format: uuid
+      responses:
+        "200":
+          description: User deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: success }
+                  message: { type: string }
+                  user_id: { type: string, format: uuid }
+                  removed_from_organization_ids:
+                    type: array
+                    items:
+                      type: string
+                      format: uuid
+        "400":
+          description: Self-delete or target owns an org (CANNOT_DELETE_OWNER)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: NOT_AGENCY_USER or NO_DELETE_PERMISSION on one of the target's orgs
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Target user not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Internal server error (may indicate partial deletion if auth.admin.deleteUser fails)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    delete:
+      tags:
+        - Multi-Tenant V3
+      summary: Delete a user globally (DELETE variant)
+      description: Same behavior as `POST /deleteUserV3`. See the POST variant for full details.
+      operationId: deleteUserV3Delete
+      security:
+        - BearerAuth: []
+        - SupabaseAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [user_id]
+              properties:
+                user_id:
+                  type: string
+                  format: uuid
+      responses:
+        "200":
+          description: User deleted (see POST variant for schema)
+          content:
+            application/json:
+              schema:
+                type: object
+
   /createCampaignV2:
     post:
       tags:
