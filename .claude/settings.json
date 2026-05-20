@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(awk 'NR>=14249 && /^  \\\\//{print NR\": \"$0; if\\(++count==2\\) exit}' /Users/junaidtariq/VSCodeProjects/AdlerOne/dk+_backend/docs/openapi.yaml)",
+      "Bash(python3 -c \"import yaml; yaml.safe_load\\(open\\('/Users/junaidtariq/VSCodeProjects/AdlerOne/dk+_backend/docs/openapi.yaml'\\)\\)\")"
+    ]
+  }
+}

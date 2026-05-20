@@ -129,6 +129,15 @@ tags:
     description: CSV-based address list operations including duplicates removal, geocoding, and bulk deletion.
   - name: Universal Template Audit
     description: Cross-checks every universal template in the database against PostGrid, categorises each by status, generates an AI summary of any issues found, and persists a report only when problems are detected.
+  - name: Multi-Tenant V3
+    description: |
+      V3 onboarding endpoints that branch by `organization_type` (business vs agency). The agency flow
+      creates a first client sub-org during onboarding; branding is stored per-organization on
+      `organizations.branding_settings` so each sub-org can be styled independently.
+
+      **New endpoints:** completeOnboardingV3, getOnboardingStepV3, getOnboardingDetailsV3
+
+      **Backwards compatibility:** V1 endpoints (completeOnboarding, getOnboardingStep, getOnboardingDetails) remain unchanged. V3 is a parallel surface.
 
 paths:
   /signUp:
@@ -14642,6 +14651,588 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+
+  /completeOnboardingV3:
+    post:
+      tags:
+        - Multi-Tenant V3
+      summary: V3 branched onboarding (business or agency)
+      description: |
+        **Branched onboarding by `organization_type`.**
+
+        Step 1 picks the type. Steps 2 onwards depend on whether the user is onboarding as a **business** (4 steps total) or an **agency** (5 steps total). Branding is stored on `organizations.branding_settings`. V1 `completeOnboarding` is preserved unchanged.
+
+        ### Business flow (4 steps)
+
+        | Step | Purpose | Required fields |
+        |---|---|---|
+        | 1 | Choose type | `organization_type: "business"` |
+        | 2 | Business details | `business_name`, `business_type`, `business_phone_number`, `website_url` |
+        | 3 | Return address | `country`, `street_address`, `city`, `state`, `zip_code` |
+        | 4 | Branding (FINAL) | `company_logo` (base64 or URL), `theme` |
+
+        ### Agency flow (5 steps)
+
+        | Step | Purpose | Required fields |
+        |---|---|---|
+        | 1 | Choose type | `organization_type: "agency"` |
+        | 2 | Agency details | `agency_name`, `agency_type`, `agency_logo`, `website_url` |
+        | 3 | First client details | `client_name`, `client_business_type`, `client_phone_number`, `client_website_url` |
+        | 4 | First client return address | `client_country`, `client_street_address`, `client_city`, `client_state`, `client_zip_code` |
+        | 5 | First client branding (FINAL) | `company_logo`, `theme` |
+
+        ### Where data is written
+
+        - **Business:** all data written to the user's primary org (`organizations` + `onboarding` rows).
+        - **Agency:** step 2 writes to the agency org (primary org); step 3 creates a client sub-org with `is_agency = false` and stores its id on `agency_org.onboarding.first_client_org_id`; steps 4–5 update the client sub-org.
+        - Branding writes to `organizations.branding_settings` with shape `{ logo: <url>, theme: { colors: {...}, fonts: {...} } }`.
+        - On the final step (4 for business, 5 for agency), `profiles.onboarding` is set to `true`.
+
+        ### Idempotency
+
+        Re-submitting step 3 on the agency flow does NOT create a duplicate sub-org — it updates the existing one referenced by `onboarding.first_client_org_id`. All other steps overwrite cleanly.
+
+        ### Dropdowns
+
+        Both `business_type` and `agency_type` use the values returned by `GET /getIndustry`.
+
+        ---
+
+        ## Step 1: Choose organization type
+
+        **Request:**
+        ```json
+        { "step": 1, "organization_type": "business" }
+        ```
+        or
+        ```json
+        { "step": 1, "organization_type": "agency" }
+        ```
+
+        **What happens:**
+        - Sets `organizations.is_agency = (organization_type === "agency")` on the user's primary org.
+        - If `organization_type === "agency"`: also sets `profiles.is_super_admin = true` and `profiles.multi_org_enabled = true` on the caller's profile (equivalent to running `enableMultiOrg`). This is required so the agency owner can later use `createOrganization` / `switchOrganization` to add more clients past the first one created in step 3.
+
+        ---
+
+        ## Business — Step 2: Business details
+
+        ```json
+        {
+          "step": 2,
+          "business_name": "Acme Cleaning",
+          "business_type": "Residential",
+          "business_phone_number": "+1-555-0123",
+          "website_url": "https://acme.example"
+        }
+        ```
+
+        ## Business — Step 3: Return address
+
+        ```json
+        {
+          "step": 3,
+          "country": "United States",
+          "street_address": "123 Main Street",
+          "city": "San Francisco",
+          "state": "California",
+          "zip_code": "94102"
+        }
+        ```
+
+        ## Business — Step 4: Branding (final)
+
+        ```json
+        {
+          "step": 4,
+          "company_logo": "data:image/png;base64,iVBORw0KGgo...",
+          "theme": {
+            "colors": { "primary": "#E36A00", "secondary": "#1D1D20", "accent": "#47BAD7" },
+            "fonts": {
+              "primary": { "name": "Poppins" },
+              "body":    { "name": "Poppins" }
+            }
+          }
+        }
+        ```
+
+        ---
+
+        ## Agency — Step 2: Agency details
+
+        ```json
+        {
+          "step": 2,
+          "agency_name": "BrightMail Agency",
+          "agency_type": "Marketing",
+          "agency_logo": "data:image/png;base64,iVBORw0KGgo...",
+          "website_url": "https://brightmail.example"
+        }
+        ```
+
+        `agency_logo` is uploaded to `CompanyLogos` and stored at `agency_org.branding_settings.logo`.
+
+        ## Agency — Step 3: First client details
+
+        ```json
+        {
+          "step": 3,
+          "client_name": "Acme Cleaning",
+          "client_business_type": "Residential",
+          "client_phone_number": "+1-555-0123",
+          "client_website_url": "https://acme.example"
+        }
+        ```
+
+        Creates the client sub-org. Response includes `client_organization_id`.
+
+        ## Agency — Step 4: First client return address
+
+        ```json
+        {
+          "step": 4,
+          "client_country": "United States",
+          "client_street_address": "123 Main Street",
+          "client_city": "San Francisco",
+          "client_state": "California",
+          "client_zip_code": "94102"
+        }
+        ```
+
+        ## Agency — Step 5: First client branding (final)
+
+        Same shape as business step 4. Writes to the client sub-org's `branding_settings`.
+
+        ### Access control
+        - Requires authentication
+        - User must already have a primary organization
+      operationId: completeOnboardingV3
+      security:
+        - BearerAuth: []
+        - SupabaseAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - type: object
+                  required: [step, organization_type]
+                  properties:
+                    step:
+                      type: integer
+                      enum: [1]
+                    organization_type:
+                      type: string
+                      enum: [business, agency]
+                    organization_id:
+                      type: string
+                      format: uuid
+                      description: Target org. Defaults to user's primary org.
+                - type: object
+                  required: [step, business_name, business_type]
+                  properties:
+                    step:
+                      type: integer
+                      enum: [2]
+                    organization_id:
+                      type: string
+                      format: uuid
+                    business_name:
+                      type: string
+                    business_type:
+                      type: string
+                    business_phone_number:
+                      type: string
+                    website_url:
+                      type: string
+                - type: object
+                  required: [step, agency_name, agency_type]
+                  properties:
+                    step:
+                      type: integer
+                      enum: [2]
+                    organization_id:
+                      type: string
+                      format: uuid
+                    agency_name:
+                      type: string
+                    agency_type:
+                      type: string
+                    agency_logo:
+                      type: string
+                      description: Base64 data URL, raw base64, or an existing public URL.
+                    website_url:
+                      type: string
+                - type: object
+                  required: [step, country, street_address, city, state, zip_code]
+                  properties:
+                    step:
+                      type: integer
+                      enum: [3]
+                    organization_id:
+                      type: string
+                      format: uuid
+                    country:
+                      type: string
+                    street_address:
+                      type: string
+                    city:
+                      type: string
+                    state:
+                      type: string
+                    zip_code:
+                      type: string
+                - type: object
+                  required: [step, client_name, client_business_type]
+                  properties:
+                    step:
+                      type: integer
+                      enum: [3]
+                    organization_id:
+                      type: string
+                      format: uuid
+                    client_name:
+                      type: string
+                    client_business_type:
+                      type: string
+                    client_phone_number:
+                      type: string
+                    client_website_url:
+                      type: string
+                - type: object
+                  required: [step]
+                  properties:
+                    step:
+                      type: integer
+                      enum: [4]
+                    organization_id:
+                      type: string
+                      format: uuid
+                    company_logo:
+                      type: string
+                      description: Base64 data URL, raw base64, or an existing public URL. Business flow only.
+                    theme:
+                      type: object
+                      description: Business flow only.
+                      properties:
+                        colors:
+                          type: object
+                          properties:
+                            primary: { type: string }
+                            secondary: { type: string }
+                            accent: { type: string }
+                        fonts:
+                          type: object
+                          properties:
+                            primary:
+                              type: object
+                              properties:
+                                name: { type: string }
+                            body:
+                              type: object
+                              properties:
+                                name: { type: string }
+                    client_country:
+                      type: string
+                      description: Agency flow only.
+                    client_street_address:
+                      type: string
+                      description: Agency flow only.
+                    client_city:
+                      type: string
+                      description: Agency flow only.
+                    client_state:
+                      type: string
+                      description: Agency flow only.
+                    client_zip_code:
+                      type: string
+                      description: Agency flow only.
+                - type: object
+                  required: [step]
+                  properties:
+                    step:
+                      type: integer
+                      enum: [5]
+                    organization_id:
+                      type: string
+                      format: uuid
+                    company_logo:
+                      type: string
+                    theme:
+                      type: object
+                      properties:
+                        colors:
+                          type: object
+                          properties:
+                            primary: { type: string }
+                            secondary: { type: string }
+                            accent: { type: string }
+                        fonts:
+                          type: object
+                          properties:
+                            primary:
+                              type: object
+                              properties:
+                                name: { type: string }
+                            body:
+                              type: object
+                              properties:
+                                name: { type: string }
+      responses:
+        "200":
+          description: Step completed successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: success }
+                  message: { type: string }
+                  step: { type: integer }
+                  organization_type:
+                    type: string
+                    enum: [business, agency]
+                  organization_id: { type: string, format: uuid }
+                  client_organization_id:
+                    type: string
+                    format: uuid
+                    description: Present from step 3 onwards on the agency flow.
+                  agency_logo_url:
+                    type: string
+                    description: Present on agency step 2 when agency_logo was provided.
+                  company_logo:
+                    type: string
+                    description: Present on the final branding step.
+                  theme:
+                    type: object
+                    description: Present on the final branding step.
+        "400":
+          description: Invalid input or invalid state (e.g. step 4/5 called before step 3 on the agency flow)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: User has no organization or no access to the target organization
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /getOnboardingStepV3:
+    get:
+      tags:
+        - Multi-Tenant V3
+      summary: Current V3 onboarding progress
+      description: |
+        Returns the user's current step in the V3 branched onboarding flow.
+        `organization_type` is inferred from `organizations.is_agency` on the user's primary org.
+
+        - `completed_step`: 0–4 (business) or 0–5 (agency)
+        - `next_step`: the step the frontend should render next, or `null` when onboarding is fully complete (`profiles.onboarding = true`)
+
+        Step inference:
+
+        **Business**
+        - 1 → primary org exists
+        - 2 → `organizations.business_name` set
+        - 3 → `organizations.business_address` set
+        - 4 → `organizations.branding_settings.logo` set (FINAL)
+
+        **Agency**
+        - 1 → primary org exists with `is_agency = true`
+        - 2 → agency org has `business_name`
+        - 3 → `onboarding.first_client_org_id` set
+        - 4 → client sub-org has `business_address`
+        - 5 → client sub-org has `branding_settings.logo` (FINAL)
+      operationId: getOnboardingStepV3
+      security:
+        - BearerAuth: []
+        - SupabaseAuth: []
+      responses:
+        "200":
+          description: Current onboarding progress
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  organization_type:
+                    type: string
+                    enum: [business, agency]
+                    nullable: true
+                  completed_step:
+                    type: integer
+                    minimum: 0
+                    maximum: 5
+                  next_step:
+                    type: integer
+                    minimum: 1
+                    maximum: 5
+                    nullable: true
+              examples:
+                business_in_progress:
+                  summary: Business — step 2 done, step 3 next
+                  value:
+                    organization_type: business
+                    completed_step: 2
+                    next_step: 3
+                agency_complete:
+                  summary: Agency — fully onboarded
+                  value:
+                    organization_type: agency
+                    completed_step: 5
+                    next_step: null
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: User has no organization
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /getOnboardingDetailsV3:
+    get:
+      tags:
+        - Multi-Tenant V3
+      summary: Read back V3 onboarding data
+      description: |
+        Returns all data the user has filled in during V3 onboarding. The response shape branches by `organization_type`:
+
+        - **Business:** `{ organization_type: "business", organization_id, business: {...all fields including address + branding} }`
+        - **Agency:** `{ organization_type: "agency", organization_id, agency: {...}, first_client: {...} | null }`
+
+        Branding is read primarily from `organizations.branding_settings`. The legacy `onboarding.company_logo` URL is returned as a fallback for orgs whose branding hasn't been migrated yet.
+
+        Accepts both GET and POST (no body required) for compatibility with frontend HTTP clients that prefer POST.
+      operationId: getOnboardingDetailsV3
+      security:
+        - BearerAuth: []
+        - SupabaseAuth: []
+      responses:
+        "200":
+          description: Onboarding details
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: success }
+                  data:
+                    oneOf:
+                      - type: object
+                        properties:
+                          organization_type:
+                            type: string
+                            enum: [business]
+                          organization_id: { type: string, format: uuid }
+                          business:
+                            type: object
+                            properties:
+                              business_name: { type: string, nullable: true }
+                              business_type: { type: string, nullable: true }
+                              business_phone_number: { type: string, nullable: true }
+                              website_url: { type: string, nullable: true }
+                              country: { type: string, nullable: true }
+                              street_address: { type: string, nullable: true }
+                              city: { type: string, nullable: true }
+                              state: { type: string, nullable: true }
+                              zip_code: { type: string, nullable: true }
+                              business_address: { type: string, nullable: true }
+                              company_logo: { type: string, nullable: true }
+                              theme:
+                                type: object
+                                nullable: true
+                      - type: object
+                        properties:
+                          organization_type:
+                            type: string
+                            enum: [agency]
+                          organization_id: { type: string, format: uuid }
+                          agency:
+                            type: object
+                            properties:
+                              agency_name: { type: string, nullable: true }
+                              agency_type: { type: string, nullable: true }
+                              website_url: { type: string, nullable: true }
+                              agency_logo: { type: string, nullable: true }
+                          first_client:
+                            type: object
+                            nullable: true
+                            properties:
+                              organization_id: { type: string, format: uuid }
+                              client_name: { type: string, nullable: true }
+                              client_business_type: { type: string, nullable: true }
+                              client_phone_number: { type: string, nullable: true }
+                              client_website_url: { type: string, nullable: true }
+                              client_country: { type: string, nullable: true }
+                              client_street_address: { type: string, nullable: true }
+                              client_city: { type: string, nullable: true }
+                              client_state: { type: string, nullable: true }
+                              client_zip_code: { type: string, nullable: true }
+                              business_address: { type: string, nullable: true }
+                              company_logo: { type: string, nullable: true }
+                              theme:
+                                type: object
+                                nullable: true
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: User has no organization
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    post:
+      tags:
+        - Multi-Tenant V3
+      summary: Read back V3 onboarding data (POST variant)
+      description: Same as `GET /getOnboardingDetailsV3`. No body required.
+      operationId: getOnboardingDetailsV3Post
+      security:
+        - BearerAuth: []
+        - SupabaseAuth: []
+      responses:
+        "200":
+          description: Onboarding details (see GET variant for schema)
+          content:
+            application/json:
+              schema:
+                type: object
 
   /createCampaignV2:
     post:
