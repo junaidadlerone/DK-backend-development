@@ -15707,6 +15707,142 @@ paths:
               schema:
                 type: object
 
+  /getAgencyOverview:
+    get:
+      tags:
+        - Multi-Tenant V3
+      summary: Agency dashboard rollup — all managed orgs + active campaigns + scans + spend
+      description: |
+        **Agency-only single-shot portfolio view.**
+
+        For every organization the caller is OWNER or ADMIN of, returns the full org row plus that org's active campaigns, lifetime QR-scan total, lifetime spend, and total campaign count. Includes a portfolio-wide `summary`.
+
+        Designed to replace the previous fan-out of `getUserOrganizations` → N × `getAllCampaigns` → N × `getCampaignById` calls on the agency-dashboard screen.
+
+        ### Caller eligibility (gate)
+        Caller must have OWNER or ADMIN role on at least one organization where `is_agency = TRUE`. Otherwise `403 NOT_AGENCY_USER`.
+
+        ### What's "active"?
+        An active campaign is one where `status->>'name' = 'Active'`. `total_qr_scans` and `total_spend` count **all** campaigns (active + inactive), so the agency sees lifetime totals — not just what's currently live.
+
+        ### Performance
+        One request runs four batched queries in parallel — `organizations`, active `campaigns`, `campaigns` (for the lifetime scan rollup), and `payment_history`. No per-org N+1.
+
+        ### Privacy
+        `organization_members` is stripped from every returned org row to avoid leaking other users' UIDs. To enumerate members of a specific org, call `getOrganization` or `getUserV3` with that user's id.
+
+        ### Example response
+        ```json
+        {
+          "status": "success",
+          "data": {
+            "organizations": [
+              {
+                "id": "agency-uuid",
+                "business_name": "BrightMail Agency",
+                "is_agency": true,
+                "industry": "Marketing",
+                "business_address": "...",
+                "branding_settings": { "logo": "...", "theme": { ... } },
+                "role": "OWNER",
+                "active_campaigns": [ { "id": "...", "campaign_name": "...", "status": { "name": "Active" }, ... } ],
+                "active_campaign_count": 2,
+                "total_qr_scans": 134,
+                "total_spend": 451.25,
+                "total_campaign_count": 5
+              }
+            ],
+            "summary": {
+              "organization_count": 1,
+              "total_active_campaigns": 2,
+              "total_qr_scans": 134,
+              "total_spend": 451.25
+            }
+          }
+        }
+        ```
+      operationId: getAgencyOverview
+      security:
+        - BearerAuth: []
+        - SupabaseAuth: []
+      responses:
+        "200":
+          description: Agency portfolio rollup
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: success }
+                  data:
+                    type: object
+                    properties:
+                      organizations:
+                        type: array
+                        items:
+                          type: object
+                          description: |
+                            Full organization row (all columns except `organization_members`) augmented with `role`, `active_campaigns`, `active_campaign_count`, `total_qr_scans`, `total_spend`, `total_campaign_count`.
+                          properties:
+                            id: { type: string, format: uuid }
+                            owner_id: { type: string, format: uuid }
+                            business_name: { type: string, nullable: true }
+                            business_email: { type: string, nullable: true }
+                            industry: { type: string, nullable: true }
+                            business_address: { type: string, nullable: true }
+                            phone_number: { type: string, nullable: true }
+                            website_url: { type: string, nullable: true }
+                            registration_number: { type: string, nullable: true }
+                            stripe_customer_id: { type: string, nullable: true }
+                            is_agency: { type: boolean }
+                            branding_settings:
+                              type: object
+                              nullable: true
+                            deletion_scheduled_at: { type: string, nullable: true }
+                            created_at: { type: string }
+                            updated_at: { type: string }
+                            role:
+                              type: string
+                              enum: [OWNER, ADMIN]
+                            active_campaigns:
+                              type: array
+                              items:
+                                type: object
+                                description: Full campaign row where status.name = "Active"
+                            active_campaign_count: { type: integer }
+                            total_qr_scans:
+                              type: integer
+                              description: Sum of leads_gen across ALL campaigns (active + inactive)
+                            total_spend:
+                              type: number
+                              description: Sum of payment_history.amount_paid for the org
+                            total_campaign_count: { type: integer }
+                      summary:
+                        type: object
+                        properties:
+                          organization_count: { type: integer }
+                          total_active_campaigns: { type: integer }
+                          total_qr_scans: { type: integer }
+                          total_spend: { type: number }
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: NOT_AGENCY_USER — caller is not an agency-account OWNER or ADMIN
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
   /createNewTemplateBundleV3:
     post:
       tags:
