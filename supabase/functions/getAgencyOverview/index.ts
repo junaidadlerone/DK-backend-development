@@ -67,6 +67,7 @@ Deno.serve(async (req) => {
       { data: activeCampaigns, error: activeErr },
       { data: allCampaignLeads, error: leadsErr },
       { data: paymentRows, error: payErr },
+      { data: onboardingRows, error: onbErr },
     ] = await Promise.all([
       supabase.from("organizations").select("*").in("id", orgIds),
       supabase.from("campaigns").select("*").in("organization_id", orgIds).eq(
@@ -81,6 +82,9 @@ Deno.serve(async (req) => {
         "organization_id",
         orgIds,
       ),
+      supabase.from("onboarding").select(
+        "organization_id, business_name, street_address, company_logo, team_onboarding_completed",
+      ).in("organization_id", orgIds),
     ]);
 
     if (orgsErr) {
@@ -98,6 +102,43 @@ Deno.serve(async (req) => {
     if (payErr) {
       console.error("getAgencyOverview: payment_history fetch error", payErr);
       return errorResponse("FETCH_FAILED", "Failed to load payment history", 500);
+    }
+    if (onbErr) {
+      console.error("getAgencyOverview: onboarding fetch error", onbErr);
+      return errorResponse("FETCH_FAILED", "Failed to load onboarding rows", 500);
+    }
+
+    // Index onboarding rows by org id.
+    const onboardingByOrg = new Map<string, any>();
+    for (const row of onboardingRows ?? []) {
+      onboardingByOrg.set(row.organization_id, row);
+    }
+
+    // Per-org status string.
+    // Priority: pending-deletion > onboarding-complete > setup-in-progress.
+    function computeStatus(org: any, onb: any | undefined): string {
+      if (org.deletion_scheduled_at) {
+        const msRemaining = new Date(org.deletion_scheduled_at).getTime() - Date.now();
+        const daysRemaining = Math.max(0, Math.ceil(msRemaining / (1000 * 60 * 60 * 24)));
+        return `Deleting in ${daysRemaining} day${daysRemaining === 1 ? "" : "s"}`;
+      }
+      // "Active" if either the V1 team step finished OR per-org branding is set
+      // (covers V3 business step 4 and V3 agency step 2's agency_logo).
+      const hasBranding = !!(org.branding_settings && org.branding_settings.logo);
+      const teamDone = onb?.team_onboarding_completed === true;
+      if (hasBranding || teamDone) return "Active";
+
+      // Infer current step from filled fields. Always shown over a 4-step total
+      // (V1 + V3 business). V3 agency has 5 steps but its 5th step is the first
+      // client's branding — for the agency org's own status, 4 steps is the
+      // observable boundary.
+      const TOTAL = 4;
+      let completed = 0;
+      if (org.business_name || onb?.business_name) completed = 1;
+      if (org.business_address || onb?.street_address) completed = 2;
+      if (onb?.company_logo) completed = 3;
+      const currentStep = Math.min(completed + 1, TOTAL);
+      return `Setup ${currentStep} of ${TOTAL}`;
     }
 
     // Index org rows by id; strip organization_members for privacy.
@@ -146,6 +187,7 @@ Deno.serve(async (req) => {
       return {
         ...orgRow,
         role: roleByOrgId.get(o.id),
+        status: computeStatus(orgRow, onboardingByOrg.get(o.id)),
         active_campaigns: active,
         active_campaign_count: active.length,
         total_qr_scans: scansByOrg.get(o.id) ?? 0,

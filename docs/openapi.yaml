@@ -15731,6 +15731,12 @@ paths:
         ### Privacy
         `organization_members` is stripped from every returned org row to avoid leaking other users' UIDs. To enumerate members of a specific org, call `getOrganization` or `getUserV3` with that user's id.
 
+        ### `status` field (per-org)
+        Each org carries a human-readable status string the frontend can render verbatim:
+        - **`"Active"`** — onboarding is complete. Either `onboarding.team_onboarding_completed = true` (V1) or per-org `branding_settings.logo` is set (V3).
+        - **`"Deleting in N days"`** — `organizations.deletion_scheduled_at` is in the future. `N` is computed by `ceil((deletion_scheduled_at - now) / 1 day)`. Set via `/deleteOrganization` (30-day grace).
+        - **`"Setup N of 4"`** — neither completed nor pending deletion. `N` is the step the org is currently on, inferred from filled fields (1: business_name; 2: business_address; 3: company_logo; 4: branding/team). Total is always 4 (the visible-to-user step count for the agency dashboard).
+
         ### Example response
         ```json
         {
@@ -15744,20 +15750,35 @@ paths:
                 "industry": "Marketing",
                 "business_address": "...",
                 "branding_settings": { "logo": "...", "theme": { ... } },
+                "deletion_scheduled_at": null,
                 "role": "OWNER",
+                "status": "Active",
                 "active_campaigns": [ { "id": "...", "campaign_name": "...", "status": { "name": "Active" }, ... } ],
                 "active_campaign_count": 2,
                 "total_qr_scans": 134,
                 "total_spend": 451.25,
                 "total_campaign_count": 5
+              },
+              {
+                "id": "sub-org-pending-deletion",
+                "business_name": "Old Client",
+                "deletion_scheduled_at": "2026-06-19T...",
+                "role": "OWNER",
+                "status": "Deleting in 30 days",
+                "active_campaigns": [], "active_campaign_count": 0,
+                "total_qr_scans": 0, "total_spend": 0, "total_campaign_count": 0
+              },
+              {
+                "id": "sub-org-in-setup",
+                "business_name": "New Client",
+                "business_address": "123 Main St, ...",
+                "role": "OWNER",
+                "status": "Setup 3 of 4",
+                "active_campaigns": [], "active_campaign_count": 0,
+                "total_qr_scans": 0, "total_spend": 0, "total_campaign_count": 0
               }
             ],
-            "summary": {
-              "organization_count": 1,
-              "total_active_campaigns": 2,
-              "total_qr_scans": 134,
-              "total_spend": 451.25
-            }
+            "summary": { ... }
           }
         }
         ```
@@ -15804,6 +15825,14 @@ paths:
                             role:
                               type: string
                               enum: [OWNER, ADMIN]
+                            status:
+                              type: string
+                              description: |
+                                Human-readable per-org status. One of:
+                                - `"Active"` — onboarding complete.
+                                - `"Deleting in N days"` — `deletion_scheduled_at` is in the future.
+                                - `"Setup N of 4"` — onboarding in progress.
+                              example: Active
                             active_campaigns:
                               type: array
                               items:
