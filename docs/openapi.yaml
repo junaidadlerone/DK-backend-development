@@ -15707,6 +15707,346 @@ paths:
               schema:
                 type: object
 
+  /createNewTemplateBundleV3:
+    post:
+      tags:
+        - Multi-Tenant V3
+      summary: Create a template bundle and optionally share it at creation time
+      description: |
+        **V3 of `createNewTemplateBundle` with two new optional fields**: choose which org owns the new bundle, and share with sub-orgs in the same call.
+
+        Same flow as V1 (creates a front + back PostGrid template, persists them, then creates the `template_bundles` row). The only differences are:
+        - `organization_id` (optional): explicit override for which org owns the bundle. Defaults to the caller's active org. Caller must have access to the chosen org (`validateOrganizationAccess`).
+        - `share_with_organization_ids` (optional): grant read access to these orgs immediately. Applies the same gates as `shareTemplateBundleV3`:
+          - Owning org must be `is_agency = true` → `400 OWNER_ORG_NOT_AGENCY`.
+          - Caller must be OWNER or ADMIN of the owning org → `403 NOT_BUNDLE_ADMIN`.
+          - Caller must be OWNER or ADMIN of every target org → `403 NO_SHARE_PERMISSION`.
+        Share validation runs **before** any PostGrid call to avoid orphaned PostGrid templates if validation fails.
+
+        ### "Where did my bundle go?" troubleshooting
+        Bundles are scoped by `organization_id`. `getAllTemplatesBundles` filters by your **active** org. If you created the bundle while active org was `AGENCY` and then switched to `SUB_ORG_A`, the bundle is invisible until you (a) switch back, (b) call `shareTemplateBundleV3` to share with `SUB_ORG_A`, or (c) create the bundle via this endpoint with `share_with_organization_ids` populated up front.
+
+        ### Request example (create + share in one call)
+        ```json
+        {
+          "description": "Spring promo",
+          "html_front": "<html>...</html>",
+          "html_back": "<html>...</html>",
+          "postcardSize": "6x9",
+          "organization_id": "agency-uuid",
+          "share_with_organization_ids": ["sub-org-1", "sub-org-2"]
+        }
+        ```
+
+        V1 `createNewTemplateBundle` is preserved unchanged for backwards compatibility.
+      operationId: createNewTemplateBundleV3
+      security:
+        - BearerAuth: []
+        - SupabaseAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [description, html_front, html_back, postcardSize]
+              properties:
+                description:
+                  type: string
+                html_front:
+                  type: string
+                html_back:
+                  type: string
+                postcardSize:
+                  type: string
+                  enum: ["4x6", "6x9", "6x11"]
+                isManualEdit:
+                  type: boolean
+                  default: false
+                campaign_id:
+                  type: string
+                  format: uuid
+                  description: Required when isManualEdit is true.
+                organization_id:
+                  type: string
+                  format: uuid
+                  description: Optional. Org that owns the new bundle. Defaults to caller's active org. Caller must have access.
+                share_with_organization_ids:
+                  type: array
+                  uniqueItems: true
+                  description: Optional. Orgs to grant read access to at creation. Subject to agency gates.
+                  items:
+                    type: string
+                    format: uuid
+      responses:
+        "201":
+          description: Bundle created (and shared, if share_with_organization_ids was provided)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: success }
+                  message: { type: string }
+                  bundle:
+                    type: object
+                    properties:
+                      id: { type: string, format: uuid }
+                      organization_id: { type: string, format: uuid }
+                      shared_with_organization_ids:
+                        type: array
+                        items: { type: string, format: uuid }
+                      front_template: { type: object }
+                      back_template: { type: object }
+                      created_at: { type: string }
+                      updated_at: { type: string }
+                  processingTimeMs: { type: integer }
+        "400":
+          description: Invalid input, OWNER_ORG_NOT_AGENCY, or campaign not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: FORBIDDEN on organization_id, NOT_BUNDLE_ADMIN, or NO_SHARE_PERMISSION on a target org
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Campaign or target org not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Internal server error (PostGrid or DB)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /shareTemplateBundleV3:
+    post:
+      tags:
+        - Multi-Tenant V3
+      summary: Share a template bundle with one or more organizations
+      description: |
+        **Agency-only multi-org bundle sharing.**
+
+        Adds organizations to a bundle's `shared_with_organization_ids` array. Members of those orgs gain read access to the bundle exactly as if it were one of their own org's private bundles. The owning agency keeps full control — recipients cannot reshare.
+
+        ### Caller requirements
+        - Must be OWNER or ADMIN of the bundle's owning org.
+        - Owning org must have `is_agency = true`.
+        - For every target org in `organization_ids`, caller must be OWNER or ADMIN of that target org as well.
+
+        ### Sharing is org-level
+        Every member of a recipient org gains read access automatically. There is no per-member grant — manage which users in the recipient org can see shared bundles by adding/removing them via `createUserV3` / `revokeUserAccessV3`.
+
+        ### Whole-call rejection
+        If any per-target check fails, no shares are applied. The error response names the offending `organization_id`.
+
+        ### Idempotency
+        Re-sharing with overlapping ids is safe — the array is a unique set; existing shares are preserved.
+
+        ### Restrictions
+        - Universal bundles (`is_universal = true`) cannot be re-shared → `400 BUNDLE_IS_UNIVERSAL`.
+        - A bundle with `organization_id = null` cannot be shared → `400 BUNDLE_HAS_NO_OWNER_ORG`.
+        - The owning org itself is silently filtered from the target list (it already has access).
+
+        ### Request example
+        ```json
+        {
+          "template_bundle_id": "bundle-uuid",
+          "organization_ids": ["sub-org-1", "sub-org-2"]
+        }
+        ```
+
+        ### Response example
+        ```json
+        {
+          "status": "success",
+          "message": "Bundle shared with 2 new organization(s)",
+          "template_bundle_id": "bundle-uuid",
+          "shared_with_organization_ids": ["sub-org-1", "sub-org-2"]
+        }
+        ```
+      operationId: shareTemplateBundleV3
+      security:
+        - BearerAuth: []
+        - SupabaseAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [template_bundle_id, organization_ids]
+              properties:
+                template_bundle_id:
+                  type: string
+                  format: uuid
+                organization_ids:
+                  type: array
+                  minItems: 1
+                  uniqueItems: true
+                  items:
+                    type: string
+                    format: uuid
+      responses:
+        "200":
+          description: Bundle shared (or no-op if all listed orgs were already shared)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: success }
+                  message: { type: string }
+                  template_bundle_id: { type: string, format: uuid }
+                  shared_with_organization_ids:
+                    type: array
+                    items: { type: string, format: uuid }
+        "400":
+          description: Invalid input, BUNDLE_IS_UNIVERSAL, BUNDLE_HAS_NO_OWNER_ORG, or OWNER_ORG_NOT_AGENCY
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: NOT_BUNDLE_ADMIN (caller cannot manage the bundle) or NO_SHARE_PERMISSION on at least one target org
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Bundle or one of the target orgs not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /unshareTemplateBundleV3:
+    post:
+      tags:
+        - Multi-Tenant V3
+      summary: Remove orgs from a template bundle's share list
+      description: |
+        **Agency-only multi-org bundle un-sharing.**
+
+        Removes organizations from a bundle's `shared_with_organization_ids`. Members of those orgs lose read access to the bundle (unless it remains accessible through `is_universal` or another mechanism).
+
+        ### Caller requirements
+        - Must be OWNER or ADMIN of the bundle's owning org.
+        - Owning org must have `is_agency = true`.
+        - **No per-target permission check** — the caller already controls the bundle, so they can unshare it from any org regardless of whether they currently have access to that target.
+
+        ### Idempotency
+        Listing orgs that were not actually shared is safe — the response includes only the actual removals.
+
+        ### Request example
+        ```json
+        {
+          "template_bundle_id": "bundle-uuid",
+          "organization_ids": ["sub-org-1"]
+        }
+        ```
+
+        ### Response example
+        ```json
+        {
+          "status": "success",
+          "message": "Bundle unshared from 1 organization(s)",
+          "template_bundle_id": "bundle-uuid",
+          "shared_with_organization_ids": ["sub-org-2"]
+        }
+        ```
+      operationId: unshareTemplateBundleV3
+      security:
+        - BearerAuth: []
+        - SupabaseAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [template_bundle_id, organization_ids]
+              properties:
+                template_bundle_id:
+                  type: string
+                  format: uuid
+                organization_ids:
+                  type: array
+                  minItems: 1
+                  uniqueItems: true
+                  items:
+                    type: string
+                    format: uuid
+      responses:
+        "200":
+          description: Bundle unshared (or no-op if no listed org was actually shared)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: success }
+                  message: { type: string }
+                  template_bundle_id: { type: string, format: uuid }
+                  shared_with_organization_ids:
+                    type: array
+                    items: { type: string, format: uuid }
+        "400":
+          description: Invalid input, BUNDLE_IS_UNIVERSAL, BUNDLE_HAS_NO_OWNER_ORG, or OWNER_ORG_NOT_AGENCY
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: NOT_BUNDLE_ADMIN
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Bundle not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
   /createCampaignV2:
     post:
       tags:
