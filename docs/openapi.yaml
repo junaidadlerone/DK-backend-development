@@ -15786,9 +15786,50 @@ paths:
       security:
         - BearerAuth: []
         - SupabaseAuth: []
+      parameters:
+        - in: query
+          name: page
+          required: false
+          schema: { type: integer, minimum: 1, default: 1 }
+          description: 1-based page number.
+        - in: query
+          name: limit
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 100, default: 10 }
+          description: Page size. Capped at 100.
+        - in: query
+          name: status
+          required: false
+          schema: { type: string, enum: [active, setup, deleting, all] }
+          description: |
+            Filter orgs by their computed status category:
+            - `active` — `status === "Active"`
+            - `setup` — `status` starts with `"Setup"`
+            - `deleting` — `status` starts with `"Deleting"`
+            - `all` (or omitted) — no status filter
+        - in: query
+          name: min_scans
+          required: false
+          schema: { type: number, minimum: 0 }
+          description: Inclusive lower bound on `total_qr_scans`.
+        - in: query
+          name: max_scans
+          required: false
+          schema: { type: number, minimum: 0 }
+          description: Inclusive upper bound on `total_qr_scans`.
+        - in: query
+          name: min_spend
+          required: false
+          schema: { type: number, minimum: 0 }
+          description: Inclusive lower bound on `total_spend`.
+        - in: query
+          name: max_spend
+          required: false
+          schema: { type: number, minimum: 0 }
+          description: Inclusive upper bound on `total_spend`.
       responses:
         "200":
-          description: Agency portfolio rollup
+          description: Agency portfolio rollup (paginated, filtered)
           content:
             application/json:
               schema:
@@ -15848,11 +15889,41 @@ paths:
                             total_campaign_count: { type: integer }
                       summary:
                         type: object
+                        description: Aggregates over the FILTERED set (not the page).
                         properties:
                           organization_count: { type: integer }
                           total_active_campaigns: { type: integer }
                           total_qr_scans: { type: integer }
                           total_spend: { type: number }
+                      pagination:
+                        type: object
+                        properties:
+                          page: { type: integer }
+                          limit: { type: integer }
+                          total:
+                            type: integer
+                            description: Number of orgs after filtering (NOT after pagination).
+                          total_pages: { type: integer }
+                          has_next_page: { type: boolean }
+                          has_previous_page: { type: boolean }
+                      filters:
+                        type: object
+                        description: Echo of the query-param filters that were applied.
+                        properties:
+                          status:
+                            type: string
+                            nullable: true
+                            enum: [active, setup, deleting, all, null]
+                          min_scans: { type: number, nullable: true }
+                          max_scans: { type: number, nullable: true }
+                          min_spend: { type: number, nullable: true }
+                          max_spend: { type: number, nullable: true }
+        "400":
+          description: INVALID_STATUS — status filter not one of active/setup/deleting/all
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "401":
           description: Unauthorized
           content:

@@ -25,6 +25,40 @@ Deno.serve(async (req) => {
     const caller = getUserFromRequest(req);
     if (!caller) return errorResponse("UNAUTHORIZED", "Unable to authenticate user", 401);
 
+    // ── Query params ───────────────────────────────────────────────
+    const url = new URL(req.url);
+    const pageParam = url.searchParams.get("page");
+    const limitParam = url.searchParams.get("limit");
+    let page = pageParam ? parseInt(pageParam, 10) : 1;
+    let limit = limitParam ? parseInt(limitParam, 10) : 10;
+    if (isNaN(page) || page < 1) page = 1;
+    if (isNaN(limit) || limit < 1) limit = 10;
+    if (limit > 100) limit = 100;
+
+    // status filter — category match so it works against the
+    // computed status strings ("Active" / "Setup N of N" / "Deleting in N days").
+    // Accepts: 'active' | 'setup' | 'deleting' | 'all' (case-insensitive).
+    const rawStatusFilter = url.searchParams.get("status");
+    const statusFilter = rawStatusFilter ? rawStatusFilter.toLowerCase() : null;
+    if (statusFilter && !["active", "setup", "deleting", "all"].includes(statusFilter)) {
+      return errorResponse(
+        "INVALID_STATUS",
+        "status must be one of: active, setup, deleting, all",
+        400,
+      );
+    }
+
+    const parseNum = (k: string): number | null => {
+      const v = url.searchParams.get(k);
+      if (v == null || v === "") return null;
+      const n = Number(v);
+      return isNaN(n) ? null : n;
+    };
+    const minScans = parseNum("min_scans");
+    const maxScans = parseNum("max_scans");
+    const minSpend = parseNum("min_spend");
+    const maxSpend = parseNum("max_spend");
+
     // Gate
     if (!(await isAgencyUser(supabase, caller.userId))) {
       return errorResponse(
@@ -50,6 +84,21 @@ Deno.serve(async (req) => {
             total_active_campaigns: 0,
             total_qr_scans: 0,
             total_spend: 0,
+          },
+          pagination: {
+            page: 1,
+            limit,
+            total: 0,
+            total_pages: 0,
+            has_next_page: false,
+            has_previous_page: false,
+          },
+          filters: {
+            status: statusFilter,
+            min_scans: minScans,
+            max_scans: maxScans,
+            min_spend: minSpend,
+            max_spend: maxSpend,
           },
         },
       }, 200);
@@ -180,7 +229,7 @@ Deno.serve(async (req) => {
     }
 
     // Build the per-org payload in the same order as adminableOrgs.
-    const organizations = adminableOrgs.map((o) => {
+    const allOrganizations = adminableOrgs.map((o) => {
       const orgRow = orgById.get(o.id);
       if (!orgRow) return null; // org disappeared between Q0 and Q1; skip defensively
       const active = activeByOrg.get(o.id) ?? [];
@@ -196,25 +245,70 @@ Deno.serve(async (req) => {
       };
     }).filter(Boolean);
 
+    // Categorize the computed status string into one of the filter buckets.
+    function statusCategory(s: string): "active" | "setup" | "deleting" | "unknown" {
+      if (!s) return "unknown";
+      if (s === "Active") return "active";
+      if (s.startsWith("Setup")) return "setup";
+      if (s.startsWith("Deleting")) return "deleting";
+      return "unknown";
+    }
+
+    // Apply filters in JS (these are computed fields, can't be pushed to SQL).
+    const filtered = allOrganizations.filter((o: any) => {
+      if (statusFilter && statusFilter !== "all") {
+        if (statusCategory(o.status) !== statusFilter) return false;
+      }
+      if (minScans != null && o.total_qr_scans < minScans) return false;
+      if (maxScans != null && o.total_qr_scans > maxScans) return false;
+      if (minSpend != null && o.total_spend < minSpend) return false;
+      if (maxSpend != null && o.total_spend > maxSpend) return false;
+      return true;
+    });
+
+    // Pagination (applied AFTER filtering).
+    const total = filtered.length;
+    const totalPages = Math.max(1, Math.ceil(total / limit));
+    const offset = (page - 1) * limit;
+    const organizations = filtered.slice(offset, offset + limit);
+
+    // Summary reflects the FILTERED set (the agency's current view), not the page.
     const summary = {
-      organization_count: organizations.length,
-      total_active_campaigns: organizations.reduce(
+      organization_count: filtered.length,
+      total_active_campaigns: filtered.reduce(
         (sum: number, o: any) => sum + o.active_campaign_count,
         0,
       ),
-      total_qr_scans: organizations.reduce(
+      total_qr_scans: filtered.reduce(
         (sum: number, o: any) => sum + o.total_qr_scans,
         0,
       ),
-      total_spend: organizations.reduce(
+      total_spend: filtered.reduce(
         (sum: number, o: any) => sum + o.total_spend,
         0,
       ),
     };
 
+    const pagination = {
+      page,
+      limit,
+      total,
+      total_pages: total === 0 ? 0 : totalPages,
+      has_next_page: offset + limit < total,
+      has_previous_page: page > 1,
+    };
+
+    const filters = {
+      status: statusFilter,
+      min_scans: minScans,
+      max_scans: maxScans,
+      min_spend: minSpend,
+      max_spend: maxSpend,
+    };
+
     return successResponse({
       status: "success",
-      data: { organizations, summary },
+      data: { organizations, summary, pagination, filters },
     }, 200);
   } catch (error) {
     console.error("Unexpected error in getAgencyOverview:", error);
