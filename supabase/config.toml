@@ -609,3 +609,7 @@ verify_jwt = false
 [functions.auditUniversalTemplates]
 entrypoint = "./functions/auditUniversalTemplates/index.ts"
 verify_jwt = false
+
+[functions.createUserV3]
+entrypoint = "./functions/createUserV3/index.ts"
+verify_jwt = false

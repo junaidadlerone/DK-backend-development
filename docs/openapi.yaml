@@ -15259,17 +15259,27 @@ paths:
         - `ADMIN` of an org → can grant any of `ADMIN`, `MARKETER`, `TECHNICIAN` (ADMINs can manage peer ADMINs).
         - The `OWNER` role itself can never be granted via this endpoint.
 
+        ### Auto-merge: caller's agency org is always added
+        The new user is also automatically added to every agency parent org (`is_agency = true`)
+        where the caller is OWNER or ADMIN — even if those org IDs aren't in `organization_ids`.
+        This guarantees the new user shows up in the agency's team list, not only on the requested
+        sub-orgs. The response echoes:
+        - `organization_ids` — final list the user was added to (request ∪ auto-added)
+        - `requested_organization_ids` — what the caller originally sent
+        - `auto_added_agency_organization_ids` — the agency org IDs we merged in
+
         ### Request example
         ```json
         {
           "email": "admin@example.com",
           "fullName": "Alex Admin",
           "role": "ADMIN",
-          "organization_ids": ["uuid-a", "uuid-b", "uuid-c"]
+          "organization_ids": ["sub-org-a", "sub-org-b"]
         }
         ```
 
         ### Response example
+        Caller is OWNER of `agency-1`, so it is auto-added to the grant list:
         ```json
         {
           "status": "success",
@@ -15279,7 +15289,9 @@ paths:
             "email": "admin@example.com",
             "fullName": "Alex Admin",
             "role": "ADMIN",
-            "organization_ids": ["uuid-a", "uuid-b", "uuid-c"]
+            "organization_ids": ["sub-org-a", "sub-org-b", "agency-1"],
+            "requested_organization_ids": ["sub-org-a", "sub-org-b"],
+            "auto_added_agency_organization_ids": ["agency-1"]
           }
         }
         ```
@@ -15330,6 +15342,15 @@ paths:
                       role: { type: string, enum: [ADMIN, MARKETER, TECHNICIAN] }
                       organization_ids:
                         type: array
+                        description: Final list the user was actually added to (request ∪ auto-added agency orgs).
+                        items: { type: string, format: uuid }
+                      requested_organization_ids:
+                        type: array
+                        description: The org IDs the caller sent in the request body, before auto-merge.
+                        items: { type: string, format: uuid }
+                      auto_added_agency_organization_ids:
+                        type: array
+                        description: Agency parent org IDs the server auto-added to the grant list (not present in the request).
                         items: { type: string, format: uuid }
         "400":
           description: Invalid input, unknown organization_id, or invalid role
@@ -15416,6 +15437,13 @@ paths:
                         type: string
                         format: uuid
                         nullable: true
+                      created_by:
+                        type: object
+                        nullable: true
+                        description: |
+                          Snapshot of the admin profile that invited this user (stored by createUser/createUserV3 at invite time).
+                          Null for users created before created_by tracking existed (e.g. self-signups).
+                          Typical fields: `id`, `role`, `full_name`, `created_at`, `updated_at`, `is_super_admin`, etc.
                       organizations:
                         type: array
                         items:

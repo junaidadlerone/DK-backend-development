@@ -7,7 +7,8 @@ import {
 } from "../_shared/client.ts";
 import { getUserFromRequest, getUserProfile } from "../_shared/history.ts";
 import { createNotification, ROLES } from "../_shared/notifications.ts";
-import { isAgencyUser, callerRoleOnOrg } from "../_shared/agencyGate.ts";
+import { callerRoleOnOrg } from "../_shared/agencyGate.ts";
+import { getUserOrganizations } from "../_shared/organization.ts";
 
 /**
  * createUserV3 — multi-org user invitation for agency users.
@@ -71,8 +72,16 @@ Deno.serve(async (req) => {
       return errorResponse("INVALID_INPUT", "organization_ids must not contain duplicates", 400);
     }
 
-    // Gate: caller must be OWNER or ADMIN of at least one is_agency=true org.
-    if (!(await isAgencyUser(supabase, caller.userId))) {
+    // Gate + auto-merge agency org(s) into the grant list.
+    // The caller is an agency user iff they OWN or ADMIN at least one is_agency=true org.
+    // For every such agency org, we automatically grant the new user the same role on it,
+    // so the user appears in the agency's team list, not only on the requested sub-orgs.
+    const callerOrgs = await getUserOrganizations(supabase, caller.userId);
+    const agencyOrgIds = callerOrgs
+      .filter((o) => o.isAgencyAccount === true && (o.role === "OWNER" || o.role === "ADMIN"))
+      .map((o) => o.id);
+
+    if (agencyOrgIds.length === 0) {
       return errorResponse(
         "NOT_AGENCY_USER",
         "Only agency users can call V3 endpoints. Use V1 createUser for single-org operations.",
@@ -80,17 +89,21 @@ Deno.serve(async (req) => {
       );
     }
 
+    // Final grant list = requested orgs ∪ caller's agency orgs (deduped).
+    const finalOrgIds = Array.from(new Set([...uniqueOrgIds, ...agencyOrgIds]));
+
     // Caller profile (for created_by audit field)
     const callerProfile = await getUserProfile(supabase, caller.userId);
     if (!callerProfile) {
       return errorResponse("ADMIN_PROFILE_NOT_FOUND", "Caller profile not found", 404);
     }
 
-    // Pre-flight: load all listed orgs in one query, then validate ownership/ADMIN-membership for each.
+    // Pre-flight: load all orgs we plan to grant access to (requested + agency parents)
+    // in one query, then validate ownership/ADMIN-membership for each.
     const { data: orgs, error: orgsErr } = await supabase
       .from("organizations")
       .select("id, owner_id, organization_members")
-      .in("id", uniqueOrgIds);
+      .in("id", finalOrgIds);
     if (orgsErr) {
       console.error("createUserV3: org fetch error", orgsErr);
       return errorResponse("FETCH_FAILED", "Failed to load organizations", 500);
@@ -99,7 +112,7 @@ Deno.serve(async (req) => {
     const orgsById = new Map<string, any>();
     for (const o of orgs || []) orgsById.set(o.id, o);
 
-    for (const orgId of uniqueOrgIds) {
+    for (const orgId of finalOrgIds) {
       const org = orgsById.get(orgId);
       if (!org) {
         return errorResponse("ORG_NOT_FOUND", `Organization ${orgId} not found`, 400);
@@ -159,7 +172,7 @@ Deno.serve(async (req) => {
 
     // Add to each org's organization_members (idempotent: skip if already present).
     const addedTo: string[] = [];
-    for (const orgId of uniqueOrgIds) {
+    for (const orgId of finalOrgIds) {
       const org = orgsById.get(orgId);
       const currentMembers = Array.isArray(org.organization_members) ? org.organization_members : [];
       if (currentMembers.some((m: any) => m?.member_uid === newUserId)) continue;
@@ -205,7 +218,14 @@ Deno.serve(async (req) => {
         email: authData.user.email,
         fullName: fullName || null,
         role,
-        organization_ids: uniqueOrgIds,
+        // All orgs the user was actually granted access to: requested orgs
+        // PLUS the caller's agency parent org(s), auto-added so the user
+        // appears in the agency's team list.
+        organization_ids: finalOrgIds,
+        requested_organization_ids: uniqueOrgIds,
+        auto_added_agency_organization_ids: agencyOrgIds.filter(
+          (id) => !uniqueOrgIds.includes(id),
+        ),
       },
     }, 201);
   } catch (error) {

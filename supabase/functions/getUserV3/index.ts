@@ -146,6 +146,9 @@ Deno.serve(async (req) => {
         is_super_admin: profile.is_super_admin || false,
         multi_org_enabled: profile.multi_org_enabled || false,
         active_organization_id: activeOrgId,
+        // Snapshot of the admin profile that invited this user (stored by createUser/createUserV3).
+        // Null for users created before created_by tracking existed.
+        created_by: (profile as any).created_by ?? null,
         organizations,
       },
     }, 200);
