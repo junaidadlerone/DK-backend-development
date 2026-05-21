@@ -17,6 +17,22 @@ const POSTGRID_URL = 'https://api.postgrid.com/print-mail/v1/postcards';
 const SUPABASE_REST_URL = SUPABASE_URL.replace('/functions/v1', '/rest/v1');
 
 // =============================================================================
+// SEND PACING / RETRY CONFIG
+// =============================================================================
+// Spacing between PostGrid send calls (Tier 1: avoid 429 rate limits).
+const SEND_DELAY_MS = 300;
+// Backoff schedule for transient PostGrid failures (429 / 5xx). One entry per
+// retry beyond the initial attempt.
+const RETRY_TRANSIENT_DELAYS_MS = [1000, 2000];
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+// Trim long PostGrid error bodies so the WebSocket payload stays small.
+function truncateMsg(s, max = 200) {
+    if (!s) return '';
+    return s.length > max ? s.slice(0, max) + '…' : s;
+}
+
+// =============================================================================
 // HTTP SERVER WITH WEBSOCKET SUPPORT
 // =============================================================================
 const server = http.createServer((req, res) =>
@@ -273,19 +289,36 @@ async function processCampaign(ws, campaignId, postgridApiKey, paperInput)
 
         // 3. Loop through addresses and send postcards
         const postcardRecords = [];
+        const failedAddresses = [];   // Tier 2: track sends that PostGrid rejected.
 
         for (let i = 0; i < addresses.length; i++)
         {
             const addr = addresses[i];
+            const addrLabel = addr.address || addr.address_line1 || '';
             try
             {
-                const postcardId = await sendPostcard(addr, campaign_templates, business_data, offer_data, postgridApiKey, resolvedTrackerId, paper);
-                if (postcardId)
+                const result = await sendPostcard(addr, campaign_templates, business_data, offer_data, postgridApiKey, resolvedTrackerId, paper);
+
+                if (typeof result === 'string' && result)
                 {
                     count++;
                     postcardRecords.push({
-                        postgrid_postcard_id: postcardId,
-                        address: addr.address || addr.address_line1 || ''
+                        postgrid_postcard_id: result,
+                        address: addrLabel
+                    });
+                }
+                else if (result && typeof result === 'object' && result.error)
+                {
+                    failedAddresses.push({
+                        address: addrLabel,
+                        reason: `PostGrid ${result.error.status}: ${truncateMsg(result.error.message)}`
+                    });
+                }
+                else
+                {
+                    failedAddresses.push({
+                        address: addrLabel,
+                        reason: 'No postcard id returned'
                     });
                 }
 
@@ -296,18 +329,27 @@ async function processCampaign(ws, campaignId, postgridApiKey, paperInput)
                         status: 'processing',
                         total_addresses: addresses.length,
                         processed: i + 1,
-                        sent: count
+                        sent: count,
+                        failed: failedAddresses.length
                     }));
                 }
 
             } catch (err)
             {
-                console.error(`Failed to send postcard to ${addr.address}:`, err.message);
-                // Continue loop even if one fails
+                console.error(`Failed to send postcard to ${addrLabel}:`, err.message);
+                failedAddresses.push({
+                    address: addrLabel,
+                    reason: truncateMsg(err.message || 'Unknown error')
+                });
+            }
+
+            // Tier 1: pace between sends to avoid PostGrid rate limits.
+            if (i < addresses.length - 1) {
+                await sleep(SEND_DELAY_MS);
             }
         }
 
-        console.log(`Finished processing. Total sent: ${count}`);
+        console.log(`Finished processing. Total sent: ${count}, failed: ${failedAddresses.length}`);
 
         // 4. Store individual postcard records for analytics (before updating sent count)
         if (postcardRecords.length > 0)
@@ -327,7 +369,8 @@ async function processCampaign(ws, campaignId, postgridApiKey, paperInput)
             skip_verification: skipVerification,
             filtered_out: allAddresses.length - addresses.length,
             sent_successfully: count,
-            failed_count: addresses.length - count
+            failed_count: failedAddresses.length,
+            failed_addresses: failedAddresses
         }));
 
         // 5. Revert Templates (Test environment specific cleanup)
@@ -438,27 +481,44 @@ async function sendPostcard(addressObj, templates, businessData, offerData, post
 
     console.log(`Sending PostGrid Payload for ${addressObj.address}:`, JSON.stringify(payload, null, 2));
 
+    // Retry 429 / 5xx with backoff. 4xx and exhausted retries return a
+    // structured `{ error }` object so the caller can surface the reason.
+    const maxAttempts = 1 + RETRY_TRANSIENT_DELAYS_MS.length;
+    let lastStatus = 0;
+    let lastBody = '';
 
-    const response = await fetch(POSTGRID_URL, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'x-api-key': postgridApiKey  // Now using the dynamic API key
-        },
-        body: JSON.stringify(payload)
-    });
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        const response = await fetch(POSTGRID_URL, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'x-api-key': postgridApiKey
+            },
+            body: JSON.stringify(payload)
+        });
 
-    if (response.ok)
-    {
-        const json = await response.json();
-        console.log(`PostGrid Success Response for ${addressObj.address}:`, JSON.stringify(json, null, 2));
-        return json.id || null;  // return PostGrid postcard ID (e.g. "postcard_xxx")
-    } else
-    {
-        const errorText = await response.text();
-        console.error(`PostGrid Error (${response.status}) for ${addressObj.address}:`, errorText);
-        return null;
+        if (response.ok) {
+            const json = await response.json();
+            console.log(`PostGrid Success Response for ${addressObj.address}:`, JSON.stringify(json, null, 2));
+            if (json.id) return json.id;
+            return { error: { status: 200, message: 'PostGrid returned no postcard id' } };
+        }
+
+        lastStatus = response.status;
+        lastBody = await response.text();
+        const isTransient = lastStatus === 429 || lastStatus >= 500;
+        console.error(
+            `PostGrid Error (${lastStatus}) for ${addressObj.address} [attempt ${attempt}/${maxAttempts}]: ${lastBody}`
+        );
+
+        if (isTransient && attempt < maxAttempts) {
+            await sleep(RETRY_TRANSIENT_DELAYS_MS[attempt - 1]);
+            continue;
+        }
+        break; // permanent failure or out of retries
     }
+
+    return { error: { status: lastStatus, message: lastBody } };
 }
 
 // =============================================================================

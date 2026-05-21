@@ -67,7 +67,7 @@ Deno.serve(async (req) => {
     // Fetch the org owner's branding so all members share the same theme
     const { data: org } = await supabase
       .from("organizations")
-      .select("owner_id")
+      .select("owner_id, is_agency")
       .eq("id", organizationId)
       .single();
 
@@ -107,6 +107,83 @@ Deno.serve(async (req) => {
       .limit(1)
       .single();
     const isUnderMaintainence = maintenanceData?.isUnderMaintainence ?? false;
+
+    // ──────────────────────────────────────────────────────────────────
+    // Agency-account menu override
+    // For users on an org with is_agency = true, return a fixed agency
+    // menu (search / overview / agency_template / team / settings).
+    // Skips the app_content table lookup entirely — the agency menu does
+    // not depend on role or notifications.
+    // ──────────────────────────────────────────────────────────────────
+    if (org?.is_agency === true) {
+      const agencyMenuItems = [
+        {
+          name: "search_bar",
+          title: "Search",
+          description: "Search Job, Referrals & Campaigns",
+          id: 0,
+          enabled: true,
+          extended: false,
+          extended_options: []
+        },
+        {
+          name: "overview",
+          title: "Overview",
+          description: "Create, Navigate, Lead & Iterate",
+          id: 1,
+          enabled: true,
+          extended: false,
+          extended_options: []
+        },
+        {
+          name: "agency_template",
+          title: "Agency Templates",
+          description: "Manage all agency templates available for use by every client organization",
+          id: 2,
+          enabled: true,
+          extended: false,
+          extended_options: []
+        },
+        {
+          name: "team",
+          title: "Team",
+          description: "Manage Your team members, permissions and roles",
+          id: 3,
+          enabled: true,
+          extended: false,
+          extended_options: []
+        },
+        {
+          name: "settings",
+          title: "Settings",
+          description: "Manage Your Agency Settings",
+          id: 9,
+          enabled: true,
+          extended: false,
+          extended_options: []
+        }
+      ];
+
+      return successResponse({
+        data: {
+          menu_items: agencyMenuItems,
+          theme: ownerBrandingSettings?.theme || {
+            colors: {
+              primary: "#E36A00",
+              secondary: "#1D1D20",
+              accent: "#47BAD7"
+            },
+            fonts: {
+              primary: { name: "Poppins" },
+              body: { name: "Poppins" }
+            }
+          },
+          currency: currency,
+          timezone: timezone,
+          isUnderMaintainence: isUnderMaintainence
+        }
+      });
+    }
 
     // Fetch app content for user's role and organization
     const { data: appContent, error: contentError } = await supabase
