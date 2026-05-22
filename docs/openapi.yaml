@@ -15234,6 +15234,169 @@ paths:
               schema:
                 type: object
 
+  /editAgencySettings:
+    post:
+      tags:
+        - Multi-Tenant V3
+      summary: Update agency-level settings (post-onboarding edit endpoint)
+      description: |
+        Updates the same agency-level fields originally captured by
+        `completeOnboardingV3` step 2 (the agency flow). Designed for the
+        "Agency settings" page in the dashboard.
+
+        ### Editable fields (all optional — only fields present in body are touched)
+        - `agency_name` → `organizations.business_name` + `onboarding.business_name`
+        - `industry` → `organizations.industry` + `onboarding.business_industry`
+        - `agency_website_url` → `organizations.website_url` + `onboarding.website_url`
+        - `logo` → uploaded to the `CompanyLogos` storage bucket via the shared `uploadLogo` helper; resulting URL is merged into `organizations.branding_settings.logo` (preserves any existing `theme`).
+
+        ### Semantics
+        - **Absent key** → no change to that field.
+        - **`null` or `""`** → clear the field (for `logo`, removes the logo from `branding_settings`).
+        - **Non-empty value** → update.
+
+        ### Target org
+        Defaults to the caller's active organization. Pass `organization_id` to target a specific agency org explicitly.
+
+        ### Access control
+        - Target org must have `is_agency = true` → otherwise `400 NOT_AGENCY_ORG`.
+        - Caller must be OWNER or ADMIN of the target org → otherwise `403 NO_EDIT_PERMISSION`.
+
+        Accepts both `POST` and `PATCH`.
+
+        ### Request example
+        ```json
+        {
+          "agency_name": "BrightMail Agency",
+          "industry": "Marketing",
+          "agency_website_url": "https://brightmail.example",
+          "logo": "data:image/png;base64,iVBORw0KGgo..."
+        }
+        ```
+
+        ### Response example
+        ```json
+        {
+          "status": "success",
+          "message": "Agency settings updated",
+          "agency": {
+            "organization_id": "agency-uuid",
+            "agency_name": "BrightMail Agency",
+            "industry": "Marketing",
+            "agency_website_url": "https://brightmail.example",
+            "logo": "https://.../CompanyLogos/agency-uuid/logo_<ts>.png",
+            "branding_settings": {
+              "logo": "https://...",
+              "theme": { "colors": { ... }, "fonts": { ... } }
+            },
+            "updated_at": "..."
+          }
+        }
+        ```
+      operationId: editAgencySettings
+      security:
+        - BearerAuth: []
+        - SupabaseAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: At least one of the editable fields must be provided.
+              properties:
+                organization_id:
+                  type: string
+                  format: uuid
+                  description: Optional explicit target. Defaults to the caller's active org.
+                agency_name:
+                  type: string
+                  nullable: true
+                industry:
+                  type: string
+                  nullable: true
+                agency_website_url:
+                  type: string
+                  nullable: true
+                logo:
+                  type: string
+                  nullable: true
+                  description: Base64 data-URL, raw base64, or an existing public URL. `null` clears the logo.
+      responses:
+        "200":
+          description: Agency settings updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: success }
+                  message: { type: string }
+                  agency:
+                    type: object
+                    properties:
+                      organization_id: { type: string, format: uuid }
+                      agency_name: { type: string, nullable: true }
+                      industry: { type: string, nullable: true }
+                      agency_website_url: { type: string, nullable: true }
+                      logo: { type: string, nullable: true }
+                      branding_settings:
+                        type: object
+                        nullable: true
+                      updated_at: { type: string }
+        "400":
+          description: INVALID_INPUT (no editable fields provided) or NOT_AGENCY_ORG (target is not an agency)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: NO_EDIT_PERMISSION (caller is not OWNER/ADMIN of the target agency)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Organization not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Internal server error (e.g. LOGO_UPLOAD_FAILED)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    patch:
+      tags:
+        - Multi-Tenant V3
+      summary: Update agency-level settings (PATCH variant)
+      description: Same behavior as `POST /editAgencySettings`. See the POST variant for full details.
+      operationId: editAgencySettingsPatch
+      security:
+        - BearerAuth: []
+        - SupabaseAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          description: Agency settings updated (see POST variant for schema)
+          content:
+            application/json:
+              schema:
+                type: object
+
   /createUserV3:
     post:
       tags:
