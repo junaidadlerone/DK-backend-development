@@ -15234,6 +15234,104 @@ paths:
               schema:
                 type: object
 
+  /getAgencySettings:
+    get:
+      tags:
+        - Multi-Tenant V3
+      summary: Read agency-level settings
+      description: |
+        Read counterpart to `POST /editAgencySettings`. Returns the same `agency`
+        payload shape so the frontend can use one schema for the initial fetch
+        and the post-edit refresh.
+
+        ### Target org
+        Defaults to the caller's active organization. Pass `?organization_id=...`
+        to target a specific agency org.
+
+        ### Access control
+        - Target org must have `is_agency = true` → otherwise `400 NOT_AGENCY_ORG`.
+        - Caller must be OWNER or ADMIN of the target org → otherwise `403 NO_VIEW_PERMISSION`.
+
+        ### Response example
+        ```json
+        {
+          "status": "success",
+          "agency": {
+            "organization_id": "agency-uuid",
+            "agency_name": "BrightMail Agency",
+            "industry": "Marketing",
+            "agency_website_url": "https://brightmail.example",
+            "logo": "https://.../CompanyLogos/agency-uuid/logo_<ts>.png",
+            "branding_settings": {
+              "logo": "https://...",
+              "theme": { "colors": { ... }, "fonts": { ... } }
+            },
+            "updated_at": "..."
+          }
+        }
+        ```
+      operationId: getAgencySettings
+      security:
+        - BearerAuth: []
+        - SupabaseAuth: []
+      parameters:
+        - in: query
+          name: organization_id
+          required: false
+          schema: { type: string, format: uuid }
+          description: Optional explicit target. Defaults to the caller's active org.
+      responses:
+        "200":
+          description: Agency settings
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: success }
+                  agency:
+                    type: object
+                    properties:
+                      organization_id: { type: string, format: uuid }
+                      agency_name: { type: string, nullable: true }
+                      industry: { type: string, nullable: true }
+                      agency_website_url: { type: string, nullable: true }
+                      logo: { type: string, nullable: true }
+                      branding_settings:
+                        type: object
+                        nullable: true
+                      updated_at: { type: string }
+        "400":
+          description: NOT_AGENCY_ORG — target org is not an agency
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: NO_VIEW_PERMISSION (caller is not OWNER/ADMIN of the target agency)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Organization not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
   /editAgencySettings:
     post:
       tags:

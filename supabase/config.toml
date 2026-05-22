@@ -621,3 +621,7 @@ verify_jwt = false
 [functions.revokeUserAccessV3]
 entrypoint = "./functions/revokeUserAccessV3/index.ts"
 verify_jwt = false
+
+[functions.getAgencySettings]
+entrypoint = "./functions/getAgencySettings/index.ts"
+verify_jwt = false
