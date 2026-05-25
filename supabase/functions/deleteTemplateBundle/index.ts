@@ -1,8 +1,8 @@
 import { corsResponse, errorResponse, successResponse } from "../_shared/response.ts";
 import { createSupabaseClient, isAdmin } from "../_shared/client.ts";
 import { getUserFromRequest } from "../_shared/history.ts";
-import { getUserOrganizationId } from "../_shared/organization.ts";
 import { logTemplateHistory } from "../_shared/templateHistory.ts";
+import { callerRoleOnOrg } from "../_shared/agencyGate.ts";
 
 /**
  * Delete Template Bundle Edge Function
@@ -51,16 +51,6 @@ Deno.serve(async (req) => {
         "UNAUTHORIZED",
         "Unable to authenticate user",
         401
-      );
-    }
-
-    // Get user's organization
-    const organizationId = await getUserOrganizationId(supabase, user.userId);
-    if (!organizationId) {
-      return errorResponse(
-        "NO_ORGANIZATION",
-        "User is not associated with any organization",
-        403
       );
     }
 
@@ -114,22 +104,52 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Check ownership
-    if (bundle.is_universal) {
-      const isUserAdmin = await isAdmin(user.userId);
-      if (!isUserAdmin) {
-        return errorResponse(
-          "FORBIDDEN",
-          "Only ADMIN users can delete universal template bundles",
-          403
-        );
+    // Access check.
+    // Service-role bypass (internal callers go through unchecked).
+    // For non-universal bundles, only the OWNER or ADMIN of the bundle's
+    // OWNING org may delete it. Active-org / share-list membership do NOT
+    // grant delete rights. This intentionally tightens the prior V1 rule
+    // (any member of the owning org) so that:
+    //   1. Sub-org members who received the bundle via shared_with_organization_ids
+    //      cannot delete it (share = read access only).
+    //   2. Lower-privilege members (MARKETER, TECHNICIAN) of the owning org
+    //      cannot delete it either.
+    if (!user.isServiceRole) {
+      if (bundle.is_universal) {
+        const isUserAdmin = await isAdmin(user.userId);
+        if (!isUserAdmin) {
+          return errorResponse(
+            "FORBIDDEN",
+            "Only ADMIN users can delete universal template bundles",
+            403
+          );
+        }
+      } else {
+        if (!bundle.organization_id) {
+          return errorResponse(
+            "BUNDLE_HAS_NO_OWNER_ORG",
+            "Bundle has no owning organization; cannot resolve delete permission",
+            400
+          );
+        }
+
+        const { data: ownerOrg, error: ownerErr } = await supabase
+          .from("organizations")
+          .select("id, owner_id, organization_members")
+          .eq("id", bundle.organization_id)
+          .single();
+        if (ownerErr || !ownerOrg) {
+          return errorResponse("FETCH_FAILED", "Failed to load owning organization", 500);
+        }
+        const role = callerRoleOnOrg(ownerOrg, user.userId);
+        if (role !== "OWNER" && role !== "ADMIN") {
+          return errorResponse(
+            "NOT_BUNDLE_ADMIN",
+            "Only OWNER or ADMIN of the bundle's owning organization can delete it",
+            403
+          );
+        }
       }
-    } else if (bundle.organization_id !== organizationId) {
-      return errorResponse(
-        "FORBIDDEN",
-        "Bundle doesn't belong to your organization",
-        403
-      );
     }
 
     const frontTemplate = bundle.front;

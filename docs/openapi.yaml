@@ -13246,11 +13246,14 @@ paths:
         Deletes both front and back templates from PostGrid and database.
 
         **Business Rules:**
-        - Requires bundle ID and PostGrid API key
-        - Bundle must belong to user's organization (or be universal and user is ADMIN)
-        - Deletes both templates from PostGrid
-        - Marks both templates as deleted in database (soft delete)
-        - Bundle record will be cascade deleted when templates are deleted
+        - Requires bundle ID and PostGrid API key.
+        - **Non-universal bundles**: caller must be OWNER or ADMIN of the bundle's owning organization (`organizations.owner_id` OR `organization_members` with `member_role = "ADMIN"`).
+        - **Universal bundles**: caller must have ADMIN role (`profiles.role = "ADMIN"`).
+        - **Active-org / share-list membership do NOT grant delete rights.** Sub-org members who received a bundle via `shared_with_organization_ids` cannot delete it — share is read access only.
+        - MARKETER and TECHNICIAN members of the owning org cannot delete (tightened from pre-2026-05 behavior, where any member could).
+        - Deletes both templates from PostGrid.
+        - Marks both templates as deleted in database (soft delete).
+        - Bundle record is cascade-deleted when templates are deleted.
 
         **Features:**
         - Soft delete pattern
@@ -13322,7 +13325,10 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
         "403":
-          description: Forbidden - Bundle doesn't belong to your organization
+          description: |
+            Forbidden. One of:
+            - `NOT_BUNDLE_ADMIN` — caller is not OWNER/ADMIN of the bundle's owning organization. Being a member of an org in `shared_with_organization_ids` is NOT sufficient.
+            - `FORBIDDEN` — caller is not ADMIN role and the bundle is universal.
           content:
             application/json:
               schema:
@@ -13346,20 +13352,21 @@ paths:
         - Version 2 APIs
       summary: Get all template bundles
       description: |
-        Returns all template bundles for the user's organization plus universal bundles.
+        Returns all template bundles for the user's organization plus universal bundles plus bundles shared with the user's active org.
 
         **Business Rules:**
-        - Returns bundles belonging to user's organization AND universal bundles
+        - Returns bundles belonging to user's organization AND universal bundles AND bundles where the active org appears in `shared_with_organization_ids`
         - Universal bundles (is_universal=true) are visible to all organizations
         - Excludes bundles where either template is deleted (unless includeDeleted=true)
         - User must be authenticated and in organization
         - Returns bundles ordered by created_at (newest first)
 
         **Features:**
-        - Organization + universal bundle aggregation
+        - Organization + universal + shared-in bundle aggregation
         - Filtering capabilities
         - Timezone-aware timestamps
         - Full template details for both front and back
+        - **`isAgencyTemplate` field on each bundle** — `true` when the caller's active organization id is in `shared_with_organization_ids` (i.e., the bundle was shared *to* this org by an agency). `false` for bundles the org owns itself and for universal bundles.
       operationId: getAllTemplatesBundles
       security:
         - BearerAuth: []
@@ -15495,6 +15502,172 @@ paths:
               schema:
                 type: object
 
+  /switchToAgencyAccount:
+    post:
+      tags:
+        - Multi-Tenant V3
+      summary: Promote a business account to an agency in one call
+      description: |
+        Self-service business → agency promotion. Creates a NEW agency-manager org
+        on top of the caller's existing business and wires up V3 invariants
+        (profile flags, default app_content, onboarding row with `first_client_org_id`)
+        in a single round trip. The existing business becomes the new agency's first client.
+
+        ### Request body
+        Mirrors `completeOnboardingV3` step 2 (agency flow). All fields are optional —
+        anything not provided inherits from the existing business so empty `{}` works.
+
+        | Field | If provided | If omitted (inheritance) |
+        |---|---|---|
+        | `agency_name` | new agency `business_name` | `"<existing business> Agency"` |
+        | `agency_type` | new agency `industry` | existing business's `industry` |
+        | `agency_logo` | uploaded to `CompanyLogos` → URL on `branding_settings.logo` | existing business's `branding_settings.logo` (no re-upload) |
+        | `website_url` | new agency `website_url` | existing business's `website_url` |
+        | `organization_id` | which business org becomes the first client | caller's active org |
+
+        ### Side effects (all in one call)
+        - Inserts new `organizations` row with `is_agency = true`, `owner_id = caller`.
+        - `create_default_app_content(new_org_id)` (non-fatal on error).
+        - Inserts `onboarding` row with `first_client_org_id = <existing business id>`.
+        - Updates caller's profile: `is_super_admin = true`, `multi_org_enabled = true`,
+          `active_organization_id = <new agency id>`, `onboarding = true`.
+
+        ### Rejections
+        - `400 ALREADY_AGENCY` — caller already owns at least one `is_agency = true` org. Idempotency guard.
+        - `400 INVALID_FIRST_CLIENT_ORG` — provided `organization_id` isn't owned by caller, or is already an agency.
+        - `403 NO_BUSINESS_ORG` — caller has no business org to convert.
+        - `500 LOGO_UPLOAD_FAILED` — `agency_logo` failed to upload (other fields validated first).
+
+        ### Request example (fully explicit)
+        ```json
+        {
+          "agency_name": "BrightMail Agency",
+          "agency_type": "Marketing",
+          "agency_logo": "data:image/png;base64,iVBORw0KGgo...",
+          "website_url": "https://brightmail.example"
+        }
+        ```
+
+        ### Response example
+        ```json
+        {
+          "status": "success",
+          "message": "Switched to agency account",
+          "agency": {
+            "organization_id": "agency-uuid",
+            "agency_name": "BrightMail Agency",
+            "industry": "Marketing",
+            "agency_website_url": "https://brightmail.example",
+            "logo": "https://.../CompanyLogos/<client-id>/logo_<ts>.png",
+            "branding_settings": { "logo": "https://...", "theme": { ... } },
+            "is_agency": true,
+            "created_at": "..."
+          },
+          "first_client": {
+            "organization_id": "existing-business-uuid",
+            "business_name": "Acme Cleaning",
+            "industry": "Residential",
+            "business_address": "...",
+            "website_url": "..."
+          },
+          "profile": {
+            "is_super_admin": true,
+            "multi_org_enabled": true,
+            "active_organization_id": "agency-uuid"
+          }
+        }
+        ```
+      operationId: switchToAgencyAccount
+      security:
+        - BearerAuth: []
+        - SupabaseAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              description: All fields optional; empty body works.
+              properties:
+                agency_name:
+                  type: string
+                  nullable: true
+                agency_type:
+                  type: string
+                  nullable: true
+                agency_logo:
+                  type: string
+                  nullable: true
+                  description: Base64 data-URL, raw base64, or an existing public URL.
+                website_url:
+                  type: string
+                  nullable: true
+                organization_id:
+                  type: string
+                  format: uuid
+                  description: Which owned business org becomes the first client. Defaults to active org.
+      responses:
+        "201":
+          description: Switched to agency account
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: success }
+                  message: { type: string }
+                  agency:
+                    type: object
+                    properties:
+                      organization_id: { type: string, format: uuid }
+                      agency_name: { type: string, nullable: true }
+                      industry: { type: string, nullable: true }
+                      agency_website_url: { type: string, nullable: true }
+                      logo: { type: string, nullable: true }
+                      branding_settings:
+                        type: object
+                        nullable: true
+                      is_agency: { type: boolean }
+                      created_at: { type: string }
+                  first_client:
+                    type: object
+                    properties:
+                      organization_id: { type: string, format: uuid }
+                      business_name: { type: string, nullable: true }
+                      industry: { type: string, nullable: true }
+                      business_address: { type: string, nullable: true }
+                      website_url: { type: string, nullable: true }
+                  profile:
+                    type: object
+                    properties:
+                      is_super_admin: { type: boolean }
+                      multi_org_enabled: { type: boolean }
+                      active_organization_id: { type: string, format: uuid }
+        "400":
+          description: ALREADY_AGENCY, INVALID_FIRST_CLIENT_ORG, or INVALID_INPUT
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: NO_BUSINESS_ORG — caller has no business org to convert
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: LOGO_UPLOAD_FAILED or other internal error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
   /createUserV3:
     post:
       tags:
@@ -16232,6 +16405,115 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
+  /getAllTemplatesBundlesV3:
+    get:
+      tags:
+        - Multi-Tenant V3
+      summary: List agency-owned template bundles (paginated)
+      description: |
+        Returns paginated template bundles owned by the caller's "agency orgs" — organizations where the caller is OWNER or ADMIN AND `is_agency = true`. Same query-param surface as V1 `getAllTemplatesBundles`.
+
+        ### Scope (different from V1)
+        - **Includes**: bundles where `organization_id` is one of the caller's agency orgs.
+        - **Excludes**: universal bundles, bundles owned by sub-orgs, and bundles shared in from other orgs.
+        - If the caller has no agency orgs, response is an empty paginated payload.
+
+        ### `isAgencyTemplate`
+        Every bundle in the response has `isAgencyTemplate: true`. The entire endpoint is "agency templates" by definition, so no per-bundle check is needed.
+
+        ### Comparison with V1 `getAllTemplatesBundles`
+        - V1 = "what my active org can use" → own + universal + shared-to-me, with `isAgencyTemplate` only true for the shared-to-me subset.
+        - V3 = "what I (the agency) own at the agency level" → only agency-owned bundles, all marked `isAgencyTemplate: true`.
+
+        ### Filters / sort / pagination
+        Identical to V1: `page`, `limit`, `sort` (a-z/z-a/newest/oldest/most-used), `postcardSize` (4x6/6x9/6x11), `includeDeleted`, `campaign_id`.
+
+        ### Response shape
+        Same paginated wrapper as V1 plus `agency_organization_ids` in `metadata` listing the agency org ids that were queried.
+      operationId: getAllTemplatesBundlesV3
+      security:
+        - BearerAuth: []
+        - SupabaseAuth: []
+      parameters:
+        - in: query
+          name: page
+          schema: { type: integer, minimum: 1, default: 1 }
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 100, default: 10 }
+        - in: query
+          name: sort
+          schema:
+            type: string
+            enum: [a-z, z-a, newest, oldest, most-used]
+            default: newest
+        - in: query
+          name: postcardSize
+          schema:
+            type: string
+            enum: ["4x6", "6x9", "6x11"]
+        - in: query
+          name: includeDeleted
+          schema: { type: boolean, default: false }
+        - in: query
+          name: campaign_id
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Paginated list of agency-owned template bundles
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: success }
+                  message: { type: string }
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      description: Template bundle with isAgencyTemplate = true unconditionally.
+                  pagination:
+                    type: object
+                    properties:
+                      page: { type: integer }
+                      limit: { type: integer }
+                      total_count: { type: integer }
+                      total_pages: { type: integer }
+                      has_next_page: { type: boolean }
+                      has_previous_page: { type: boolean }
+                  metadata:
+                    type: object
+                    properties:
+                      filters_applied:
+                        type: object
+                        properties:
+                          includeDeleted: { type: boolean }
+                          postcardSize: { type: string, nullable: true }
+                      sort_option: { type: string }
+                      agency_organization_ids:
+                        type: array
+                        items: { type: string, format: uuid }
+                      processingTimeMs: { type: integer }
+        "400":
+          description: INVALID_SORT
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
   /createNewTemplateBundleV3:
     post:
       tags:
@@ -16352,6 +16634,143 @@ paths:
                 $ref: "#/components/schemas/Error"
         "500":
           description: Internal server error (PostGrid or DB)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /updateTemplateBundleV3:
+    post:
+      tags:
+        - Multi-Tenant V3
+      summary: Update a template bundle's content and/or share list in one call
+      description: |
+        V3 edit counterpart to `createNewTemplateBundleV3`. Lets an agency edit a
+        bundle's template HTML, description, postcard size, restriction flags,
+        AND its share list — in a single round trip. Mirrors V1
+        `updateTemplateBundle` for the template-content fields but adds the V3
+        agency gates and an optional `share_with_organization_ids` field that
+        REPLACES the bundle's existing share list.
+
+        ### Editable fields (at least one required)
+        - `description` — appends `" Front"` / `" Back"` automatically; updated on PostGrid + both templates rows
+        - `html_front`, `html_back` — pushed to PostGrid and persisted on the corresponding `templates` row
+        - `postcardSize` — `"4x6"` | `"6x9"` | `"6x11"`; applied to BOTH templates rows
+        - `show_restriction_annotations_tooltips`, `show_restriction_area_warning` — boolean flags on the `template_bundles` row
+        - `share_with_organization_ids` — REPLACES the bundle's `shared_with_organization_ids` array (after agency gates)
+
+        ### Immutable fields (silently ignored if present in body)
+        - `organization_id` — owning org can never change post-create
+        - `is_universal` — locked
+
+        ### Access gates
+        - **Universal bundle** (`is_universal = true`): caller must be ADMIN role → otherwise `403 NOT_ADMIN_FOR_UNIVERSAL`. Universal bundles cannot carry a share list (`400 BUNDLE_IS_UNIVERSAL`).
+        - **Non-universal bundle**: caller must be OWNER or ADMIN of the owning org → otherwise `403 NOT_BUNDLE_ADMIN`.
+
+        ### Share-list gates (only when `share_with_organization_ids` provided)
+        Same per-target rules as `shareTemplateBundleV3`:
+        - Owning org must have `is_agency = true` → `400 OWNER_ORG_NOT_AGENCY` otherwise.
+        - Owning org is silently filtered from the target list (sharing with self is a no-op).
+        - Caller must be OWNER or ADMIN of every target org → `403 NO_SHARE_PERMISSION` with the offending id.
+        - Target org must exist → `404 ORG_NOT_FOUND` with the offending id.
+        - Duplicates in the array → `400 INVALID_INPUT`.
+
+        ### Semantics
+        - **Whole-call rejection on validation failure** — no PostGrid call or DB mutation happens until every check passes.
+        - **REPLACE share list**: passing `[]` clears all shares (emits `TEMPLATE_BUNDLE_UNSHARED` per removed org). Omitting the key leaves shares untouched.
+        - **Notifications**: `TEMPLATE_BUNDLE_UPDATED` to ADMIN role on owning org, plus diff-based `TEMPLATE_BUNDLE_SHARED` / `TEMPLATE_BUNDLE_UNSHARED` per added/removed org.
+
+        ### Request example — content + share update combined
+        ```json
+        {
+          "template_bundle_id": "<bundle-uuid>",
+          "description": "Spring Promo v2",
+          "html_front": "<html>...</html>",
+          "show_restriction_area_warning": true,
+          "share_with_organization_ids": ["sub-org-1", "sub-org-2"]
+        }
+        ```
+      operationId: updateTemplateBundleV3
+      security:
+        - BearerAuth: []
+        - SupabaseAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [template_bundle_id]
+              properties:
+                template_bundle_id: { type: string, format: uuid }
+                description: { type: string }
+                html_front: { type: string }
+                html_back: { type: string }
+                postcardSize:
+                  type: string
+                  enum: ["4x6", "6x9", "6x11"]
+                show_restriction_annotations_tooltips: { type: boolean }
+                show_restriction_area_warning: { type: boolean }
+                share_with_organization_ids:
+                  type: array
+                  uniqueItems: true
+                  description: REPLACE semantics. Omit to leave shares untouched. Pass [] to clear.
+                  items: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Bundle updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: success }
+                  message: { type: string }
+                  bundle:
+                    type: object
+                    properties:
+                      id: { type: string, format: uuid }
+                      organization_id: { type: string, format: uuid, nullable: true }
+                      is_universal: { type: boolean }
+                      shared_with_organization_ids:
+                        type: array
+                        items: { type: string, format: uuid }
+                      show_restriction_annotations_tooltips: { type: boolean }
+                      show_restriction_area_warning: { type: boolean }
+                      front_template: { type: object }
+                      back_template: { type: object }
+                      created_at: { type: string }
+                      updated_at: { type: string }
+                  fields_updated:
+                    type: array
+                    items: { type: string }
+                  processingTimeMs: { type: integer }
+        "400":
+          description: INVALID_INPUT, BUNDLE_IS_UNIVERSAL, OWNER_ORG_NOT_AGENCY, or BUNDLE_HAS_NO_OWNER_ORG
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: NOT_BUNDLE_ADMIN, NOT_ADMIN_FOR_UNIVERSAL, or NO_SHARE_PERMISSION
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: BUNDLE_NOT_FOUND or ORG_NOT_FOUND (for a target org)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: POSTGRID_API_ERROR, DATABASE_ERROR, or other internal error
           content:
             application/json:
               schema:

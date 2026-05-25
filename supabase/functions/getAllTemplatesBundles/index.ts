@@ -121,9 +121,20 @@ Deno.serve(async (req) => {
 
     // Re-shape flat RPC rows into bundle-like objects so the filter/sort/transform
     // logic below is identical to the original PostgREST-join version.
+    //
+    // `isAgencyTemplate` is true when the caller's active org appears in the
+    // bundle's `shared_with_organization_ids`. From the receiving org's POV
+    // this means "an agency shared this bundle with me". The bundle's own
+    // org and universal bundles are NOT marked.
     const bundles = (rows || []).map((r: any) => ({
       id:           r.bundle_id,
+      organization_id: r.bundle_organization_id ?? null,
       is_universal: r.is_universal,
+      shared_with_organization_ids: r.shared_with_organization_ids || [],
+      isAgencyTemplate:
+        Array.isArray(r.shared_with_organization_ids) &&
+        organizationId !== null &&
+        r.shared_with_organization_ids.includes(organizationId),
       show_restriction_annotations_tooltips: r.show_restriction_annotations_tooltips,
       show_restriction_area_warning:         r.show_restriction_area_warning,
       created_at:   r.bundle_created_at,

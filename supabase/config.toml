@@ -625,3 +625,15 @@ verify_jwt = false
 [functions.getAgencySettings]
 entrypoint = "./functions/getAgencySettings/index.ts"
 verify_jwt = false
+
+[functions.switchToAgencyAccount]
+entrypoint = "./functions/switchToAgencyAccount/index.ts"
+verify_jwt = false
+
+[functions.updateTemplateBundleV3]
+entrypoint = "./functions/updateTemplateBundleV3/index.ts"
+verify_jwt = false
+
+[functions.getAllTemplatesBundlesV3]
+entrypoint = "./functions/getAllTemplatesBundlesV3/index.ts"
+verify_jwt = false
