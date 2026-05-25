@@ -16535,7 +16535,7 @@ paths:
         The response also includes two convenience fields so the frontend does not need a second round-trip:
         - `owning_organization` — the org row that owns the bundle (resolved from `bundle.organization_id`).
         - `shared_with_organizations` — full org rows for every id in `shared_with_organization_ids`, in the same order. Missing rows are silently dropped (e.g. if a target org was deleted after sharing).
-        Each org entry exposes: `id, business_name, business_address, company_logo, branding_settings, is_agency`.
+        Each org entry exposes: `id, business_name, business_email, business_address, branding_settings, is_agency`. (Org-level logo, when set, lives at `branding_settings.logo`.)
 
         ### Comparison with V1 `getTemplateBundleById`
         - V1 allows access if the caller's active org owns the bundle OR the bundle is universal.
@@ -16584,8 +16584,8 @@ paths:
                         properties:
                           id: { type: string, format: uuid }
                           business_name: { type: string, nullable: true }
+                          business_email: { type: string, nullable: true }
                           business_address: { type: string, nullable: true }
-                          company_logo: { type: string, nullable: true }
                           branding_settings: { type: object, nullable: true }
                           is_agency: { type: boolean }
                       shared_with_organizations:
@@ -16597,8 +16597,8 @@ paths:
                           properties:
                             id: { type: string, format: uuid }
                             business_name: { type: string, nullable: true }
+                            business_email: { type: string, nullable: true }
                             business_address: { type: string, nullable: true }
-                            company_logo: { type: string, nullable: true }
                             branding_settings: { type: object, nullable: true }
                             is_agency: { type: boolean }
                       front_template:

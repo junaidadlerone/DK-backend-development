@@ -99,7 +99,7 @@ Deno.serve(async (req) => {
 
     const { data: orgRows, error: orgsErr } = await supabase
       .from("organizations")
-      .select("id, business_name, business_address, company_logo, branding_settings, is_agency")
+      .select("id, business_name, business_email, business_address, branding_settings, is_agency")
       .in("id", idsToLoad);
     if (orgsErr) {
       console.error("getTemplateBundleByIdV3: failed to load organizations", orgsErr);

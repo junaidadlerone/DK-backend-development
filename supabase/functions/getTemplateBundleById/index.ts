@@ -34,13 +34,13 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Get user's organization
+    // Get user's organization (preserves original V1 active-org resolution).
     const organizationId = await getUserOrganizationId(supabase, user.userId);
     if (!organizationId) {
       return errorResponse(
         "NO_ORGANIZATION",
         "User is not associated with any organization",
-        403
+        403,
       );
     }
 
@@ -56,7 +56,7 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Fetch template bundle (must be organization or universal)
+    // Fetch the bundle by id; access check happens in JS afterward.
     const { data: bundle, error: bundleError } = await supabase
       .from("template_bundles")
       .select(`
@@ -65,20 +65,39 @@ Deno.serve(async (req) => {
         template_back_id,
         organization_id,
         is_universal,
+        shared_with_organization_ids,
         show_restriction_annotations_tooltips,
         show_restriction_area_warning,
         created_at,
         updated_at
       `)
       .eq("id", bundleId)
-      .or(`organization_id.eq.${organizationId},is_universal.eq.true`)
       .single();
 
     if (bundleError || !bundle) {
       return errorResponse(
         "BUNDLE_NOT_FOUND",
-        "Template bundle not found or not accessible",
+        "Template bundle not found",
         404
+      );
+    }
+
+    // Access check (V1 rule + V3 share addition):
+    //   1. active org owns the bundle (original V1 rule)
+    //   2. bundle is universal (original V1 rule)
+    //   3. active org is in shared_with_organization_ids (V3 share — added so the
+    //      detail endpoint stays in sync with getAllTemplatesBundles, which
+    //      already surfaces shared-in bundles for the active org).
+    const sharedIds: string[] = Array.isArray(bundle.shared_with_organization_ids)
+      ? bundle.shared_with_organization_ids
+      : [];
+    const ownsBundle = bundle.organization_id === organizationId;
+    const isShared = sharedIds.includes(organizationId);
+    if (!ownsBundle && !bundle.is_universal && !isShared) {
+      return errorResponse(
+        "BUNDLE_NOT_ACCESSIBLE",
+        "Template bundle is not accessible to your organization",
+        403,
       );
     }
 
@@ -121,6 +140,8 @@ Deno.serve(async (req) => {
             id: bundle.id,
             organization_id: bundle.organization_id,
             is_universal: bundle.is_universal,
+            shared_with_organization_ids: sharedIds,
+            isAgencyTemplate: isShared,
             show_restriction_annotations_tooltips: bundle.show_restriction_annotations_tooltips ?? false,
             show_restriction_area_warning: bundle.show_restriction_area_warning ?? false,
             created_at: bundle.created_at,

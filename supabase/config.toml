@@ -642,6 +642,14 @@ verify_jwt = false
 entrypoint = "./functions/getTemplateBundleByIdV3/index.ts"
 verify_jwt = false
 
+[functions.shareTemplateBundleV3]
+entrypoint = "./functions/shareTemplateBundleV3/index.ts"
+verify_jwt = false
+
+[functions.unshareTemplateBundleV3]
+entrypoint = "./functions/unshareTemplateBundleV3/index.ts"
+verify_jwt = false
+
 [functions.getOnboardingDetails]
 entrypoint = "./functions/getOnboardingDetails/index.ts"
 verify_jwt = false
