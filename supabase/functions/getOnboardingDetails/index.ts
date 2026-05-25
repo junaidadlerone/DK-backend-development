@@ -1,7 +1,7 @@
 import { corsResponse, errorResponse, successResponse } from "../_shared/response.ts";
 import { createSupabaseClient } from "../_shared/client.ts";
 import { getUserFromRequest } from "../_shared/history.ts";
-import { getUserOrganizationId } from "../_shared/organization.ts";
+import { getUserOrganizationId, validateOrganizationAccess } from "../_shared/organization.ts";
 
 /**
  * Get Onboarding Details
@@ -26,24 +26,55 @@ Deno.serve(async (req) => {
       return errorResponse("UNAUTHORIZED", "Unable to authenticate user", 401);
     }
 
-    const organizationId = await getUserOrganizationId(supabase, user.userId);
+    // Honor optional ?organization_id=... query param (frontend passes this to read
+    // a specific org's onboarding state when editing a non-active org). Falls back
+    // to the caller's active org when not provided.
+    const url = new URL(req.url);
+    const requestedOrgId = url.searchParams.get("organization_id");
+    let organizationId: string | null = null;
+    if (requestedOrgId) {
+      const hasAccess = await validateOrganizationAccess(supabase, requestedOrgId, user.userId);
+      if (!hasAccess) {
+        return errorResponse("FORBIDDEN", "You do not have access to this organization", 403);
+      }
+      organizationId = requestedOrgId;
+    } else {
+      organizationId = await getUserOrganizationId(supabase, user.userId);
+    }
     if (!organizationId) {
       return errorResponse("NO_ORGANIZATION", "User is not associated with any organization", 403);
     }
 
-    // Fetch onboarding details
-    const { data: onboardingData, error: onboardingError } = await supabase
-      .from("onboarding")
-      .select("*")
-      .eq("organization_id", organizationId)
-      .single();
-    
+    // Fetch onboarding details + the organization row (the org row holds
+    // business_email, which completeOnboarding step 1 writes there but the
+    // onboarding table has no column for).
+    const [
+      { data: onboardingData, error: onboardingError },
+      { data: orgData, error: orgError },
+    ] = await Promise.all([
+      supabase
+        .from("onboarding")
+        .select("*")
+        .eq("organization_id", organizationId)
+        .single(),
+      supabase
+        .from("organizations")
+        .select("business_email")
+        .eq("id", organizationId)
+        .single(),
+    ]);
+
     // It's possible onboarding entry doesn't exist if they haven't started step 1
     // But usually created at signup or step 1.
     // If error, we might return empty or partial.
     if (onboardingError && onboardingError.code !== "PGRST116") {
        console.error("Error fetching onboarding:", onboardingError);
        return errorResponse("DATABASE_ERROR", "Failed to fetch onboarding details", 500);
+    }
+
+    // orgError is non-fatal — business_email is optional. Just log it.
+    if (orgError && orgError.code !== "PGRST116") {
+      console.error("Error fetching organization for business_email:", orgError);
     }
 
     // Fetch profile for theme settings
@@ -70,6 +101,7 @@ Deno.serve(async (req) => {
         business_name: onboardingData.business_name,
         industry: onboardingData.business_industry,
         business_phone_number: onboardingData.business_phone_number,
+        business_email: orgData?.business_email ?? null,
         website_url: onboardingData.website_url
       };
 
@@ -80,7 +112,7 @@ Deno.serve(async (req) => {
         state: onboardingData.state,
         zip: onboardingData.zip
       };
-      
+
       // Logo is technically part of step 3
       response.step_3.company_logo = onboardingData.company_logo;
     }
@@ -103,8 +135,9 @@ Deno.serve(async (req) => {
       business_name: onboardingData?.business_name || null,
       industry: onboardingData?.business_industry || null,
       business_phone_number: onboardingData?.business_phone_number || null,
+      business_email: orgData?.business_email ?? null,
       website_url: onboardingData?.website_url || null,
-      
+
       // Step 2
       country: onboardingData?.country || null,
       street_address: onboardingData?.street_address || null,

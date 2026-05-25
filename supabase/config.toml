@@ -637,3 +637,11 @@ verify_jwt = false
 [functions.getAllTemplatesBundlesV3]
 entrypoint = "./functions/getAllTemplatesBundlesV3/index.ts"
 verify_jwt = false
+
+[functions.getTemplateBundleByIdV3]
+entrypoint = "./functions/getTemplateBundleByIdV3/index.ts"
+verify_jwt = false
+
+[functions.getOnboardingDetails]
+entrypoint = "./functions/getOnboardingDetails/index.ts"
+verify_jwt = false
