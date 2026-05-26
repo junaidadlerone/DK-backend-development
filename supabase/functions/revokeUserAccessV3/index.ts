@@ -2,7 +2,8 @@ import { corsResponse, errorResponse, successResponse } from "../_shared/respons
 import { createSupabaseClient } from "../_shared/client.ts";
 import { getUserFromRequest } from "../_shared/history.ts";
 import { createNotification, ROLES } from "../_shared/notifications.ts";
-import { isAgencyUser, callerRoleOnOrg } from "../_shared/agencyGate.ts";
+import { callerRoleOnOrg } from "../_shared/agencyGate.ts";
+import { getUserOrganizations } from "../_shared/organization.ts";
 
 /**
  * revokeUserAccessV3 — remove a user's membership from one or more orgs.
@@ -50,8 +51,12 @@ Deno.serve(async (req) => {
       return errorResponse("INVALID_INPUT", "organization_ids must not contain duplicates", 400);
     }
 
-    // Gate
-    if (!(await isAgencyUser(supabase, caller.userId))) {
+    // Gate + resolve caller's agency orgs in one pass.
+    const callerOrgs = await getUserOrganizations(supabase, caller.userId);
+    const callerAgencyOrgIds = callerOrgs
+      .filter((o) => o.isAgencyAccount === true && (o.role === "OWNER" || o.role === "ADMIN"))
+      .map((o) => o.id);
+    if (callerAgencyOrgIds.length === 0) {
       return errorResponse(
         "NOT_AGENCY_USER",
         "Only agency users can call V3 endpoints",
@@ -64,11 +69,26 @@ Deno.serve(async (req) => {
       return errorResponse("INVALID_OPERATION", "You cannot revoke your own access", 400);
     }
 
+    // Symmetric with createUserV3 which auto-ADDS the caller's agency orgs into
+    // every grant: revoke silently DROPS them from the input. The user stays in
+    // the agency (still visible via getUserV3 / team lists). Use deleteUserV3
+    // to fully remove a user.
+    const agencySet = new Set(callerAgencyOrgIds);
+    const droppedAgencyOrgIds = uniqueOrgIds.filter((id) => agencySet.has(id));
+    const effectiveOrgIds = uniqueOrgIds.filter((id) => !agencySet.has(id));
+    if (effectiveOrgIds.length === 0) {
+      return errorResponse(
+        "NO_ORGS_TO_REVOKE",
+        "All requested orgs are agency orgs. Agency-org access cannot be revoked here — use deleteUserV3 to fully remove the user.",
+        400,
+      );
+    }
+
     // Pre-flight: load all orgs and validate every one before mutating anything.
     const { data: orgs, error: orgsErr } = await supabase
       .from("organizations")
       .select("id, owner_id, organization_members")
-      .in("id", uniqueOrgIds);
+      .in("id", effectiveOrgIds);
     if (orgsErr) {
       console.error("revokeUserAccessV3: org fetch error", orgsErr);
       return errorResponse("FETCH_FAILED", "Failed to load organizations", 500);
@@ -76,7 +96,7 @@ Deno.serve(async (req) => {
     const orgsById = new Map<string, any>();
     for (const o of orgs || []) orgsById.set(o.id, o);
 
-    for (const orgId of uniqueOrgIds) {
+    for (const orgId of effectiveOrgIds) {
       const org = orgsById.get(orgId);
       if (!org) return errorResponse("ORG_NOT_FOUND", `Organization ${orgId} not found`, 404);
       const role = callerRoleOnOrg(org, caller.userId);
@@ -99,7 +119,7 @@ Deno.serve(async (req) => {
     // All checks passed — apply revocations.
     const results: Array<{ organization_id: string; was_member: boolean }> = [];
 
-    for (const orgId of uniqueOrgIds) {
+    for (const orgId of effectiveOrgIds) {
       const org = orgsById.get(orgId);
       const members = Array.isArray(org.organization_members) ? org.organization_members : [];
       const updatedMembers = members.filter((m: any) => m?.member_uid !== user_id);
@@ -133,13 +153,13 @@ Deno.serve(async (req) => {
       results.push({ organization_id: orgId, was_member });
     }
 
-    // Clear active_organization_id if it was one of the revoked orgs.
+    // Clear active_organization_id if it pointed at one of the revoked orgs.
     const { data: targetProfile } = await supabase
       .from("profiles")
       .select("active_organization_id")
       .eq("id", user_id)
       .maybeSingle();
-    if (targetProfile?.active_organization_id && uniqueOrgIds.includes(targetProfile.active_organization_id)) {
+    if (targetProfile?.active_organization_id && effectiveOrgIds.includes(targetProfile.active_organization_id)) {
       await supabase
         .from("profiles")
         .update({ active_organization_id: null })
@@ -151,6 +171,7 @@ Deno.serve(async (req) => {
       message: `User access revoked from ${results.filter((r) => r.was_member).length} organization(s)`,
       user_id,
       results,
+      dropped_agency_organization_ids: droppedAgencyOrgIds,
     }, 200);
   } catch (error) {
     console.error("Unexpected error in revokeUserAccessV3:", error);

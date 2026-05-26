@@ -15954,8 +15954,15 @@ paths:
         ### Idempotency
         Re-revoking a user who is no longer a member returns success with `was_member: false` for that org.
 
+        ### Agency-org auto-exclusion (mirrors `createUserV3`)
+        `createUserV3` auto-MERGES the caller's agency orgs into every grant so a new user always lands in the agency. `revokeUserAccessV3` is symmetric: any of the caller's own agency orgs (orgs where the caller is OWNER/ADMIN AND `is_agency = TRUE`) that appear in `organization_ids` are silently DROPPED before the per-org checks run. The user stays in the agency org and continues to appear in `getUserV3` / team list endpoints. Use `deleteUserV3` to fully remove a user.
+
+        Dropped ids are returned on the response as `dropped_agency_organization_ids` so the frontend can show "those orgs were not revoked".
+
+        If `organization_ids` consists ONLY of the caller's agency orgs, the call rejects with `400 NO_ORGS_TO_REVOKE`.
+
         ### Side effect
-        If the user's `profiles.active_organization_id` happens to be in the revoked list, it is cleared so the next login resolves to a still-valid org.
+        If the user's `profiles.active_organization_id` happens to be in the effective revoked list (after agency auto-exclusion), it is cleared so the next login resolves to a still-valid org.
 
         ### Request example
         ```json
@@ -15971,7 +15978,8 @@ paths:
           "results": [
             { "organization_id": "uuid-b", "was_member": true },
             { "organization_id": "uuid-c", "was_member": true }
-          ]
+          ],
+          "dropped_agency_organization_ids": []
         }
         ```
       operationId: revokeUserAccessV3
@@ -16014,8 +16022,16 @@ paths:
                       properties:
                         organization_id: { type: string, format: uuid }
                         was_member: { type: boolean }
+                  dropped_agency_organization_ids:
+                    type: array
+                    description: Agency-org ids the caller submitted but that were auto-excluded from revocation (the user keeps access to those).
+                    items: { type: string, format: uuid }
         "400":
-          description: Invalid input, self-revoke, or attempt to revoke an OWNER
+          description: |
+            - Invalid input
+            - Self-revoke (`INVALID_OPERATION`)
+            - Attempt to revoke an OWNER (`CANNOT_REVOKE_OWNER`)
+            - `NO_ORGS_TO_REVOKE` — every requested org is a caller agency org (use `deleteUserV3` instead)
           content:
             application/json:
               schema:
@@ -16168,6 +16184,236 @@ paths:
             application/json:
               schema:
                 type: object
+
+  /getOrganizationV3:
+    get:
+      tags:
+        - Multi-Tenant V3
+      summary: List all members of the caller's agency org(s), each with their full org access
+      description: |
+        Agency dashboard "team & their access" view. Returns every member of the caller's agency org(s), with each member annotated by the full organization objects they belong to.
+
+        ### Gate
+        Caller must be OWNER or ADMIN of at least one `is_agency = TRUE` org. Otherwise → `403 NOT_AGENCY_USER`.
+
+        ### Member set
+        The union across all the caller's agency orgs of: the agency org's `owner_id` and every uid in its `organization_members`. Dedup by user id. The caller IS included (they ARE a member).
+
+        ### Per-member shape
+        - `id`, `email` (from auth), `full_name` (from `profiles`)
+        - `role_in_agency_org` — the user's highest role across the caller's agency orgs (OWNER > ADMIN > MARKETER > TECHNICIAN)
+        - `agency_organization_id` — the agency org id that produced that highest role
+        - `organizations[]` — every org the user belongs to (owned + member), each with all org columns EXCEPT `organization_members`, plus augmented `role`, `is_active` (true if `org.id === profile.active_organization_id`), `onboarding_step` (0-4, derived from the `onboarding` table). Honors the "non-owners can't see orgs pending deletion" rule from `getUserV3`.
+
+        ### No filtering
+        `organizations[]` is NOT filtered by what the caller can see — every org the member belongs to appears.
+
+        ### Performance
+        One `auth.admin.listUsers()` call to build a user-id → email map (same pattern as `getAgencyAccountOrganizationMembers`). Batched `profiles`, `organizations` (whole table), and `onboarding` queries.
+      operationId: getOrganizationV3
+      security:
+        - BearerAuth: []
+        - SupabaseAuth: []
+      responses:
+        "200":
+          description: Agency team list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: success }
+                  message: { type: string }
+                  data:
+                    type: object
+                    properties:
+                      agency_organization_ids:
+                        type: array
+                        items: { type: string, format: uuid }
+                      members:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            id: { type: string, format: uuid }
+                            email: { type: string, nullable: true }
+                            full_name: { type: string, nullable: true }
+                            role_in_agency_org:
+                              type: string
+                              enum: [OWNER, ADMIN, MARKETER, TECHNICIAN]
+                            agency_organization_id: { type: string, format: uuid }
+                            organizations:
+                              type: array
+                              description: |
+                                Full organization rows the member belongs to, with `organization_members` stripped, plus augmented `role`, `is_active`, `onboarding_step`. Same per-org shape as `getUserV3`.
+                              items:
+                                type: object
+                  metadata:
+                    type: object
+                    properties:
+                      processingTimeMs: { type: integer }
+        "401":
+          description: UNAUTHORIZED
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: NOT_AGENCY_USER — caller has no OWNER/ADMIN role on an `is_agency=true` org
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "405":
+          description: METHOD_NOT_ALLOWED — only GET is allowed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: FETCH_FAILED on one of the backing queries, or INTERNAL_ERROR
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /editUserV3:
+    post:
+      tags:
+        - Multi-Tenant V3
+      summary: Grant org access (or update role) for an existing user
+      description: |
+        **V3 counterpart to `createUserV3` for users who already exist.** Mutates `organizations.organization_members` for one or more orgs — never creates auth accounts.
+
+        Use this to:
+        - Re-grant access to a user who was previously removed via `revokeUserAccessV3`.
+        - Add an existing user to additional sub-orgs.
+        - Change a user's per-org role.
+
+        ### Gate
+        Caller must be OWNER or ADMIN of at least one `is_agency = TRUE` org. Otherwise → `403 NOT_AGENCY_USER`.
+
+        ### Per-org gate
+        Caller must be OWNER or ADMIN of every listed org. Otherwise → `403 NO_GRANT_PERMISSION` (whole-call rejection — no mutation if any fails).
+
+        ### Role-required rule
+        `role` is **required** when ANY listed org does NOT already contain the target user (we have nothing to copy). For orgs the target IS already in, `role` is optional — omitted means "no change", provided means "update the existing entry if different".
+
+        ### Agency auto-merge (mirrors `createUserV3`)
+        The caller's agency org ids are silently merged into `organization_ids` so the target user always ends up in (or stays in) the caller's agency org. This closes the same gap the `revokeUserAccessV3` agency auto-exclusion does.
+
+        ### Per-org behavior matrix
+        | Pre-state | `role` provided | Action returned |
+        |---|---|---|
+        | Already member, same role | yes or no | `no_change` |
+        | Already member, different role | yes | `role_updated` |
+        | Already member | no | `no_change` |
+        | Not member, not owner | yes | `added` |
+        | Not member, not owner | no | rejects with `400 ROLE_REQUIRED_FOR_NEW_GRANTS` |
+        | Is org OWNER | yes | rejects with `400 CANNOT_CHANGE_OWNER_ROLE` |
+        | Is org OWNER | no | `owner_skipped` |
+
+        ### Side effect
+        After a successful apply, the target's `profiles.active_organization_id` is repaired if it is null OR points at an org the user no longer belongs to. It's set to the first newly-granted org id.
+
+        ### Audit fields preserved
+        `profiles.created_by` (createUserV3 invitation snapshot) is NOT touched. `profiles.role` (global role) is NOT changed — this endpoint manages per-org membership only.
+
+        ### Notifications
+        For every `added` or `role_updated` result, a notification is dispatched to that org's members. Failures are logged; the call succeeds either way.
+      operationId: editUserV3
+      security:
+        - BearerAuth: []
+        - SupabaseAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [user_id, organization_ids]
+              properties:
+                user_id:
+                  type: string
+                  format: uuid
+                role:
+                  type: string
+                  enum: [ADMIN, MARKETER, TECHNICIAN]
+                  description: |
+                    Required when `organization_ids` contains any org the target user is NOT already in. Optional for orgs the target IS already in (omit = no change, provide = update if different).
+                organization_ids:
+                  type: array
+                  minItems: 1
+                  uniqueItems: true
+                  items: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Access edited successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: success }
+                  message: { type: string }
+                  user_id: { type: string, format: uuid }
+                  requested_organization_ids:
+                    type: array
+                    items: { type: string, format: uuid }
+                  organization_ids:
+                    type: array
+                    description: Final grant list after agency auto-merge.
+                    items: { type: string, format: uuid }
+                  results:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        organization_id: { type: string, format: uuid }
+                        action:
+                          type: string
+                          enum: [added, role_updated, no_change, owner_skipped]
+        "400":
+          description: |
+            - `INVALID_INPUT` — body parse failure, missing fields, duplicate org ids
+            - `INVALID_ROLE` — role not in the allowed set
+            - `INVALID_OPERATION` — caller targeting themselves
+            - `ROLE_REQUIRED_FOR_NEW_GRANTS` — adding access to a new org without a role
+            - `CANNOT_CHANGE_OWNER_ROLE` — trying to set a member role on the org owner
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: UNAUTHORIZED
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: NOT_AGENCY_USER or NO_GRANT_PERMISSION on one of the listed orgs
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: USER_NOT_FOUND or ORG_NOT_FOUND
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "405":
+          description: METHOD_NOT_ALLOWED — only POST is allowed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: FETCH_FAILED, UPDATE_FAILED, or INTERNAL_ERROR
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 
   /getAgencyOverview:
     get:
