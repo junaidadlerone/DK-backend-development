@@ -2,6 +2,7 @@ import { corsResponse, errorResponse, successResponse } from "../_shared/respons
 import { createSupabaseClient, getUserProfile } from "../_shared/client.ts";
 import { getUserOrganizationId } from "../_shared/organization.ts";
 import { getUserFromRequest } from "../_shared/history.ts";
+import { callerRoleOnOrg } from "../_shared/agencyGate.ts";
 
 /**
  * Get App Content Edge Function
@@ -64,12 +65,26 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Fetch the org owner's branding so all members share the same theme
+    // Fetch the org owner's branding so all members share the same theme.
+    // Also pull organization_members so we can resolve the caller's PER-ORG role
+    // (profiles.role is global and doesn't reflect per-org membership in V3).
     const { data: org } = await supabase
       .from("organizations")
-      .select("owner_id, is_agency")
+      .select("owner_id, is_agency, organization_members")
       .eq("id", organizationId)
       .single();
+
+    // Per-org role takes precedence over profiles.role. OWNER is mapped to
+    // ADMIN for app_content lookup because the app_content table only stores
+    // ADMIN/MARKETER/TECHNICIAN rows. Fall back to profiles.role only if the
+    // user isn't in this org at all (defensive — shouldn't happen since
+    // getUserOrganizationId already validated membership).
+    let effectiveRole: "ADMIN" | "MARKETER" | "TECHNICIAN" = userProfile.role;
+    if (org) {
+      const orgRole = callerRoleOnOrg(org, user.userId);
+      if (orgRole === "OWNER" || orgRole === "ADMIN") effectiveRole = "ADMIN";
+      else if (orgRole === "MARKETER" || orgRole === "TECHNICIAN") effectiveRole = orgRole;
+    }
 
     let ownerBrandingSettings = userProfile.branding_settings;
     if (org?.owner_id && org.owner_id !== user.userId) {
@@ -185,12 +200,12 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Fetch app content for user's role and organization
+    // Fetch app content for user's PER-ORG role and organization
     const { data: appContent, error: contentError } = await supabase
       .from("app_content")
       .select("menu_items")
       .eq("organization_id", organizationId)
-      .eq("role", userProfile.role)
+      .eq("role", effectiveRole)
       .single();
 
     if (contentError) {
@@ -219,7 +234,7 @@ Deno.serve(async (req) => {
             .from("app_content")
             .select("menu_items")
             .eq("organization_id", organizationId)
-            .eq("role", userProfile.role)
+            .eq("role", effectiveRole)
             .single();
 
           if (retryError || !retryAppContent) {
@@ -236,7 +251,7 @@ Deno.serve(async (req) => {
             .from("notifications")
             .select("*", { count: "exact", head: true })
             .eq("organization_id", organizationId)
-            .contains("target_roles", [userProfile.role])
+            .contains("target_roles", [effectiveRole])
             .eq("is_read", false);
 
           const hasUnreadNotifications = (unreadCount || 0) > 0;
@@ -306,7 +321,7 @@ Deno.serve(async (req) => {
       .from("notifications")
       .select("*", { count: "exact", head: true })
       .eq("organization_id", organizationId)
-      .contains("target_roles", [userProfile.role])
+      .contains("target_roles", [effectiveRole])
       .eq("is_read", false);
 
     const hasUnreadNotifications = (unreadCount || 0) > 0;
