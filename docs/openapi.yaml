@@ -16423,7 +16423,9 @@ paths:
       description: |
         **Agency-only single-shot portfolio view.**
 
-        For every organization the caller is OWNER or ADMIN of, returns the full org row plus that org's active campaigns, lifetime QR-scan total, lifetime spend, and total campaign count. Includes a portfolio-wide `summary`.
+        For every CLIENT sub-organization the caller is OWNER or ADMIN of, returns the full org row plus that org's active campaigns, lifetime QR-scan total, lifetime spend, and total campaign count. Includes a portfolio-wide `summary`.
+
+        **Excludes the agency org itself** (`is_agency = true`) — this is the agency's portfolio view of its CLIENTS, not of itself. Use `getOrganizationV3` for the agency-org and team view.
 
         Designed to replace the previous fan-out of `getUserOrganizations` → N × `getAllCampaigns` → N × `getCampaignById` calls on the agency-dashboard screen.
 

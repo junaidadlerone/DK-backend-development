@@ -73,9 +73,14 @@ Deno.serve(async (req) => {
     }
 
     // Resolve every org the caller can see, then keep only OWNER + ADMIN.
+    // Exclude the agency org itself — this endpoint is the agency's portfolio
+    // view of its CLIENT sub-orgs, so the agency-account row would just clutter
+    // the list.
     const visibleOrgs = await getUserOrganizations(supabase, caller.userId);
     const adminableOrgs = visibleOrgs.filter(
-      (o) => o.role === "OWNER" || o.role === "ADMIN",
+      (o) =>
+        (o.role === "OWNER" || o.role === "ADMIN") &&
+        o.isAgencyAccount !== true,
     );
 
     if (adminableOrgs.length === 0) {
