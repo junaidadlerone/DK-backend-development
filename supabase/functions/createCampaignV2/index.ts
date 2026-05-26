@@ -333,7 +333,10 @@ async function handleStep2(supabase: any, body: any, campaign_id: string, organi
     );
   }
 
-  // Fetch template bundle (organization or universal)
+  // Fetch bundle by id only; access is checked in JS so we can match the V1
+  // list (getAllTemplatesBundles) and detail (getTemplateBundleById) rules:
+  // active org owns it OR bundle is universal OR active org is in
+  // shared_with_organization_ids (V3 share).
   const { data: bundle, error: bundleError } = await supabase
     .from("template_bundles")
     .select(`
@@ -341,16 +344,29 @@ async function handleStep2(supabase: any, body: any, campaign_id: string, organi
       template_front_id,
       template_back_id,
       is_universal,
-      organization_id
+      organization_id,
+      shared_with_organization_ids
     `)
     .eq("id", template_bundle_id)
-    .or(`organization_id.eq.${organizationId},is_universal.eq.true`)
     .single();
 
   if (bundleError || !bundle) {
     return errorResponse(
       "BUNDLE_NOT_FOUND",
-      "Template bundle not found or not accessible",
+      "Template bundle not found",
+      404
+    );
+  }
+
+  const sharedIds: string[] = Array.isArray(bundle.shared_with_organization_ids)
+    ? bundle.shared_with_organization_ids
+    : [];
+  const ownsBundle = bundle.organization_id === organizationId;
+  const isShared = sharedIds.includes(organizationId);
+  if (!ownsBundle && !bundle.is_universal && !isShared) {
+    return errorResponse(
+      "BUNDLE_NOT_FOUND",
+      "Template bundle not accessible to your organization",
       404
     );
   }

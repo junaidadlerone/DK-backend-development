@@ -17459,7 +17459,11 @@ paths:
         - `template_bundle_id`: UUID of template bundle
 
         **What Happens:**
-        - Fetches template bundle (must be organization or universal)
+        - Fetches template bundle. Access granted if any of:
+          - the bundle's `organization_id` matches the caller's active org (owned), OR
+          - `is_universal = true`, OR
+          - the caller's active org id appears in `shared_with_organization_ids` (V3 agency share).
+          Otherwise → `404 BUNDLE_NOT_FOUND`.
         - Gets template_front_id and template_back_id from bundle
         - Looks up templates to get postgrid_template_id
         - Updates campaign with front_template_id and back_template_id
