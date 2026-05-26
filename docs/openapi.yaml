@@ -16516,6 +16516,12 @@ paths:
             - `deleting` — `status` starts with `"Deleting"`
             - `all` (or omitted) — no status filter
         - in: query
+          name: search
+          required: false
+          schema: { type: string }
+          description: |
+            Case-insensitive substring match against the org's `business_name` and `business_email`. Whitespace-only values are ignored.
+        - in: query
           name: min_scans
           required: false
           schema: { type: number, minimum: 0 }
@@ -16622,6 +16628,7 @@ paths:
                             type: string
                             nullable: true
                             enum: [active, setup, deleting, all, null]
+                          search: { type: string, nullable: true }
                           min_scans: { type: number, nullable: true }
                           max_scans: { type: number, nullable: true }
                           min_spend: { type: number, nullable: true }

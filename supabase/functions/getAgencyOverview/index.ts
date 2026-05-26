@@ -59,6 +59,10 @@ Deno.serve(async (req) => {
     const minSpend = parseNum("min_spend");
     const maxSpend = parseNum("max_spend");
 
+    // Free-text search across business_name + business_email (case-insensitive substring).
+    const rawSearch = url.searchParams.get("search");
+    const search = rawSearch && rawSearch.trim() ? rawSearch.trim().toLowerCase() : null;
+
     // Gate
     if (!(await isAgencyUser(supabase, caller.userId))) {
       return errorResponse(
@@ -95,6 +99,7 @@ Deno.serve(async (req) => {
           },
           filters: {
             status: statusFilter,
+            search,
             min_scans: minScans,
             max_scans: maxScans,
             min_spend: minSpend,
@@ -259,6 +264,11 @@ Deno.serve(async (req) => {
       if (statusFilter && statusFilter !== "all") {
         if (statusCategory(o.status) !== statusFilter) return false;
       }
+      if (search) {
+        const name = (o.business_name ?? "").toLowerCase();
+        const email = (o.business_email ?? "").toLowerCase();
+        if (!name.includes(search) && !email.includes(search)) return false;
+      }
       if (minScans != null && o.total_qr_scans < minScans) return false;
       if (maxScans != null && o.total_qr_scans > maxScans) return false;
       if (minSpend != null && o.total_spend < minSpend) return false;
@@ -300,6 +310,7 @@ Deno.serve(async (req) => {
 
     const filters = {
       status: statusFilter,
+      search,
       min_scans: minScans,
       max_scans: maxScans,
       min_spend: minSpend,
