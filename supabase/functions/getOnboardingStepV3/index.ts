@@ -1,7 +1,7 @@
 import { corsResponse, errorResponse, successResponse } from "../_shared/response.ts";
 import { createSupabaseClient } from "../_shared/client.ts";
 import { getUserFromRequest } from "../_shared/history.ts";
-import { deriveOnboardingStepCount, getUserOrganizationId } from "../_shared/organization.ts";
+import { getUserOrganizationId } from "../_shared/organization.ts";
 
 /**
  * Get Onboarding Step V3
@@ -9,30 +9,16 @@ import { deriveOnboardingStepCount, getUserOrganizationId } from "../_shared/org
  * Returns the user's current onboarding progress in the V3 branched flow.
  * organization_type is inferred from `organizations.is_agency` on the primary org.
  *
- * `completed_step` is derived ONLY from the `onboarding` row via
- * `deriveOnboardingStepCount` so this endpoint always agrees with
- * `getUser.organizations[].onboarding_step` for the same org.
+ *   Business (4 steps):
+ *     step 1 done — is_agency flag set (org_type chosen)
+ *     step 2 done — primary org has business_name
+ *     step 3 done — primary org has business_address
+ *     step 4 done — primary org has branding_settings.logo  (FINAL)
  *
- * V3 step 1 (choose org_type) intentionally does NOT bump the counter — it
- * leaves no field on the `onboarding` row, and `organizations.is_agency`
- * defaults to TRUE at signup so it can't distinguish "user explicitly picked
- * agency" from a fresh untouched account. The frontend should infer "type
- * already chosen" from `organizations.is_agency` directly when it needs to
- * skip the type-picker after a step-1 call.
- *
- *   Business (max 4):
- *     0 — onboarding row empty
- *     1 — onboarding.business_name set (V3 step 2 done)
- *     2 — onboarding.street_address set (V3 step 3 done)
- *     3 — onboarding.company_logo set (V3 step 4 in progress)
- *     4 — profiles.onboarding = true, or onboarding.team_onboarding_completed (V1 final)
- *
- *   Agency (max 3 — derived count is capped):
- *     0 — onboarding row empty
- *     1 — onboarding.business_name set (V3 agency step 2 done)
- *     3 — onboarding.team_members_invited = true (V3 agency step 3 FINAL)
- *         (the agency flow skips 2 because the V3 agency form doesn't have a
- *          street_address or company_logo step)
+ *   Agency (3 steps):
+ *     step 1 done — is_agency = true on primary org
+ *     step 2 done — agency org has business_name (and optionally branding_settings.logo)
+ *     step 3 done — onboarding.team_members_invited = true  (FINAL)
  */
 
 Deno.serve(async (req) => {
@@ -73,16 +59,16 @@ Deno.serve(async (req) => {
 
     const { data: primaryOnb } = await supabase
       .from("onboarding")
-      .select("business_name, street_address, company_logo, team_onboarding_completed, team_members_invited")
+      .select("team_members_invited")
       .eq("organization_id", primaryOrgId)
       .maybeSingle();
 
     const isAgency = primaryOrg.is_agency === true;
     const organization_type: "business" | "agency" = isAgency ? "agency" : "business";
-    const finalStep = isAgency ? 3 : 4;
 
     // If onboarding is fully complete, short-circuit.
     if (profile?.onboarding === true) {
+      const finalStep = isAgency ? 3 : 4;
       return successResponse({
         organization_type,
         completed_step: finalStep,
@@ -90,12 +76,59 @@ Deno.serve(async (req) => {
       }, 200);
     }
 
-    // Derive completed_step from the onboarding row using the shared helper,
-    // capped at the flow's final step number. This guarantees this endpoint
-    // and getUser.organizations[].onboarding_step always agree on the count.
-    const rawStep = deriveOnboardingStepCount(primaryOnb);
-    const completed_step = Math.min(rawStep, finalStep);
-    const next_step: number | null = completed_step >= finalStep ? null : completed_step + 1;
+    // Step 1 is implicitly done once an onboarding row exists. We assume yes
+    // because getUserOrganizationId returned an org. For a stricter signal we
+    // could check if is_agency was explicitly set by a step 1 call, but the
+    // primary org always has is_agency (default TRUE on signup), so step 1
+    // counts as done as soon as the user calls anything past it.
+    let completed_step = 0;
+    let next_step: number | null = 1;
+
+    const hasOrgType = primaryOrg.business_name !== null && primaryOrg.business_name !== undefined
+      ? true
+      : false;
+
+    if (isAgency) {
+      const agencyHasName = !!primaryOrg.business_name;
+      const teamInvited = primaryOnb?.team_members_invited === true;
+
+      // Step 1 — choosing organization_type. Done if is_agency was explicitly true
+      // (default at signup is also TRUE so we can't strictly distinguish; treat as done).
+      completed_step = 1;
+      next_step = 2;
+
+      if (agencyHasName) {
+        completed_step = 2;
+        next_step = 3;
+      }
+      if (teamInvited) {
+        completed_step = 3;
+        next_step = null;
+      }
+
+      return successResponse({
+        organization_type,
+        completed_step,
+        next_step,
+      }, 200);
+    }
+
+    // Business flow
+    completed_step = 1;
+    next_step = 2;
+
+    if (primaryOrg.business_name) {
+      completed_step = 2;
+      next_step = 3;
+    }
+    if (primaryOrg.business_address) {
+      completed_step = 3;
+      next_step = 4;
+    }
+    if (primaryOrg.branding_settings?.logo) {
+      completed_step = 4;
+      next_step = null;
+    }
 
     return successResponse({
       organization_type,

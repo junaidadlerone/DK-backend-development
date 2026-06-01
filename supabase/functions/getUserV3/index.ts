@@ -3,7 +3,6 @@ import { createSupabaseClient, getUserProfile, isAdmin } from "../_shared/client
 import { getUserPreferences } from "../_shared/preferences.ts";
 import { enrichTimestamp } from "../_shared/timezone.ts";
 import { isAgencyUser } from "../_shared/agencyGate.ts";
-import { deriveOnboardingStepCount } from "../_shared/organization.ts";
 
 /**
  * getUserV3 — agency-gated user read with FULL organization details per accessible org.
@@ -89,11 +88,9 @@ Deno.serve(async (req) => {
     }
 
     // Onboarding data for onboarding_step derivation (one batched query).
-    // SELECT includes team_members_invited so the shared step helper can
-    // recognize the V3 agency final step.
     const { data: onboardingRows } = await supabase
       .from("onboarding")
-      .select("organization_id, business_name, street_address, company_logo, team_onboarding_completed, team_members_invited");
+      .select("organization_id, business_name, street_address, company_logo, team_onboarding_completed");
     const onboardingMap = new Map<string, any>();
     for (const row of onboardingRows ?? []) onboardingMap.set(row.organization_id, row);
 
@@ -114,13 +111,15 @@ Deno.serve(async (req) => {
       // Non-owners can't see orgs pending deletion.
       if (org.deletion_scheduled_at && role !== "OWNER") continue;
 
-      // Derive onboarding_step via the shared helper, capped at the flow's
-      // final step (agency flow has 3 steps, business has 4). Same logic as
-      // getUserOrganizations + getOnboardingStepV3 so all three endpoints
-      // always agree on the count.
+      // Derive onboarding_step from the onboarding row.
       const ob = onboardingMap.get(org.id);
-      const orgFinalStep = org.is_agency === true ? 3 : 4;
-      const onboarding_step = Math.min(deriveOnboardingStepCount(ob), orgFinalStep);
+      let onboarding_step = 0;
+      if (ob) {
+        if (ob.team_onboarding_completed) onboarding_step = 4;
+        else if (ob.company_logo) onboarding_step = 3;
+        else if (ob.street_address) onboarding_step = 2;
+        else if (ob.business_name) onboarding_step = 1;
+      }
 
       // Strip organization_members (other users' UIDs) before returning.
       const { organization_members: _omit, ...orgRest } = org;

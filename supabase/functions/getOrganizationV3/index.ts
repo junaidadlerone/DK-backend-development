@@ -1,7 +1,7 @@
 import { corsResponse, errorResponse, successResponse } from "../_shared/response.ts";
 import { createSupabaseClient } from "../_shared/client.ts";
 import { getUserFromRequest } from "../_shared/history.ts";
-import { deriveOnboardingStepCount, getUserOrganizations } from "../_shared/organization.ts";
+import { getUserOrganizations } from "../_shared/organization.ts";
 
 /**
  * getOrganizationV3 — agency team listing with per-member org expansion.
@@ -104,7 +104,7 @@ Deno.serve(async (req) => {
       supabase.from("organizations").select("*"),
       supabase.from("profiles").select("id, full_name, active_organization_id").in("id", memberIds),
       supabase.from("onboarding").select(
-        "organization_id, business_name, street_address, company_logo, team_onboarding_completed, team_members_invited",
+        "organization_id, business_name, street_address, company_logo, team_onboarding_completed",
       ),
       supabase.auth.admin.listUsers(),
     ]);
@@ -136,11 +136,14 @@ Deno.serve(async (req) => {
     const onboardingByOrg = new Map<string, any>();
     for (const row of onboardingRows ?? []) onboardingByOrg.set(row.organization_id, row);
 
-    // Uses the shared helper + per-org cap (3 for agency, 4 for business) so
-    // this endpoint stays aligned with getUser / getUserV3 / getOnboardingStepV3.
-    function onboardingStep(org: any): number {
-      const finalStep = org.is_agency === true ? 3 : 4;
-      return Math.min(deriveOnboardingStepCount(onboardingByOrg.get(org.id)), finalStep);
+    function onboardingStep(orgId: string): number {
+      const ob = onboardingByOrg.get(orgId);
+      if (!ob) return 0;
+      if (ob.team_onboarding_completed) return 4;
+      if (ob.company_logo) return 3;
+      if (ob.street_address) return 2;
+      if (ob.business_name) return 1;
+      return 0;
     }
 
     // Build per-member organization list.
@@ -168,7 +171,7 @@ Deno.serve(async (req) => {
           ...orgRest,
           role,
           is_active: org.id === activeOrgId,
-          onboarding_step: onboardingStep(org),
+          onboarding_step: onboardingStep(org.id),
         });
       }
 
