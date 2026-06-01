@@ -11,7 +11,13 @@ import { getUserOrganizationId } from "../_shared/organization.ts";
  *
  *   Business: { organization_type: "business", business: { ...details, address, branding } }
  *   Agency:   { organization_type: "agency",   agency: { ...details, branding },
- *                                              first_client: { ...details, address, branding } }
+ *                                              team_members_invited: boolean }
+ *
+ * The agency `first_client` block was removed when the agency flow shrank to
+ * 3 steps. Legacy agencies that completed the old 5-step flow still have a
+ * client sub-org and a populated `first_client_org_id` in the DB, but those
+ * are managed via the agency dashboard (getAgencyOverview / editAgencySettings)
+ * — they are no longer surfaced here.
  */
 
 Deno.serve(async (req) => {
@@ -48,7 +54,7 @@ Deno.serve(async (req) => {
     const { data: primaryOnb } = await supabase
       .from("onboarding")
       .select(
-        "country, street_address, city, state, zip, company_logo, first_client_org_id",
+        "country, street_address, city, state, zip, company_logo, team_members_invited",
       )
       .eq("organization_id", primaryOrgId)
       .maybeSingle();
@@ -80,43 +86,6 @@ Deno.serve(async (req) => {
     }
 
     // Agency
-    const clientOrgId = primaryOnb?.first_client_org_id ?? null;
-
-    let firstClient: any = null;
-    if (clientOrgId) {
-      const { data: clientOrg } = await supabase
-        .from("organizations")
-        .select(
-          "id, business_name, industry, phone_number, business_address, website_url, branding_settings",
-        )
-        .eq("id", clientOrgId)
-        .single();
-
-      const { data: clientOnb } = await supabase
-        .from("onboarding")
-        .select("country, street_address, city, state, zip, company_logo")
-        .eq("organization_id", clientOrgId)
-        .maybeSingle();
-
-      if (clientOrg) {
-        firstClient = {
-          organization_id: clientOrg.id,
-          client_name: clientOrg.business_name ?? null,
-          client_business_type: clientOrg.industry ?? null,
-          client_phone_number: clientOrg.phone_number ?? null,
-          client_website_url: clientOrg.website_url ?? null,
-          client_country: clientOnb?.country ?? null,
-          client_street_address: clientOnb?.street_address ?? null,
-          client_city: clientOnb?.city ?? null,
-          client_state: clientOnb?.state ?? null,
-          client_zip_code: clientOnb?.zip ?? null,
-          business_address: clientOrg.business_address ?? null,
-          company_logo: clientOrg.branding_settings?.logo ?? clientOnb?.company_logo ?? null,
-          theme: clientOrg.branding_settings?.theme ?? null,
-        };
-      }
-    }
-
     return successResponse({
       status: "success",
       data: {
@@ -128,7 +97,7 @@ Deno.serve(async (req) => {
           website_url: primaryOrg.website_url ?? null,
           agency_logo: primaryOrg.branding_settings?.logo ?? null,
         },
-        first_client: firstClient,
+        team_members_invited: primaryOnb?.team_members_invited === true,
       },
     }, 200);
   } catch (error: any) {

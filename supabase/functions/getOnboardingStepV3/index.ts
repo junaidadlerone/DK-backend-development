@@ -15,12 +15,10 @@ import { getUserOrganizationId } from "../_shared/organization.ts";
  *     step 3 done — primary org has business_address
  *     step 4 done — primary org has branding_settings.logo  (FINAL)
  *
- *   Agency (5 steps):
+ *   Agency (3 steps):
  *     step 1 done — is_agency = true on primary org
  *     step 2 done — agency org has business_name (and optionally branding_settings.logo)
- *     step 3 done — onboarding.first_client_org_id is set
- *     step 4 done — client sub-org has business_address
- *     step 5 done — client sub-org has branding_settings.logo  (FINAL)
+ *     step 3 done — onboarding.team_members_invited = true  (FINAL)
  */
 
 Deno.serve(async (req) => {
@@ -61,7 +59,7 @@ Deno.serve(async (req) => {
 
     const { data: primaryOnb } = await supabase
       .from("onboarding")
-      .select("first_client_org_id")
+      .select("team_members_invited")
       .eq("organization_id", primaryOrgId)
       .maybeSingle();
 
@@ -70,7 +68,7 @@ Deno.serve(async (req) => {
 
     // If onboarding is fully complete, short-circuit.
     if (profile?.onboarding === true) {
-      const finalStep = isAgency ? 5 : 4;
+      const finalStep = isAgency ? 3 : 4;
       return successResponse({
         organization_type,
         completed_step: finalStep,
@@ -92,8 +90,7 @@ Deno.serve(async (req) => {
 
     if (isAgency) {
       const agencyHasName = !!primaryOrg.business_name;
-      const agencyHasLogo = !!primaryOrg.branding_settings?.logo;
-      const clientOrgId = primaryOnb?.first_client_org_id;
+      const teamInvited = primaryOnb?.team_members_invited === true;
 
       // Step 1 — choosing organization_type. Done if is_agency was explicitly true
       // (default at signup is also TRUE so we can't strictly distinguish; treat as done).
@@ -104,25 +101,9 @@ Deno.serve(async (req) => {
         completed_step = 2;
         next_step = 3;
       }
-      if (clientOrgId) {
+      if (teamInvited) {
         completed_step = 3;
-        next_step = 4;
-
-        // Fetch client sub-org to check step 4 and 5.
-        const { data: clientOrg } = await supabase
-          .from("organizations")
-          .select("business_address, branding_settings")
-          .eq("id", clientOrgId)
-          .single();
-
-        if (clientOrg?.business_address) {
-          completed_step = 4;
-          next_step = 5;
-        }
-        if (clientOrg?.branding_settings?.logo) {
-          completed_step = 5;
-          next_step = null;
-        }
+        next_step = null;
       }
 
       return successResponse({

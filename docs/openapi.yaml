@@ -14667,7 +14667,7 @@ paths:
       description: |
         **Branched onboarding by `organization_type`.**
 
-        Step 1 picks the type. Steps 2 onwards depend on whether the user is onboarding as a **business** (4 steps total) or an **agency** (5 steps total). Branding is stored on `organizations.branding_settings`. V1 `completeOnboarding` is preserved unchanged.
+        Step 1 picks the type. Steps 2 onwards depend on whether the user is onboarding as a **business** (4 steps total) or an **agency** (3 steps total). Branding is stored on `organizations.branding_settings`. V1 `completeOnboarding` is preserved unchanged.
 
         ### Business flow (4 steps)
 
@@ -14678,26 +14678,27 @@ paths:
         | 3 | Return address | `country`, `street_address`, `city`, `state`, `zip_code` |
         | 4 | Branding (FINAL) | `company_logo` (base64 or URL), `theme` |
 
-        ### Agency flow (5 steps)
+        ### Agency flow (3 steps)
 
         | Step | Purpose | Required fields |
         |---|---|---|
         | 1 | Choose type | `organization_type: "agency"` |
         | 2 | Agency details | `agency_name`, `agency_type`, `agency_logo`, `website_url` |
-        | 3 | First client details | `client_name`, `client_business_type`, `client_phone_number`, `client_website_url` |
-        | 4 | First client return address | `client_country`, `client_street_address`, `client_city`, `client_state`, `client_zip_code` |
-        | 5 | First client branding (FINAL) | `company_logo`, `theme` |
+        | 3 | Invite team members (FINAL) | `team_members_invited: true` |
+
+        The agency flow used to have 5 steps that created a first client sub-org and branded it. That part of onboarding was dropped — clients are now created post-onboarding via the agency dashboard. **Agency step 3 is metadata-only**: the frontend calls `createUserV3` for each actual team invite, then calls this endpoint with `{ step: 3, team_members_invited: true }` to mark onboarding complete.
+
+        **Step 4 and step 5 are no longer valid for agencies.** An agency caller sending `step: 4` (or `5`) will be rejected with `400 INVALID_STEP_FOR_AGENCY`. Business callers continue to use step 4 for branding.
 
         ### Where data is written
 
         - **Business:** all data written to the user's primary org (`organizations` + `onboarding` rows).
-        - **Agency:** step 2 writes to the agency org (primary org); step 3 creates a client sub-org with `is_agency = false` and stores its id on `agency_org.onboarding.first_client_org_id`; steps 4–5 update the client sub-org.
-        - Branding writes to `organizations.branding_settings` with shape `{ logo: <url>, theme: { colors: {...}, fonts: {...} } }`.
-        - On the final step (4 for business, 5 for agency), `profiles.onboarding` is set to `true`.
+        - **Agency:** step 2 writes to the agency org (primary org) and uploads `agency_logo` into `branding_settings.logo`. Step 3 sets `onboarding.team_members_invited = true` and `profiles.onboarding = true`.
+        - Branding (business step 4) writes to `organizations.branding_settings` with shape `{ logo: <url>, theme: { colors: {...}, fonts: {...} } }`.
+        - On the final step (4 for business, 3 for agency), `profiles.onboarding` is set to `true`.
 
-        ### Idempotency
-
-        Re-submitting step 3 on the agency flow does NOT create a duplicate sub-org — it updates the existing one referenced by `onboarding.first_client_org_id`. All other steps overwrite cleanly.
+        ### Legacy
+        The `onboarding.first_client_org_id` column is preserved for agencies that completed the old 5-step flow before this change. The endpoint no longer reads or writes it.
 
         ### Dropdowns
 
@@ -14779,36 +14780,13 @@ paths:
 
         `agency_logo` is uploaded to `CompanyLogos` and stored at `agency_org.branding_settings.logo`.
 
-        ## Agency — Step 3: First client details
+        ## Agency — Step 3: Invite team members (FINAL)
 
         ```json
-        {
-          "step": 3,
-          "client_name": "Acme Cleaning",
-          "client_business_type": "Residential",
-          "client_phone_number": "+1-555-0123",
-          "client_website_url": "https://acme.example"
-        }
+        { "step": 3, "team_members_invited": true }
         ```
 
-        Creates the client sub-org. Response includes `client_organization_id`.
-
-        ## Agency — Step 4: First client return address
-
-        ```json
-        {
-          "step": 4,
-          "client_country": "United States",
-          "client_street_address": "123 Main Street",
-          "client_city": "San Francisco",
-          "client_state": "California",
-          "client_zip_code": "94102"
-        }
-        ```
-
-        ## Agency — Step 5: First client branding (final)
-
-        Same shape as business step 4. Writes to the client sub-org's `branding_settings`.
+        Sends no invites itself. The frontend should call `createUserV3` for each actual invite first; then call this endpoint once with `team_members_invited: true` to mark onboarding complete. Sets `onboarding.team_members_invited = true` and `profiles.onboarding = true`.
 
         ### Access control
         - Requires authentication
@@ -14891,7 +14869,8 @@ paths:
                     zip_code:
                       type: string
                 - type: object
-                  required: [step, client_name, client_business_type]
+                  description: Agency step 3 (FINAL) — mark team-invite step complete.
+                  required: [step, team_members_invited]
                   properties:
                     step:
                       type: integer
@@ -14899,15 +14878,12 @@ paths:
                     organization_id:
                       type: string
                       format: uuid
-                    client_name:
-                      type: string
-                    client_business_type:
-                      type: string
-                    client_phone_number:
-                      type: string
-                    client_website_url:
-                      type: string
+                    team_members_invited:
+                      type: boolean
+                      enum: [true]
+                      description: Must be true. Frontend calls createUserV3 for each invite then this endpoint to mark completion.
                 - type: object
+                  description: Business step 4 (FINAL) — branding. Agencies are rejected here with 400 INVALID_STEP_FOR_AGENCY.
                   required: [step]
                   properties:
                     step:
@@ -14918,54 +14894,7 @@ paths:
                       format: uuid
                     company_logo:
                       type: string
-                      description: Base64 data URL, raw base64, or an existing public URL. Business flow only.
-                    theme:
-                      type: object
-                      description: Business flow only.
-                      properties:
-                        colors:
-                          type: object
-                          properties:
-                            primary: { type: string }
-                            secondary: { type: string }
-                            accent: { type: string }
-                        fonts:
-                          type: object
-                          properties:
-                            primary:
-                              type: object
-                              properties:
-                                name: { type: string }
-                            body:
-                              type: object
-                              properties:
-                                name: { type: string }
-                    client_country:
-                      type: string
-                      description: Agency flow only.
-                    client_street_address:
-                      type: string
-                      description: Agency flow only.
-                    client_city:
-                      type: string
-                      description: Agency flow only.
-                    client_state:
-                      type: string
-                      description: Agency flow only.
-                    client_zip_code:
-                      type: string
-                      description: Agency flow only.
-                - type: object
-                  required: [step]
-                  properties:
-                    step:
-                      type: integer
-                      enum: [5]
-                    organization_id:
-                      type: string
-                      format: uuid
-                    company_logo:
-                      type: string
+                      description: Base64 data URL, raw base64, or an existing public URL.
                     theme:
                       type: object
                       properties:
@@ -15001,21 +14930,24 @@ paths:
                     type: string
                     enum: [business, agency]
                   organization_id: { type: string, format: uuid }
-                  client_organization_id:
-                    type: string
-                    format: uuid
-                    description: Present from step 3 onwards on the agency flow.
                   agency_logo_url:
                     type: string
                     description: Present on agency step 2 when agency_logo was provided.
+                  team_members_invited:
+                    type: boolean
+                    description: Present on agency step 3.
+                  onboarding:
+                    type: boolean
+                    description: Present on the final step of either flow (business step 4, agency step 3) — `true` when `profiles.onboarding` was flipped.
                   company_logo:
                     type: string
-                    description: Present on the final branding step.
+                    description: Present on business step 4 (final branding step).
                   theme:
                     type: object
-                    description: Present on the final branding step.
+                    description: Present on business step 4 (final branding step).
         "400":
-          description: Invalid input or invalid state (e.g. step 4/5 called before step 3 on the agency flow)
+          description: |
+            Invalid input or invalid state. `INVALID_STEP_FOR_AGENCY` is returned when an agency caller sends `step: 4` or `step: 5` (the legacy agency client-create steps no longer exist).
           content:
             application/json:
               schema:
@@ -15059,12 +14991,10 @@ paths:
         - 3 → `organizations.business_address` set
         - 4 → `organizations.branding_settings.logo` set (FINAL)
 
-        **Agency**
+        **Agency (3 steps)**
         - 1 → primary org exists with `is_agency = true`
         - 2 → agency org has `business_name`
-        - 3 → `onboarding.first_client_org_id` set
-        - 4 → client sub-org has `business_address`
-        - 5 → client sub-org has `branding_settings.logo` (FINAL)
+        - 3 → `onboarding.team_members_invited = true` (FINAL)
       operationId: getOnboardingStepV3
       security:
         - BearerAuth: []
@@ -15084,11 +15014,11 @@ paths:
                   completed_step:
                     type: integer
                     minimum: 0
-                    maximum: 5
+                    maximum: 4
                   next_step:
                     type: integer
                     minimum: 1
-                    maximum: 5
+                    maximum: 4
                     nullable: true
               examples:
                 business_in_progress:
@@ -15098,10 +15028,10 @@ paths:
                     completed_step: 2
                     next_step: 3
                 agency_complete:
-                  summary: Agency — fully onboarded
+                  summary: Agency — fully onboarded (3-step flow)
                   value:
                     organization_type: agency
-                    completed_step: 5
+                    completed_step: 3
                     next_step: null
         "401":
           description: Unauthorized
@@ -15131,9 +15061,11 @@ paths:
         Returns all data the user has filled in during V3 onboarding. The response shape branches by `organization_type`:
 
         - **Business:** `{ organization_type: "business", organization_id, business: {...all fields including address + branding} }`
-        - **Agency:** `{ organization_type: "agency", organization_id, agency: {...}, first_client: {...} | null }`
+        - **Agency:** `{ organization_type: "agency", organization_id, agency: {...}, team_members_invited: boolean }`
 
         Branding is read primarily from `organizations.branding_settings`. The legacy `onboarding.company_logo` URL is returned as a fallback for orgs whose branding hasn't been migrated yet.
+
+        The agency `first_client` block was removed when the agency flow shrank to 3 steps. Legacy agencies that completed the old 5-step flow still have a client sub-org and a populated `first_client_org_id` in the DB, but those are now managed via the agency dashboard (`getAgencyOverview` / `editAgencySettings`) and are no longer surfaced here.
 
         Accepts both GET and POST (no body required) for compatibility with frontend HTTP clients that prefer POST.
       operationId: getOnboardingDetailsV3
@@ -15187,25 +15119,9 @@ paths:
                               agency_type: { type: string, nullable: true }
                               website_url: { type: string, nullable: true }
                               agency_logo: { type: string, nullable: true }
-                          first_client:
-                            type: object
-                            nullable: true
-                            properties:
-                              organization_id: { type: string, format: uuid }
-                              client_name: { type: string, nullable: true }
-                              client_business_type: { type: string, nullable: true }
-                              client_phone_number: { type: string, nullable: true }
-                              client_website_url: { type: string, nullable: true }
-                              client_country: { type: string, nullable: true }
-                              client_street_address: { type: string, nullable: true }
-                              client_city: { type: string, nullable: true }
-                              client_state: { type: string, nullable: true }
-                              client_zip_code: { type: string, nullable: true }
-                              business_address: { type: string, nullable: true }
-                              company_logo: { type: string, nullable: true }
-                              theme:
-                                type: object
-                                nullable: true
+                          team_members_invited:
+                            type: boolean
+                            description: True once the agency caller has completed (or dismissed) the team-invite step (step 3 of the V3 agency flow).
         "401":
           description: Unauthorized
           content:

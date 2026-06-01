@@ -9,11 +9,20 @@ import { uploadLogo } from "../_shared/logoUpload.ts";
  *
  * Branched onboarding by organization_type:
  *   - business: 4 steps (details → return address → branding)
- *   - agency:   5 steps (agency details → first client details → client return address → branding for client)
+ *       1. Choose type
+ *       2. Business details
+ *       3. Return address
+ *       4. Branding (FINAL)
+ *   - agency:   3 steps
+ *       1. Choose type
+ *       2. Agency details (incl. agency_logo)
+ *       3. Invite team members — body must include team_members_invited: true (FINAL)
+ *
+ * Agency step 3 only flips `onboarding.team_members_invited = TRUE` and marks
+ * `profiles.onboarding = TRUE`. Actual invites are sent by the frontend via
+ * separate createUserV3 calls.
  *
  * Branding (logo + theme) writes to `organizations.branding_settings`.
- * For agency flow, step 3 creates a client sub-org; its id is stored on the agency's
- * `onboarding.first_client_org_id` so steps 4–5 are resumable.
  *
  * V1 `completeOnboarding` is preserved unchanged.
  */
@@ -39,29 +48,19 @@ interface V3Request {
   agency_type?: string;
   agency_logo?: string; // base64 or URL
 
-  // Step 3 — business
+  // Step 3 — business (return address)
   country?: string;
   street_address?: string;
   city?: string;
   state?: string;
   zip_code?: string;
 
-  // Step 3 — agency (first client)
-  client_name?: string;
-  client_business_type?: string;
-  client_phone_number?: string;
-  client_website_url?: string;
+  // Step 3 — agency (invite team)
+  team_members_invited?: boolean;
 
-  // Step 4 — business (branding) / Step 5 — agency (branding)
+  // Step 4 — business (branding)
   company_logo?: string;
   theme?: Theme;
-
-  // Step 4 — agency (client address)
-  client_country?: string;
-  client_street_address?: string;
-  client_city?: string;
-  client_state?: string;
-  client_zip_code?: string;
 }
 
 async function ensureOnboardingRow(supabase: any, organizationId: string) {
@@ -104,8 +103,8 @@ Deno.serve(async (req) => {
     }
 
     const step = body.step;
-    if (![1, 2, 3, 4, 5].includes(step)) {
-      return errorResponse("INVALID_INPUT", "step must be 1, 2, 3, 4, or 5", 400);
+    if (![1, 2, 3, 4].includes(step)) {
+      return errorResponse("INVALID_INPUT", "step must be 1, 2, 3, or 4", 400);
     }
 
     // Resolve the user's primary org (agency org for agencies, the only org for business).
@@ -154,8 +153,7 @@ Deno.serve(async (req) => {
       if (orgErr) throw orgErr;
 
       // Agency owners need is_super_admin + multi_org_enabled on their profile so they
-      // can later use createOrganization / switchOrganization to add more clients past
-      // the first one we create in step 3. Mirrors what enableMultiOrg sets.
+      // can later use createOrganization / switchOrganization to add clients post-onboarding.
       if (orgType === "agency") {
         const { error: profileErr } = await supabase
           .from("profiles")
@@ -191,6 +189,15 @@ Deno.serve(async (req) => {
     }
     const isAgency = primaryOrg.is_agency === true;
     const orgType: "business" | "agency" = isAgency ? "agency" : "business";
+
+    // Branched step validity. Agency flow is 3 steps; step 4 is business-only now.
+    if (isAgency && step === 4) {
+      return errorResponse(
+        "INVALID_STEP_FOR_AGENCY",
+        "Agency onboarding is 3 steps; step 4 is no longer valid.",
+        400,
+      );
+    }
 
     // ──────────────────────────────────────────────────────────────────────
     // Step 2 — business details OR agency details
@@ -298,111 +305,49 @@ Deno.serve(async (req) => {
     }
 
     // ──────────────────────────────────────────────────────────────────────
-    // Step 3 — business return address OR agency first-client details
+    // Step 3 — business return address OR agency invite-team (FINAL for agency)
     // ──────────────────────────────────────────────────────────────────────
     if (step === 3) {
       if (isAgency) {
-        const { client_name, client_business_type, client_phone_number, client_website_url } =
-          body;
-        if (!client_name || !client_business_type) {
+        // Agency step 3 (FINAL): invite team members. Frontend handles the
+        // actual invites via createUserV3; this endpoint only marks completion.
+        if (body.team_members_invited !== true) {
           return errorResponse(
             "INVALID_INPUT",
-            "client_name and client_business_type are required",
+            "team_members_invited must be true to complete step 3",
             400,
           );
         }
 
-        // Check if the agency's onboarding row already has first_client_org_id (idempotency).
-        const { data: agencyOnb } = await supabase
+        const { error: onbErr } = await supabase
           .from("onboarding")
-          .select("first_client_org_id")
-          .eq("organization_id", primaryOrgId)
-          .single();
+          .update({
+            team_members_invited: true,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("organization_id", primaryOrgId);
+        if (onbErr) {
+          console.error("V3 agency step 3 onboarding update error", onbErr);
+          return errorResponse("DATABASE_ERROR", "Failed to mark team-invite step complete", 500);
+        }
 
-        let clientOrgId: string | null = agencyOnb?.first_client_org_id || null;
-
-        if (clientOrgId) {
-          // Update existing sub-org.
-          const { error: updErr } = await supabase
-            .from("organizations")
-            .update({
-              business_name: client_name,
-              industry: client_business_type,
-              phone_number: client_phone_number || null,
-              website_url: client_website_url || null,
-              updated_at: new Date().toISOString(),
-            })
-            .eq("id", clientOrgId);
-          if (updErr) throw updErr;
-
-          await supabase
-            .from("onboarding")
-            .update({
-              business_name: client_name,
-              business_industry: client_business_type,
-              business_phone_number: client_phone_number || null,
-              website_url: client_website_url || null,
-              updated_at: new Date().toISOString(),
-            })
-            .eq("organization_id", clientOrgId);
-        } else {
-          // Create new sub-org.
-          const { data: newOrg, error: insErr } = await supabase
-            .from("organizations")
-            .insert({
-              owner_id: user.userId,
-              organization_members: [],
-              is_agency: false,
-              business_name: client_name,
-              industry: client_business_type,
-              phone_number: client_phone_number || null,
-              website_url: client_website_url || null,
-            })
-            .select()
-            .single();
-          if (insErr || !newOrg) {
-            console.error("V3 step 3 insert error:", insErr);
-            return errorResponse(
-              "ORG_CREATION_FAILED",
-              "Failed to create client sub-org",
-              500,
-            );
-          }
-          clientOrgId = newOrg.id;
-
-          // Default app content for the new sub-org (mirrors createOrganization).
-          try {
-            await supabase.rpc("create_default_app_content", { org_id: clientOrgId });
-          } catch (e) {
-            console.error("create_default_app_content exception:", e);
-          }
-
-          // Create blank onboarding row for the sub-org.
-          await supabase.from("onboarding").insert({
-            organization_id: clientOrgId,
-            business_name: client_name,
-            business_industry: client_business_type,
-            business_phone_number: client_phone_number || null,
-            website_url: client_website_url || null,
-          });
-
-          // Store first_client_org_id on the agency's onboarding row.
-          await supabase
-            .from("onboarding")
-            .update({
-              first_client_org_id: clientOrgId,
-              updated_at: new Date().toISOString(),
-            })
-            .eq("organization_id", primaryOrgId);
+        const { error: profErr } = await supabase
+          .from("profiles")
+          .update({ onboarding: true, updated_at: new Date().toISOString() })
+          .eq("id", user.userId);
+        if (profErr) {
+          console.error("V3 agency step 3 profile update error", profErr);
+          return errorResponse("DATABASE_ERROR", "Failed to mark profile onboarding complete", 500);
         }
 
         return successResponse({
           status: "success",
-          message: "Step 3 (first client details) complete",
+          message: "Agency onboarding complete",
           step: 3,
           organization_type: orgType,
           organization_id: primaryOrgId,
-          client_organization_id: clientOrgId,
+          team_members_invited: true,
+          onboarding: true,
         }, 200);
       }
 
@@ -442,79 +387,10 @@ Deno.serve(async (req) => {
     }
 
     // ──────────────────────────────────────────────────────────────────────
-    // Step 4 — business branding (FINAL) OR agency client address
+    // Step 4 — business branding (FINAL, business-only)
     // ──────────────────────────────────────────────────────────────────────
     if (step === 4) {
-      if (isAgency) {
-        // Agency: client address — needs first_client_org_id.
-        const { data: agencyOnb } = await supabase
-          .from("onboarding")
-          .select("first_client_org_id")
-          .eq("organization_id", primaryOrgId)
-          .single();
-        const clientOrgId = agencyOnb?.first_client_org_id;
-        if (!clientOrgId) {
-          return errorResponse(
-            "INVALID_STATE",
-            "Step 3 (first client) must be completed before step 4",
-            400,
-          );
-        }
-
-        const {
-          client_country,
-          client_street_address,
-          client_city,
-          client_state,
-          client_zip_code,
-        } = body;
-        if (
-          !client_country || !client_street_address || !client_city ||
-          !client_state || !client_zip_code
-        ) {
-          return errorResponse(
-            "INVALID_INPUT",
-            "All client address fields are required",
-            400,
-          );
-        }
-        const business_address = buildAddress(
-          client_street_address,
-          client_city,
-          client_state,
-          client_zip_code,
-          client_country,
-        );
-
-        await supabase
-          .from("onboarding")
-          .update({
-            country: client_country,
-            street_address: client_street_address,
-            city: client_city,
-            state: client_state,
-            zip: client_zip_code,
-            updated_at: new Date().toISOString(),
-          })
-          .eq("organization_id", clientOrgId);
-
-        const { error: clientOrgErr } = await supabase
-          .from("organizations")
-          .update({ business_address, updated_at: new Date().toISOString() })
-          .eq("id", clientOrgId);
-        if (clientOrgErr) throw clientOrgErr;
-
-        return successResponse({
-          status: "success",
-          message: "Step 4 (client return address) complete",
-          step: 4,
-          organization_type: orgType,
-          organization_id: primaryOrgId,
-          client_organization_id: clientOrgId,
-        }, 200);
-      }
-
-      // Business — branding (FINAL step for business)
+      // isAgency=true was already rejected above; only the business path reaches here.
       const { company_logo, theme } = body;
       const logoUrl = await uploadLogo(supabase, primaryOrgId, company_logo);
 
@@ -552,75 +428,6 @@ Deno.serve(async (req) => {
         step: 4,
         organization_type: orgType,
         organization_id: primaryOrgId,
-        company_logo: logoUrl,
-        theme: theme || null,
-      }, 200);
-    }
-
-    // ──────────────────────────────────────────────────────────────────────
-    // Step 5 — agency only: branding for first client sub-org (FINAL)
-    // ──────────────────────────────────────────────────────────────────────
-    if (step === 5) {
-      if (!isAgency) {
-        return errorResponse(
-          "INVALID_STATE",
-          "Step 5 is only valid for the agency flow",
-          400,
-        );
-      }
-
-      const { data: agencyOnb } = await supabase
-        .from("onboarding")
-        .select("first_client_org_id")
-        .eq("organization_id", primaryOrgId)
-        .single();
-      const clientOrgId = agencyOnb?.first_client_org_id;
-      if (!clientOrgId) {
-        return errorResponse(
-          "INVALID_STATE",
-          "Step 3 (first client) must be completed before step 5",
-          400,
-        );
-      }
-
-      const { company_logo, theme } = body;
-      const logoUrl = await uploadLogo(supabase, clientOrgId, company_logo);
-
-      const { data: curClientOrg } = await supabase
-        .from("organizations")
-        .select("branding_settings")
-        .eq("id", clientOrgId)
-        .single();
-
-      const nextBranding: any = { ...(curClientOrg?.branding_settings || {}) };
-      if (logoUrl) nextBranding.logo = logoUrl;
-      if (theme) nextBranding.theme = theme;
-
-      const { error: clientBrandErr } = await supabase
-        .from("organizations")
-        .update({ branding_settings: nextBranding, updated_at: new Date().toISOString() })
-        .eq("id", clientOrgId);
-      if (clientBrandErr) throw clientBrandErr;
-
-      if (logoUrl) {
-        await supabase
-          .from("onboarding")
-          .update({ company_logo: logoUrl, updated_at: new Date().toISOString() })
-          .eq("organization_id", clientOrgId);
-      }
-
-      await supabase
-        .from("profiles")
-        .update({ onboarding: true, updated_at: new Date().toISOString() })
-        .eq("id", user.userId);
-
-      return successResponse({
-        status: "success",
-        message: "Step 5 (client branding) complete — onboarding finished",
-        step: 5,
-        organization_type: orgType,
-        organization_id: primaryOrgId,
-        client_organization_id: clientOrgId,
         company_logo: logoUrl,
         theme: theme || null,
       }, 200);

@@ -142,7 +142,7 @@ Deno.serve(async (req) => {
         orgIds,
       ),
       supabase.from("onboarding").select(
-        "organization_id, business_name, street_address, company_logo, team_onboarding_completed",
+        "organization_id, business_name, street_address, company_logo, team_onboarding_completed, team_members_invited",
       ).in("organization_id", orgIds),
     ]);
 
@@ -181,11 +181,14 @@ Deno.serve(async (req) => {
         const daysRemaining = Math.max(0, Math.ceil(msRemaining / (1000 * 60 * 60 * 24)));
         return `Deleting in ${daysRemaining} day${daysRemaining === 1 ? "" : "s"}`;
       }
-      // "Active" if either the V1 team step finished OR per-org branding is set
-      // (covers V3 business step 4 and V3 agency step 2's agency_logo).
+      // "Active" if any of:
+      //  - per-org branding is set (V3 business step 4 / V3 agency step 2 agency_logo)
+      //  - V1 team-onboarding step finished
+      //  - V3 agency step 3 (team_members_invited) marked done
       const hasBranding = !!(org.branding_settings && org.branding_settings.logo);
       const teamDone = onb?.team_onboarding_completed === true;
-      if (hasBranding || teamDone) return "Active";
+      const teamInvited = onb?.team_members_invited === true;
+      if (hasBranding || teamDone || teamInvited) return "Active";
 
       // Infer current step from filled fields. Always shown over a 4-step total
       // (V1 + V3 business). V3 agency has 5 steps but its 5th step is the first
