@@ -15,107 +15,28 @@ const POSTGRID_API_KEY = process.env.POSTGRID_API_KEY;
 const VERIFICATION_API_URL = 'https://api.postgrid.com/v1/addver/verifications';
 
 // =============================================================================
-// TEST DATA
+// TEST MODE
 // =============================================================================
-const isTestMode = true; // Set to true to inject mock data if no addresses are verified
+// The TEST variant of this socket always runs in test mode — PostGrid is never
+// called and address content is never rewritten. Instead we take whatever
+// addresses are already in the zone / CSV list and flip them to verified.
+// This preserves the real address data produced by findadresses-test and lets
+// the frontend exercise the verification UI without burning PostGrid quota or
+// (previously) overwriting every zone with hardcoded San Francisco mocks.
+const isTestMode = true;
 
-function getTestAddresses(count, _originalRows = []) {
-  const addresses = [];
-  const baseLat = 37.7749;
-  const baseLong = -122.4194;
-
-  for (let i = 0; i < count; i++) {
-    // Generate a random street number (e.g. 100 to 9999)
-    const randomStreetNum = Math.floor(Math.random() * 9900) + 100;
-    
-    // Add some random jitter to lat/long to simulate different locations
-    const latOffset = (Math.random() - 0.5) * 0.01;
-    const longOffset = (Math.random() - 0.5) * 0.01;
-    
-    addresses.push({
-      lat: baseLat + latOffset,
-      long: baseLong + longOffset,
-      address: `${randomStreetNum} Market St, San Francisco, CA 94102`,
-      residential: true,
-      building_type: 'house',
-      osm_id: `way/${1001 + i + Math.floor(Math.random() * 1000)}`,
-      propertyType: 'Single Family Home',
-      distanceFromCenter: 500 + (i * 10) + Math.floor(Math.random() * 50),
-      targeting_zone_name: 'San Francisco Area',
-      campaigns_used_in: [],
-      zoneType: 'radius',
-      postcards_sent: 0,
-      first_post_card_sent_date: null,
-      status: 'Valid',
-      verified: true,
-      verification_details: {
-        status: 'verified',
-        line1: `${randomStreetNum} Market St`,
-        city: 'San Francisco',
-        provinceOrState: 'CA',
-        postalOrZip: '94102'
-      },
-      createdBy: {
-        id: null,
-        user_role: 'TECHNICIAN',
-        full_name: 'System',
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString()
-      }
-    });
-  }
-  
-  return addresses;
-}
-
-/**
- * Newly added helper for CSV Address List test mode.
- * Preserves the original address details and IDs but injects mock verification results.
- */
-function getCSVTestAddresses(originalRows) {
-  const addresses = [];
-
-  for (let i = 0; i < originalRows.length; i++) {
-    const row = originalRows[i];
-    
-    // Simulate API response with high probability of success (90% success)
-    const isSuccess = Math.random() > 0.07; 
-    const status = isSuccess ? 'Valid' : 'Unverified';
-    const verified = isSuccess;
-
-    addresses.push({
-      ...row,
-      // Do NOT scramble coordinates - use existing ones or default if missing
-      lat: row.lat || 33.4942, 
-      long: row.long || -111.9260,
-      status: status,
-      verified: verified,
-      is_included: true,
-      is_valid: verified,
-      verification_details: {
-        status: isSuccess ? 'verified' : 'unverified',
-        line1: row.address_line1 || 'Mock Line 1',
-        city: row.city || 'Scottsdale',
-        provinceOrState: row.state || 'AZ',
-        postalOrZip: row.zip || '85251',
-        details: {
-             status: isSuccess ? 'verified' : 'unverified',
-             line1: row.address_line1,
-             city: row.city,
-             provinceOrState: row.state,
-             postalOrZip: row.zip
+function markAddressVerified(address) {
+    return {
+        ...address,
+        verified: true,
+        is_reachable: true,
+        status: 'Valid',
+        verification_details: {
+            ...(address.verification_details || {}),
+            status: 'verified',
+            simulated: true
         }
-      },
-      createdBy: {
-        id: null,
-        user_role: 'TECHNICIAN',
-        full_name: 'System',
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString()
-      }
-    });
-  }
-  return addresses;
+    };
 }
 
 
@@ -402,26 +323,21 @@ async function verifyZoneAddresses(ws, zone_id, apiKey, supabaseAnonKey, showOnl
         let verifiedCount = 0;
 
         if (isTestMode) {
-            const unverifiedCount = addresses.filter(addr => addr.verified !== true).length;
-            const testCount = unverifiedCount > 0 ? unverifiedCount : addresses.length || 20;
-            console.log(`Test Mode (Zone): Generating ${testCount} hardcoded SF addresses`);
-            const mocks = getTestAddresses(testCount);
-
-            // Enrich test addresses with is_reachable flag
-            const enrichedMocks = mocks.map(addr => ({
-                ...addr,
-                is_reachable: addr.verified === true
-            }));
-
-            verifiedAddresses.push(...enrichedMocks);
-            verifiedCount = verifiedAddresses.filter(addr => addr.verified === true).length;
+            if (addresses.length === 0) {
+                ws.send(JSON.stringify({ status: 'error', message: 'Zone has no addresses to verify' }));
+                return;
+            }
+            console.log(`Test mode (zone): marking ${addresses.length} existing addresses as verified (no PostGrid call, no content rewrite)`);
+            const enriched = addresses.map(markAddressVerified);
+            verifiedAddresses.push(...enriched);
+            verifiedCount = enriched.length;
 
             ws.send(JSON.stringify({
                 status: 'processing',
-                message: `Test mode: Generated mock SF addresses with reachability flags`,
-                total_addresses: enrichedMocks.length,
+                message: `Test mode: marked ${enriched.length} existing zone addresses as verified`,
+                total_addresses: enriched.length,
                 verified_count: verifiedCount,
-                processed_count: enrichedMocks.length
+                processed_count: enriched.length
             }));
         } else {
             if (addresses.length === 0) {
@@ -559,24 +475,25 @@ async function verifyCSVAddresses(ws, list_id, apiKey, supabaseAnonKey, showOnly
         let verifiedCount = 0;
 
         if (isTestMode) {
-            console.log(`Test Mode (CSV): Enriching ${addresses.length} original addresses`);
-            const mocks = getCSVTestAddresses(addresses);
-
-            // Enrich test addresses with is_reachable flag
-            const enrichedMocks = mocks.map(addr => ({
-                ...addr,
-                is_reachable: addr.verified === true
+            if (addresses.length === 0) {
+                ws.send(JSON.stringify({ status: 'error', message: 'List has no addresses to verify' }));
+                return;
+            }
+            console.log(`Test mode (CSV): marking ${addresses.length} existing addresses as verified (no PostGrid call, no content rewrite)`);
+            const enriched = addresses.map(addr => ({
+                ...markAddressVerified(addr),
+                is_included: true,
+                is_valid: true
             }));
-
-            verifiedAddresses.push(...enrichedMocks);
-            verifiedCount = verifiedAddresses.filter(addr => addr.verified === true).length;
+            verifiedAddresses.push(...enriched);
+            verifiedCount = enriched.length;
 
             ws.send(JSON.stringify({
                 status: 'processing',
-                message: `Test mode: Enriched original rows with reachability flags`,
-                total_addresses: enrichedMocks.length,
+                message: `Test mode: marked ${enriched.length} existing CSV addresses as verified`,
+                total_addresses: enriched.length,
                 verified_count: verifiedCount,
-                processed_count: enrichedMocks.length
+                processed_count: enriched.length
             }));
         } else {
             if (addresses.length === 0) {
