@@ -1,6 +1,7 @@
 import { corsResponse, errorResponse, successResponse } from "../_shared/response.ts";
 import { createSupabaseClient, getUserProfile } from "../_shared/client.ts";
 import { getUserFromRequest } from "../_shared/history.ts";
+import { getUserOrganizations } from "../_shared/organization.ts";
 
 /**
  * Create Organization Edge Function
@@ -37,11 +38,29 @@ Deno.serve(async (req) => {
     }
 
     if (!profile.multi_org_enabled) {
-      return errorResponse(
-        "MULTI_ORG_NOT_ENABLED",
-        "Enable multi-org mode before creating additional organizations",
-        403
-      );
+      // Auto-enable multi-org for callers who own or belong to at least one
+      // is_agency = true org. An agency account's whole purpose is managing
+      // multiple client sub-orgs, so the explicit opt-in via /enableMultiOrg
+      // is friction. Non-agency super-admins still get the original 403 so
+      // they go through the intent questionnaire on /enableMultiOrg.
+      const visibleOrgs = await getUserOrganizations(supabase, user.userId);
+      const isAgencyUser = visibleOrgs.some((o) => o.isAgencyAccount === true);
+      if (!isAgencyUser) {
+        return errorResponse(
+          "MULTI_ORG_NOT_ENABLED",
+          "Enable multi-org mode before creating additional organizations",
+          403
+        );
+      }
+      const { error: enableErr } = await supabase
+        .from("profiles")
+        .update({ multi_org_enabled: true, updated_at: new Date().toISOString() })
+        .eq("id", user.userId);
+      if (enableErr) {
+        console.error("createOrganization: auto-enable multi-org failed", enableErr);
+        return errorResponse("UPDATE_FAILED", "Failed to enable multi-org mode", 500);
+      }
+      console.log(`createOrganization: auto-enabled multi-org for agency user ${user.userId}`);
     }
 
     // Create a blank organization

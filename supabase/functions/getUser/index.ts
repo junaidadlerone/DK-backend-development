@@ -117,11 +117,44 @@ Deno.serve(async (req) => {
     const preferences = await getUserPreferences(supabase, authUser.id);
 
     // Fetch orgs the target user can access (for multi-tenant dropdown)
-    const organizations = await getUserOrganizations(
+    const orgsFromHelper = await getUserOrganizations(
       supabase,
       targetUserId,
       profile.active_organization_id ?? undefined
     );
+
+    // V1 backwards-compatibility: override each org's onboarding_step with the
+    // ORIGINAL formula so this endpoint's response shape never changes for
+    // existing callers. The shared `getUserOrganizations` helper was recently
+    // updated to (a) recognize `onboarding.team_members_invited` as a "step 4"
+    // signal and (b) cap agency orgs at 3. Those are correct improvements
+    // exposed by V3 endpoints (getUserV3, getOrganizationV3, getOnboardingStepV3),
+    // but V1 `getUser` must keep returning what it always returned.
+    //
+    // Original formula: 0 → business_name → street_address → company_logo →
+    // team_onboarding_completed. No agency cap, no team_members_invited check.
+    let organizations = orgsFromHelper;
+    if (orgsFromHelper.length > 0) {
+      const orgIds = orgsFromHelper.map((o) => o.id);
+      const { data: legacyOnboardingRows } = await supabase
+        .from("onboarding")
+        .select("organization_id, business_name, street_address, company_logo, team_onboarding_completed")
+        .in("organization_id", orgIds);
+      const legacyMap = new Map<string, any>();
+      for (const row of legacyOnboardingRows ?? []) legacyMap.set(row.organization_id, row);
+
+      organizations = orgsFromHelper.map((o) => {
+        const ob = legacyMap.get(o.id);
+        let onboarding_step = 0;
+        if (ob) {
+          if (ob.team_onboarding_completed) onboarding_step = 4;
+          else if (ob.company_logo) onboarding_step = 3;
+          else if (ob.street_address) onboarding_step = 2;
+          else if (ob.business_name) onboarding_step = 1;
+        }
+        return { ...o, onboarding_step };
+      });
+    }
 
     // Prepare success response with user data
     const response = {

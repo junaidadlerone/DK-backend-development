@@ -340,6 +340,10 @@ async function fetchRentcastProperties(center, data, ws)
         best = { properties: filtered, totalCount };
 
         if (filtered.length >= count) break;
+        // Bail once we've tried the cap — otherwise Math.min(MAX, ...) keeps
+        // pinning radius at MAX and the loop hammers RentCast forever for
+        // remote areas with zero coverage (e.g. Alaska wilderness).
+        if (radiusMiles >= MAX_RADIUS_MILES) break;
 
         // Estimate the radius needed using observed density; enforce minimum 1.5× growth
         if (filtered.length > 0)
@@ -390,6 +394,77 @@ function convertRentcastToAddress(property, center, createdBy, zoneName, zoneTyp
             updated_at: new Date().toISOString()
         }
     };
+}
+
+// ==================== TEST MODE ====================
+// When the WebSocket request payload carries `isTestMode: true`, skip RentCast
+// and OSM entirely and synthesise canned property results around the geocoded
+// center. The shape mirrors what RentCast would return so downstream
+// `convertRentcastToAddress`, save-to-DB, and notification code paths run
+// identically. Useful when:
+//   - the dev RentCast key is a sandbox/trial key that only returns SF data
+//   - QA wants deterministic addresses without burning RentCast quota
+//   - the frontend is being tested in isolation
+//
+// Honors `searchType` (ALL / RESIDENTIAL / OTHER) and respects `count` or
+// `radius` from the same payload schema as the real path.
+function buildTestProperties(center, data)
+{
+    const { radius, count, searchType = 'ALL' } = data;
+    const radiusMeters = radius || 1000;
+    const targetCount = count || 12;
+    const max = Math.min(Math.max(targetCount, 5), 25);
+
+    const samples = [
+        { street: 'Main St', type: 'Single Family' },
+        { street: 'Oak Ave', type: 'Single Family' },
+        { street: 'Elm Dr', type: 'Townhouse' },
+        { street: 'Cedar Ln', type: 'Condo' },
+        { street: 'Maple Ct', type: 'Single Family' },
+        { street: 'Pine Pl', type: 'Multi-Family' },
+        { street: 'Willow Way', type: 'Apartment' },
+        { street: 'Birch Blvd', type: 'Single Family' },
+        { street: 'Spruce St', type: 'Condo' },
+        { street: 'Aspen Cir', type: 'Single Family' },
+        { street: 'Industrial Pkwy', type: 'Industrial' },
+        { street: 'Commerce Way', type: 'Commercial' },
+        { street: 'Market St', type: 'Retail' },
+    ];
+
+    const METERS_PER_DEG_LAT = 111139;
+    const props = [];
+    for (let i = 0; i < max * 2 && props.length < max; i++)
+    {
+        const tpl = samples[i % samples.length];
+        const propertyType = tpl.type;
+        const isResidential = RENTCAST_RESIDENTIAL_TYPES.has(propertyType);
+        if (searchType === 'RESIDENTIAL' && !isResidential) continue;
+        if (searchType === 'OTHER' && isResidential) continue;
+
+        const houseNum = 100 + ((i * 47) % 9900);
+        // Golden-angle spread keeps points well-distributed inside the radius.
+        const angle = (i * 137.508) * (Math.PI / 180);
+        const r = radiusMeters * Math.sqrt((i + 1) / max);
+        const dLat = (r * Math.cos(angle)) / METERS_PER_DEG_LAT;
+        const dLng = (r * Math.sin(angle)) / (METERS_PER_DEG_LAT * Math.cos(center.lat * Math.PI / 180));
+        const lat = center.lat + dLat;
+        const lng = center.lng + dLng;
+
+        props.push({
+            id: `test_${i}`,
+            addressLine1: `${houseNum} ${tpl.street}`,
+            city: 'Testville',
+            state: 'TX',
+            zipCode: '00000',
+            formattedAddress: `${houseNum} ${tpl.street}, Testville, TX 00000`,
+            latitude: lat,
+            longitude: lng,
+            propertyType,
+            _dist: Math.round(r),
+        });
+    }
+
+    return props;
 }
 
 // ==================== OPENSTREETMAP (FALLBACK) ====================
@@ -756,13 +831,33 @@ async function handleGetAddressesFromZone(ws, message)
         const center = await parseAddress(address, ws);
 
         // ── 2. Fetch properties: Rentcast first, OSM as fallback ─────────────
+        // Test-mode short-circuit: if isTestMode is true on the request payload,
+        // skip RentCast + OSM and synthesise canned residential properties
+        // around the geocoded center. Useful when the dev RentCast key only
+        // returns SF data, or when QA wants deterministic, quota-free results.
         let fetchSource = 'osm';
         let rentcastProperties = null;
         let osmBuildings = null;
         let totalFound = 0;
         let mode, searchRadius;
 
-        if (RENTCAST_API_KEY)
+        if (data?.isTestMode === true)
+        {
+            ws.send(JSON.stringify({
+                type: 'progress',
+                message: 'Test mode: generating sample addresses (RentCast skipped)...'
+            }));
+            rentcastProperties = buildTestProperties(center, data);
+            fetchSource = 'rentcast';   // downstream save/convert treat test == rentcast
+            totalFound = rentcastProperties.length;
+            mode = data?.count ? 'count' : 'radius';
+            searchRadius = data?.radius || 1000;
+            ws.send(JSON.stringify({
+                type: 'progress',
+                message: `Generated ${rentcastProperties.length} test properties`
+            }));
+        }
+        else if (RENTCAST_API_KEY)
         {
             try
             {

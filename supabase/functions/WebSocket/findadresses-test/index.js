@@ -340,6 +340,10 @@ async function fetchRentcastProperties(center, data, ws)
         best = { properties: filtered, totalCount };
 
         if (filtered.length >= count) break;
+        // Bail once we've tried the cap — otherwise Math.min(MAX, ...) keeps
+        // pinning radius at MAX and the loop hammers RentCast forever for
+        // remote areas with zero coverage (e.g. Alaska wilderness).
+        if (radiusMiles >= MAX_RADIUS_MILES) break;
 
         // Estimate the radius needed using observed density; enforce minimum 1.5× growth
         if (filtered.length > 0)

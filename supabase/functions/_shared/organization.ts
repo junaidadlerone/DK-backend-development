@@ -160,7 +160,7 @@ export async function getUserOrganizations(
         .select("id, business_name, business_email, owner_id, organization_members, deletion_scheduled_at, is_agency"),
       supabase
         .from("onboarding")
-        .select("organization_id, business_name, street_address, company_logo, team_onboarding_completed"),
+        .select("organization_id, business_name, street_address, company_logo, team_onboarding_completed, team_members_invited"),
     ]);
 
     if (error || !orgs) return [];
@@ -193,15 +193,15 @@ export async function getUserOrganizations(
       // Non-owners do not see orgs pending deletion
       if (org.deletion_scheduled_at && role !== "OWNER") continue;
 
-      // Compute onboarding step for this org from the onboarding table
+      // Compute onboarding step for this org from the onboarding table.
+      // Shared with getOnboardingStepV3 so both endpoints report the same
+      // number for the same org. Step 1 (choose org_type) intentionally
+      // doesn't bump the counter — it leaves no signal on the onboarding row.
+      // Cap at 3 for agency orgs (V3 agency flow has 3 steps total) so we
+      // never report a count higher than the flow allows.
       const ob = onboardingMap.get(org.id);
-      let onboarding_step = 0;
-      if (ob) {
-        if (ob.team_onboarding_completed) onboarding_step = 4;
-        else if (ob.company_logo) onboarding_step = 3;
-        else if (ob.street_address) onboarding_step = 2;
-        else if (ob.business_name) onboarding_step = 1;
-      }
+      const orgFinalStep = org.is_agency === true ? 3 : 4;
+      const onboarding_step = Math.min(deriveOnboardingStepCount(ob), orgFinalStep);
 
       result.push({
         id: org.id,
@@ -220,4 +220,30 @@ export async function getUserOrganizations(
     console.error("[getUserOrganizations] Error:", error);
     return [];
   }
+}
+
+/**
+ * Single source of truth for the per-org "how far into onboarding" number.
+ * Both `getUserOrganizations` (the per-org `onboarding_step`) and
+ * `getOnboardingStepV3` (`completed_step`) call this so the two endpoints
+ * never disagree.
+ *
+ * The signal is the `onboarding` row only — fields like `organizations.is_agency`
+ * are NOT considered here because `is_agency` defaults to TRUE at signup, so
+ * it can't distinguish "user explicitly picked agency" from a fresh untouched
+ * account. The trade-off: V3 step 1 (choose org_type) leaves no onboarding-table
+ * signal, so calling step 1 does not bump the counter. The frontend should infer
+ * "type already chosen" from `organizations.is_agency` directly if it needs to
+ * skip the type-picker.
+ *
+ * Returns 0-4. Callers that know the flow's final-step number (3 for V3 agency,
+ * 4 for business) can cap the returned value at their flow's max if desired.
+ */
+export function deriveOnboardingStepCount(ob: any): number {
+  if (!ob) return 0;
+  if (ob.team_onboarding_completed === true || ob.team_members_invited === true) return 4;
+  if (ob.company_logo) return 3;
+  if (ob.street_address) return 2;
+  if (ob.business_name) return 1;
+  return 0;
 }
