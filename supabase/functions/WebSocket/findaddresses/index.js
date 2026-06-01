@@ -649,69 +649,37 @@ async function convertOsmToAddress(building, center, ws, createdBy, zoneName, zo
         address = parts.join(', ');
     }
 
-    if (!address)
+    if (!address && GOOGLE_MAPS_API_KEY)
     {
-        const retryAfterRef = { value: null };
-
-        const reverseGeocode = async () =>
-        {
-            const response = await fetch(
-                `${OSM_NOMINATIM_URL}/reverse?format=jsonv2&lat=${building.lat}&lon=${building.lon}&zoom=18&addressdetails=1`,
-                {
-                    headers: {
-                        'User-Agent': getRandomUserAgent(),
-                        'Accept-Language': 'en'
-                    }
-                }
-            );
-
-            if (!response.ok)
-            {
-                if (response.status === 429)
-                {
-                    const retryAfter = response.headers.get('Retry-After');
-                    if (retryAfter)
-                    {
-                        retryAfterRef.value = parseInt(retryAfter, 10) || null;
-                    }
-                }
-                const error = new Error(`Nominatim reverse geocoding error: ${response.statusText}`);
-                error.status = response.status;
-                throw error;
-            }
-
-            const data = await response.json();
-
-            if (data && data.address)
-            {
-                const a = data.address;
-                const houseNum = a.house_number || '';
-                const roadName = a.road || a.pedestrian || a.footway || a.path || '';
-                const line1 = houseNum && roadName
-                    ? `${houseNum} ${roadName}`
-                    : roadName || houseNum || data.display_name.split(',')[0];
-                const resolvedCity = a.city || a.town || a.village || a.hamlet || a.suburb || '';
-                const resolvedState = a.state || '';
-                const resolvedPostcode = a.postcode || '';
-
-                const parts = [line1, resolvedCity, resolvedState, resolvedPostcode].filter(Boolean);
-                return parts.join(', ');
-            }
-
-            if (data && data.display_name)
-            {
-                return data.display_name;
-            }
-
-            return null;
-        };
-
+        // Google reverse geocoding. Used exclusively here — Nominatim reverse
+        // got rate-limited too aggressively in practice (50-retry loop with
+        // exponential backoff up to 60s emitted long visible delays to the
+        // frontend). Google's quota and reliability dominate that trade-off
+        // even though we pay ~$0.005 per call. This path only fires when
+        // RentCast returned no properties and we fell through to OSM Overpass,
+        // so it's a small slice of total traffic.
         try
         {
-            address = await retryNominatim(reverseGeocode, ws, retryAfterRef);
-        } catch (error)
+            const googleResp = await fetch(
+                `https://maps.googleapis.com/maps/api/geocode/json?latlng=${building.lat},${building.lon}&key=${GOOGLE_MAPS_API_KEY}`
+            );
+            if (googleResp.ok)
+            {
+                const googleData = await googleResp.json();
+                if (googleData.status === 'OK' && googleData.results?.length > 0)
+                {
+                    // Strip the trailing country (", USA" / ", United States" / ", Canada")
+                    // to match the address format used elsewhere in this codebase.
+                    const formatted = googleData.results[0].formatted_address || '';
+                    address = formatted.replace(/,\s*(USA|United States|Canada)$/i, '').trim() || formatted;
+                }
+            } else
+            {
+                console.warn(`Google reverse geocoding HTTP ${googleResp.status} for ${building.lat},${building.lon}`);
+            }
+        } catch (googleError)
         {
-            console.warn(`Nominatim reverse geocoding failed for ${building.lat},${building.lon}:`, error.message);
+            console.warn(`Google reverse geocoding failed for ${building.lat},${building.lon}:`, googleError.message);
         }
     }
 

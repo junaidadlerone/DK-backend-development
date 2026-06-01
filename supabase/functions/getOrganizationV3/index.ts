@@ -6,11 +6,17 @@ import { getUserOrganizations } from "../_shared/organization.ts";
 /**
  * getOrganizationV3 — agency team listing with per-member org expansion.
  *
- * Returns every member of the caller's agency org(s), each annotated with the
- * full organization objects the member belongs to (with `organization_members`
- * stripped, same shape as getUserV3's per-org rows).
+ * Returns every member across all orgs the caller is OWNER or ADMIN of —
+ * the caller's agency org(s) PLUS every sub-org they own/admin. This ensures
+ * users invited via createUserV3 with `grant_agency_access: false` (who land
+ * only in sub-orgs and never in the agency org's organization_members) still
+ * show up here. Each member is annotated with the full organization objects
+ * they belong to (with `organization_members` stripped, same shape as
+ * getUserV3's per-org rows).
  *
- * Gate: caller must be OWNER or ADMIN of at least one `is_agency = TRUE` org.
+ * Gate: caller must be OWNER or ADMIN of at least one `is_agency = TRUE` org
+ * (this is what makes them an "agency user" allowed to call V3 endpoints).
+ * The member-set scope is wider than the gate.
  */
 
 type Role = "OWNER" | "ADMIN" | "MARKETER" | "TECHNICIAN";
@@ -41,7 +47,13 @@ Deno.serve(async (req) => {
     const caller = getUserFromRequest(req);
     if (!caller) return errorResponse("UNAUTHORIZED", "Unable to authenticate user", 401);
 
-    // Gate
+    // Gate + scope.
+    // - agencyOrgIds: kept strictly for the gate (caller must be OWNER/ADMIN
+    //   of at least one is_agency=true org) and for the response metadata.
+    // - managedOrgIds: every org the caller is OWNER/ADMIN of, agency or sub.
+    //   This is the wider scope used to collect members below so that users
+    //   created via createUserV3 with grant_agency_access=false (in sub-orgs
+    //   only) still appear here.
     const callerOrgs = await getUserOrganizations(supabase, caller.userId);
     const agencyOrgIds = callerOrgs
       .filter((o) => o.isAgencyAccount === true && (o.role === "OWNER" || o.role === "ADMIN"))
@@ -53,25 +65,34 @@ Deno.serve(async (req) => {
         403,
       );
     }
+    const managedOrgIds = callerOrgs
+      .filter((o) => o.role === "OWNER" || o.role === "ADMIN")
+      .map((o) => o.id);
 
-    // Load the agency org rows to compute the member set.
-    const { data: agencyOrgRows, error: agencyErr } = await supabase
+    // Load every org the caller manages (agency + sub-orgs) to compute the member set.
+    const { data: managedOrgRows, error: managedErr } = await supabase
       .from("organizations")
-      .select("id, owner_id, organization_members, business_name")
-      .in("id", agencyOrgIds);
-    if (agencyErr) {
-      console.error("getOrganizationV3: agency orgs fetch error", agencyErr);
-      return errorResponse("FETCH_FAILED", "Failed to load agency organizations", 500);
+      .select("id, owner_id, organization_members, business_name, is_agency")
+      .in("id", managedOrgIds);
+    if (managedErr) {
+      console.error("getOrganizationV3: managed orgs fetch error", managedErr);
+      return errorResponse("FETCH_FAILED", "Failed to load organizations", 500);
     }
 
-    // memberId -> { role in highest agency org, agencyOrgId that produced it }
+    // memberId -> { highest role across all managed orgs, origin org id }.
+    // Prefer the agency org as the origin when the role is a tie (better UX
+    // signal — keeps the agency_organization_id field meaningful when the user
+    // sits in both the agency and a sub-org with the same role).
     const memberInfo = new Map<string, { role: Role; agencyOrgId: string }>();
-    for (const org of agencyOrgRows ?? []) {
+    for (const org of managedOrgRows ?? []) {
       const considerCandidate = (uid: string, role: Role) => {
         const prev = memberInfo.get(uid);
         const winner = pickHigherRole(prev?.role ?? null, role);
-        if (winner !== prev?.role) {
-          memberInfo.set(uid, { role: winner!, agencyOrgId: org.id });
+        const winnerOrgId = winner === prev?.role && prev
+          ? (org.is_agency === true ? org.id : prev.agencyOrgId)
+          : org.id;
+        if (winner !== prev?.role || winnerOrgId !== prev?.agencyOrgId) {
+          memberInfo.set(uid, { role: winner!, agencyOrgId: winnerOrgId });
         }
       };
       if (org.owner_id) considerCandidate(org.owner_id, "OWNER");
@@ -88,8 +109,12 @@ Deno.serve(async (req) => {
     if (memberIds.length === 0) {
       return successResponse({
         status: "success",
-        message: "Found 0 members across 0 agency org(s)",
-        data: { agency_organization_ids: agencyOrgIds, members: [] },
+        message: "Found 0 members across 0 managed org(s)",
+        data: {
+          agency_organization_ids: agencyOrgIds,
+          managed_organization_ids: managedOrgIds,
+          members: [],
+        },
         metadata: { processingTimeMs: Date.now() - startTime },
       }, 200);
     }
@@ -187,9 +212,10 @@ Deno.serve(async (req) => {
 
     return successResponse({
       status: "success",
-      message: `Found ${members.length} member(s) across ${agencyOrgIds.length} agency org(s)`,
+      message: `Found ${members.length} member(s) across ${managedOrgIds.length} managed org(s) (${agencyOrgIds.length} agency)`,
       data: {
         agency_organization_ids: agencyOrgIds,
+        managed_organization_ids: managedOrgIds,
         members,
       },
       metadata: {

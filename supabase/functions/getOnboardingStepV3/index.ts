@@ -7,17 +7,27 @@ import { getUserOrganizationId } from "../_shared/organization.ts";
  * Get Onboarding Step V3
  *
  * Returns the user's current onboarding progress in the V3 branched flow.
- * organization_type is inferred from `organizations.is_agency` on the primary org.
+ *
+ * Step 1 (choose org_type) detection uses real signals, not the `is_agency`
+ * default. A fresh signup has `is_agency = true` (default) and
+ * `multi_org_enabled = false`, indistinguishable from "agency-type but no
+ * step 1 yet" if we look at is_agency alone. Real signals:
+ *
+ *   - Agency step 1 done — `profiles.multi_org_enabled = true`
+ *       (V3 step 1 for agency flips this from false; default false)
+ *   - Business step 1 done — `organizations.is_agency = false`
+ *       (default is TRUE; V3 step 1 for business flips it to false)
+ *   - Neither — step 0, `organization_type: null`, frontend shows type-picker
  *
  *   Business (4 steps):
- *     step 1 done — is_agency flag set (org_type chosen)
+ *     step 1 done — `is_agency = false` on primary org (explicitly set by step 1)
  *     step 2 done — primary org has business_name
  *     step 3 done — primary org has business_address
  *     step 4 done — primary org has branding_settings.logo  (FINAL)
  *
  *   Agency (3 steps):
- *     step 1 done — is_agency = true on primary org
- *     step 2 done — agency org has business_name (and optionally branding_settings.logo)
+ *     step 1 done — profile.multi_org_enabled = true
+ *     step 2 done — agency org has business_name
  *     step 3 done — onboarding.team_members_invited = true  (FINAL)
  */
 
@@ -43,7 +53,7 @@ Deno.serve(async (req) => {
 
     const { data: profile } = await supabase
       .from("profiles")
-      .select("onboarding")
+      .select("onboarding, multi_org_enabled")
       .eq("id", user.userId)
       .single();
 
@@ -63,39 +73,49 @@ Deno.serve(async (req) => {
       .eq("organization_id", primaryOrgId)
       .maybeSingle();
 
-    const isAgency = primaryOrg.is_agency === true;
-    const organization_type: "business" | "agency" = isAgency ? "agency" : "business";
+    // Step 1 — choose org type — completion detection using real signals.
+    // `is_agency` defaults to TRUE at signup so it alone can't tell us if
+    // step 1 was actually called. multi_org_enabled (agency signal) and
+    // explicit is_agency=false (business signal) are the positive proofs.
+    const isBusinessConfirmed = primaryOrg.is_agency === false;
+    const isAgencyConfirmed = primaryOrg.is_agency === true && profile?.multi_org_enabled === true;
+    const step1Done = isBusinessConfirmed || isAgencyConfirmed;
 
-    // If onboarding is fully complete, short-circuit.
+    // organization_type is null until step 1 is actually completed. Frontend
+    // uses null as "show the type-picker".
+    const organization_type: "business" | "agency" | null = isBusinessConfirmed
+      ? "business"
+      : isAgencyConfirmed
+      ? "agency"
+      : null;
+
+    // If onboarding is fully complete, short-circuit. (At this point we know
+    // step 1 was done because profile.onboarding only flips at the FINAL step.)
     if (profile?.onboarding === true) {
-      const finalStep = isAgency ? 3 : 4;
+      const finalStep = isAgencyConfirmed ? 3 : 4;
       return successResponse({
-        organization_type,
+        organization_type: organization_type ?? (isAgencyConfirmed ? "agency" : "business"),
         completed_step: finalStep,
         next_step: null,
       }, 200);
     }
 
-    // Step 1 is implicitly done once an onboarding row exists. We assume yes
-    // because getUserOrganizationId returned an org. For a stricter signal we
-    // could check if is_agency was explicitly set by a step 1 call, but the
-    // primary org always has is_agency (default TRUE on signup), so step 1
-    // counts as done as soon as the user calls anything past it.
-    let completed_step = 0;
-    let next_step: number | null = 1;
+    // Step 1 not yet done → show type-picker.
+    if (!step1Done) {
+      return successResponse({
+        organization_type: null,
+        completed_step: 0,
+        next_step: 1,
+      }, 200);
+    }
 
-    const hasOrgType = primaryOrg.business_name !== null && primaryOrg.business_name !== undefined
-      ? true
-      : false;
+    // From here on, step 1 IS done; derive step 2+ from the usual fields.
+    let completed_step = 1;
+    let next_step: number | null = 2;
 
-    if (isAgency) {
+    if (isAgencyConfirmed) {
       const agencyHasName = !!primaryOrg.business_name;
       const teamInvited = primaryOnb?.team_members_invited === true;
-
-      // Step 1 — choosing organization_type. Done if is_agency was explicitly true
-      // (default at signup is also TRUE so we can't strictly distinguish; treat as done).
-      completed_step = 1;
-      next_step = 2;
 
       if (agencyHasName) {
         completed_step = 2;
@@ -107,16 +127,13 @@ Deno.serve(async (req) => {
       }
 
       return successResponse({
-        organization_type,
+        organization_type: "agency",
         completed_step,
         next_step,
       }, 200);
     }
 
     // Business flow
-    completed_step = 1;
-    next_step = 2;
-
     if (primaryOrg.business_name) {
       completed_step = 2;
       next_step = 3;
@@ -131,7 +148,7 @@ Deno.serve(async (req) => {
     }
 
     return successResponse({
-      organization_type,
+      organization_type: "business",
       completed_step,
       next_step,
     }, 200);
