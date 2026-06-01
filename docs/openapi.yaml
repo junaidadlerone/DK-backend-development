@@ -14680,11 +14680,11 @@ paths:
 
         ### Agency flow (3 steps)
 
-        | Step | Purpose | Required fields |
-        |---|---|---|
-        | 1 | Choose type | `organization_type: "agency"` |
-        | 2 | Agency details | `agency_name`, `agency_type`, `agency_logo`, `website_url` |
-        | 3 | Invite team members (FINAL) | `team_members_invited: true` |
+        | Step | Purpose | Required fields | Optional fields |
+        |---|---|---|---|
+        | 1 | Choose type | `organization_type: "agency"` | — |
+        | 2 | Agency details | `agency_name`, `agency_type` | `agency_logo`, `website_url` |
+        | 3 | Invite team members (FINAL) | `team_members_invited: true` | — |
 
         The agency flow used to have 5 steps that created a first client sub-org and branded it. That part of onboarding was dropped — clients are now created post-onboarding via the agency dashboard. **Agency step 3 is metadata-only**: the frontend calls `createUserV3` for each actual team invite, then calls this endpoint with `{ step: 3, team_members_invited: true }` to mark onboarding complete.
 
@@ -14768,6 +14768,9 @@ paths:
 
         ## Agency — Step 2: Agency details
 
+        **Required:** `agency_name`, `agency_type`. **Optional:** `agency_logo`, `website_url`.
+
+        Full example:
         ```json
         {
           "step": 2,
@@ -14778,7 +14781,16 @@ paths:
         }
         ```
 
-        `agency_logo` is uploaded to `CompanyLogos` and stored at `agency_org.branding_settings.logo`.
+        Minimal example (omitting the optional fields):
+        ```json
+        {
+          "step": 2,
+          "agency_name": "BrightMail Agency",
+          "agency_type": "Marketing"
+        }
+        ```
+
+        When provided, `agency_logo` is uploaded to `CompanyLogos` and stored at `agency_org.branding_settings.logo`. When omitted, no logo is set and `branding_settings.logo` stays unchanged. When `website_url` is omitted, `organizations.website_url` and `onboarding.website_url` are written as `null`.
 
         ## Agency — Step 3: Invite team members (FINAL)
 
