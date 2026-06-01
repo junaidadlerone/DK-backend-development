@@ -25,7 +25,8 @@ interface CreateUserV3Request {
   email: string;
   fullName?: string | null;
   role: UserRole;
-  organization_ids: string[];
+  organization_ids?: string[];
+  grant_agency_access?: boolean;
 }
 
 const SITE_URL = (Deno.env.get("SITE_URL") ?? "https://door-knocker-plus-dev.vercel.app").replace(/\/$/, "");
@@ -60,28 +61,34 @@ Deno.serve(async (req) => {
     if (!isValidRole(role)) {
       return errorResponse("INVALID_ROLE", "role must be ADMIN, MARKETER, or TECHNICIAN", 400);
     }
-    if (!Array.isArray(organization_ids) || organization_ids.length === 0) {
+
+    const rawOrgIds = Array.isArray(organization_ids) ? organization_ids : [];
+    const uniqueOrgIds = Array.from(new Set(rawOrgIds));
+    if (uniqueOrgIds.length !== rawOrgIds.length) {
+      return errorResponse("INVALID_INPUT", "organization_ids must not contain duplicates", 400);
+    }
+    // Agency-org auto-grant is now opt-in. When grant_agency_access is true,
+    // every is_agency=true org the caller OWNs or ADMINs is auto-merged into
+    // the grant list. When false/omitted (default), only the orgs the frontend
+    // explicitly listed in organization_ids are granted.
+    const grantAgencyAccess = body.grant_agency_access === true;
+    if (uniqueOrgIds.length === 0 && !grantAgencyAccess) {
       return errorResponse(
         "INVALID_INPUT",
-        "organization_ids must be a non-empty array of UUIDs",
+        "organization_ids must be a non-empty array of UUIDs when grant_agency_access is not true",
         400,
       );
     }
-    const uniqueOrgIds = Array.from(new Set(organization_ids));
-    if (uniqueOrgIds.length !== organization_ids.length) {
-      return errorResponse("INVALID_INPUT", "organization_ids must not contain duplicates", 400);
-    }
 
-    // Gate + auto-merge agency org(s) into the grant list.
-    // The caller is an agency user iff they OWN or ADMIN at least one is_agency=true org.
-    // For every such agency org, we automatically grant the new user the same role on it,
-    // so the user appears in the agency's team list, not only on the requested sub-orgs.
+    // Gate: caller must be OWNER or ADMIN of at least one is_agency=true org.
+    // This restricts the V3 surface to agency users regardless of the
+    // grant_agency_access flag (the flag controls auto-merge, not eligibility).
     const callerOrgs = await getUserOrganizations(supabase, caller.userId);
-    const agencyOrgIds = callerOrgs
+    const callerAgencyOrgIds = callerOrgs
       .filter((o) => o.isAgencyAccount === true && (o.role === "OWNER" || o.role === "ADMIN"))
       .map((o) => o.id);
 
-    if (agencyOrgIds.length === 0) {
+    if (callerAgencyOrgIds.length === 0) {
       return errorResponse(
         "NOT_AGENCY_USER",
         "Only agency users can call V3 endpoints. Use V1 createUser for single-org operations.",
@@ -89,8 +96,11 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Final grant list = requested orgs ∪ caller's agency orgs (deduped).
-    const finalOrgIds = Array.from(new Set([...uniqueOrgIds, ...agencyOrgIds]));
+    // Final grant list: with the flag, union with caller's agency orgs; without it,
+    // honor the frontend's organization_ids verbatim.
+    const finalOrgIds = grantAgencyAccess
+      ? Array.from(new Set([...uniqueOrgIds, ...callerAgencyOrgIds]))
+      : uniqueOrgIds;
 
     // Caller profile (for created_by audit field)
     const callerProfile = await getUserProfile(supabase, caller.userId);
@@ -218,14 +228,12 @@ Deno.serve(async (req) => {
         email: authData.user.email,
         fullName: fullName || null,
         role,
-        // All orgs the user was actually granted access to: requested orgs
-        // PLUS the caller's agency parent org(s), auto-added so the user
-        // appears in the agency's team list.
         organization_ids: finalOrgIds,
         requested_organization_ids: uniqueOrgIds,
-        auto_added_agency_organization_ids: agencyOrgIds.filter(
-          (id) => !uniqueOrgIds.includes(id),
-        ),
+        auto_added_agency_organization_ids: grantAgencyAccess
+          ? callerAgencyOrgIds.filter((id) => !uniqueOrgIds.includes(id))
+          : [],
+        grant_agency_access: grantAgencyAccess,
       },
     }, 201);
   } catch (error) {

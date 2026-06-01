@@ -15693,39 +15693,60 @@ paths:
         - `ADMIN` of an org → can grant any of `ADMIN`, `MARKETER`, `TECHNICIAN` (ADMINs can manage peer ADMINs).
         - The `OWNER` role itself can never be granted via this endpoint.
 
-        ### Auto-merge: caller's agency org is always added
-        The new user is also automatically added to every agency parent org (`is_agency = true`)
-        where the caller is OWNER or ADMIN — even if those org IDs aren't in `organization_ids`.
-        This guarantees the new user shows up in the agency's team list, not only on the requested
-        sub-orgs. The response echoes:
+        ### Auto-merge: caller's agency org auto-grant is OPT-IN via `grant_agency_access`
+        Historically the new user was always added to every agency parent org (`is_agency = true`) the caller controlled. That behavior is now controlled by the body flag `grant_agency_access` (default `false`):
+
+        - **`grant_agency_access: true`** — every `is_agency=true` org the caller OWNs or ADMINs is silently merged into the grant list, even if those IDs aren't in `organization_ids`. (Legacy behavior. The new user appears in the agency's team list.)
+        - **`grant_agency_access: false` (default)** — only the orgs explicitly listed in `organization_ids` are granted. The agency org is NOT auto-added. The new user does NOT appear in the agency's team list unless the caller explicitly lists the agency org id in `organization_ids` (which is honored verbatim — the flag controls implicit merge only).
+
+        ### `organization_ids` non-empty rule
+        `organization_ids` MUST be a non-empty array UNLESS `grant_agency_access: true`. The two cases:
+
+        - `grant_agency_access: false` (default) AND `organization_ids` missing/empty → `400 INVALID_INPUT` (would create an orphan user with no memberships).
+        - `grant_agency_access: true` AND `organization_ids` missing/empty → OK; the user is added only to the caller's agency orgs.
+
+        The response echoes:
         - `organization_ids` — final list the user was added to (request ∪ auto-added)
         - `requested_organization_ids` — what the caller originally sent
-        - `auto_added_agency_organization_ids` — the agency org IDs we merged in
+        - `auto_added_agency_organization_ids` — the agency org IDs we merged in (always `[]` when `grant_agency_access` is false)
+        - `grant_agency_access` — the resolved flag value
 
-        ### Request example
+        ### Request example (default behavior — no agency auto-grant)
+        ```json
+        {
+          "email": "marketer@example.com",
+          "fullName": "Mira Marketer",
+          "role": "MARKETER",
+          "organization_ids": ["sub-org-a"]
+        }
+        ```
+
+        ### Request example (opt-in to agency auto-grant)
         ```json
         {
           "email": "admin@example.com",
           "fullName": "Alex Admin",
           "role": "ADMIN",
-          "organization_ids": ["sub-org-a", "sub-org-b"]
+          "organization_ids": ["sub-org-a", "sub-org-b"],
+          "grant_agency_access": true
         }
         ```
 
         ### Response example
-        Caller is OWNER of `agency-1`, so it is auto-added to the grant list:
+        Default call (no `grant_agency_access`), invited to one sub-org only:
         ```json
         {
           "status": "success",
-          "message": "User invited and added to 3 organization(s)",
+          "message": "User invited and added to 1 organization(s)",
           "user": {
             "id": "<auth user id>",
-            "email": "admin@example.com",
-            "fullName": "Alex Admin",
-            "role": "ADMIN",
-            "organization_ids": ["sub-org-a", "sub-org-b", "agency-1"],
-            "requested_organization_ids": ["sub-org-a", "sub-org-b"],
-            "auto_added_agency_organization_ids": ["agency-1"]
+            "email": "marketer@example.com",
+            "fullName": "Mira Marketer",
+            "role": "MARKETER",
+            "organization_ids": ["sub-org-a"],
+            "requested_organization_ids": ["sub-org-a"],
+            "auto_added_agency_organization_ids": [],
+            "grant_agency_access": false
           }
         }
         ```
@@ -15739,7 +15760,7 @@ paths:
           application/json:
             schema:
               type: object
-              required: [email, role, organization_ids]
+              required: [email, role]
               properties:
                 email:
                   type: string
@@ -15752,11 +15773,17 @@ paths:
                   enum: [ADMIN, MARKETER, TECHNICIAN]
                 organization_ids:
                   type: array
-                  minItems: 1
+                  description: |
+                    Orgs to grant access to. May be empty or omitted ONLY when `grant_agency_access: true` (the auto-merge fills in the caller's agency orgs). Otherwise must be non-empty.
                   uniqueItems: true
                   items:
                     type: string
                     format: uuid
+                grant_agency_access:
+                  type: boolean
+                  default: false
+                  description: |
+                    When `true`, every `is_agency=true` org the caller OWNs or ADMINs is silently merged into the grant list. When `false` or omitted, only the orgs in `organization_ids` are granted.
       responses:
         "201":
           description: User invited and added to all listed orgs
@@ -15784,8 +15811,11 @@ paths:
                         items: { type: string, format: uuid }
                       auto_added_agency_organization_ids:
                         type: array
-                        description: Agency parent org IDs the server auto-added to the grant list (not present in the request).
+                        description: Agency parent org IDs the server auto-added to the grant list (always empty when `grant_agency_access` is false).
                         items: { type: string, format: uuid }
+                      grant_agency_access:
+                        type: boolean
+                        description: Resolved value of the input flag (echoed back).
         "400":
           description: Invalid input, unknown organization_id, or invalid role
           content:
