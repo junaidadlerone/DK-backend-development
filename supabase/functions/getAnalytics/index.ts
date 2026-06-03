@@ -5,7 +5,10 @@ import {
 } from "../_shared/response.ts";
 import { createSupabaseClient } from "../_shared/client.ts";
 import { getUserFromRequest } from "../_shared/history.ts";
-import { getUserOrganizationId } from "../_shared/organization.ts";
+import {
+  getUserOrganizationId,
+  getUserOrganizations,
+} from "../_shared/organization.ts";
 import { getUserPreferences, UserPreferences } from "../_shared/preferences.ts";
 import { enrichCurrency } from "../_shared/currency.ts";
 
@@ -197,6 +200,34 @@ Deno.serve(async (req) => {
       );
     }
 
+    // Agency-mode detection. When the caller's active org has is_agency=true,
+    // templates analytics has a different semantic: count templates the
+    // AGENCY owns (universal + agency-created, regardless of is_universal),
+    // and measure active/draft/inactive against the agency's CLIENT campaigns
+    // (since campaigns live on client orgs, not on the agency row). Mirrors
+    // getAgencyOverview's filter: OWNER/ADMIN role on every non-agency org
+    // the caller can see.
+    let isAgencyCaller = false;
+    let clientOrgIds: string[] = [];
+    {
+      const { data: callerOrg } = await supabase
+        .from("organizations")
+        .select("is_agency")
+        .eq("id", organizationId)
+        .maybeSingle();
+      if (callerOrg?.is_agency === true) {
+        isAgencyCaller = true;
+        const visibleOrgs = await getUserOrganizations(supabase, user.userId);
+        clientOrgIds = visibleOrgs
+          .filter(
+            (o) =>
+              (o.role === "OWNER" || o.role === "ADMIN") &&
+              o.isAgencyAccount !== true,
+          )
+          .map((o) => o.id);
+      }
+    }
+
     // Parse request body
     let body: AnalyticsRequest;
     try {
@@ -248,6 +279,8 @@ Deno.serve(async (req) => {
         analyticsData = await computeTemplatesAnalytics(
           supabase,
           organizationId,
+          isAgencyCaller,
+          clientOrgIds,
         );
         break;
 
@@ -474,19 +507,39 @@ async function computeReferralsAnalytics(
 async function computeTemplatesAnalytics(
   supabase: any,
   organizationId: string,
+  isAgencyCaller: boolean,
+  clientOrgIds: string[],
 ): Promise<TemplatesAnalyticsData> {
-  // Get all template bundles for the organization
-  const { data: bundles, error: bundlesError } = await supabase
-    .from("template_bundles")
-    .select("id, template_front_id, template_back_id, is_universal, organization_id")
-    .eq("organization_id", organizationId);
+  // Bundle scope:
+  //   - Agency: bundles visible to the agency = (universal) OR (owned by
+  //     agency). Universal bundles can be owned by any org but are
+  //     system-wide-visible, so we OR on is_universal instead of restricting
+  //     to the agency's organization_id. Mirrors the get_template_bundles
+  //     RPC's WHERE clause used by getAllTemplatesBundles.
+  //   - Single-org: bundles owned by that org only (universal will be
+  //     filtered out below to preserve the existing inventory semantic).
+  const bundlesQuery = isAgencyCaller
+    ? supabase
+        .from("template_bundles")
+        .select("id, template_front_id, template_back_id, is_universal, organization_id")
+        .or(`organization_id.eq.${organizationId},is_universal.eq.true`)
+    : supabase
+        .from("template_bundles")
+        .select("id, template_front_id, template_back_id, is_universal, organization_id")
+        .eq("organization_id", organizationId);
+  const { data: bundles, error: bundlesError } = await bundlesQuery;
 
   if (bundlesError) {
     console.error("Error fetching template bundles:", bundlesError);
     throw new Error("Failed to fetch template bundles");
   }
 
-  const allBundles = (bundles || []).filter((b: any) => !b.is_universal);
+  // Agency mode counts everything fetched (universal + agency-created).
+  // Single-org mode excludes universal — those are shared from the agency
+  // and don't belong to this org's own inventory.
+  const allBundles = isAgencyCaller
+    ? (bundles || [])
+    : (bundles || []).filter((b: any) => !b.is_universal);
 
   // Fetch all templates referenced by bundles to check deleted/manual_edit status
   const templateIds = new Set<string>();
@@ -526,11 +579,25 @@ async function computeTemplatesAnalytics(
 
   const totalTemplates = validBundles.length;
 
-  // Fetch all campaigns for the organization
-  const { data: campaigns, error: campaignsError } = await supabase
+  // Campaigns scope differs by mode:
+  //   - Agency: campaigns live on the client orgs, not the agency org. Match
+  //     the agency's bundles against EVERY client campaign to determine
+  //     active/draft/inactive. If the agency has no clients, no campaigns.
+  //   - Single-org: campaigns belong to the same org as the bundles.
+  let campaignsQuery = supabase
     .from("campaigns")
-    .select("id, front_template_id, back_template_id, status")
-    .eq("organization_id", organizationId);
+    .select("id, front_template_id, back_template_id, status");
+  if (isAgencyCaller) {
+    if (clientOrgIds.length === 0) {
+      // No clients → no campaigns; short-circuit to empty array.
+      campaignsQuery = campaignsQuery.in("organization_id", ["00000000-0000-0000-0000-000000000000"]);
+    } else {
+      campaignsQuery = campaignsQuery.in("organization_id", clientOrgIds);
+    }
+  } else {
+    campaignsQuery = campaignsQuery.eq("organization_id", organizationId);
+  }
+  const { data: campaigns, error: campaignsError } = await campaignsQuery;
 
   if (campaignsError) {
     console.error("Error fetching campaigns:", campaignsError);

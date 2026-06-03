@@ -457,6 +457,14 @@ async function sendPostcard(addressObj, templates, businessData, offerData, post
         throw new Error(`Missing template IDs for campaign. Front: ${templates.front_template_id}, Back: ${templates.back_template_id}`);
     }
 
+    // Premium paper (e.g. premium_paper_postcard_uv_glossy_ss) does NOT
+    // support express delivery — PostGrid returns 422
+    // premium_paper_mailing_class_unsupported_error. Only standard paper
+    // accepts `express: true`. For premium we fall back to first_class
+    // (the default tier that premium permits).
+    const resolvedPaper = paper || 'standard';
+    const isPremium = resolvedPaper !== 'standard';
+
     const payload = {
         to: {
             addressLine1: addressLine1,
@@ -468,15 +476,16 @@ async function sendPostcard(addressObj, templates, businessData, offerData, post
             countryCode: 'US'
         },
         size: size,
-        paper: paper || 'standard',
+        paper: resolvedPaper,
         frontTemplate: templates.front_template_id,
         backTemplate: templates.back_template_id,
         description: offerData.offer_headline || "Campaign Postcard",
         trackers: trackerId ? [trackerId] : [], // Use resolved trackerId
         mergeVariables: mergedVars,
         color: true,
-        //mailingClass: "first_class",        // "first_class" (default) or "standard_class" (slower, cheaper)
-        express: true             // ⚠️ Use this instead if you want 2-3 day express — NOT together with standard_class
+        ...(isPremium
+            ? { mailingClass: 'first_class' }   // premium paper rejects express
+            : { express: true })                // standard paper supports express (2-3 day)
     };
 
     console.log(`Sending PostGrid Payload for ${addressObj.address}:`, JSON.stringify(payload, null, 2));
