@@ -583,6 +583,10 @@ paths:
         - Access token expires in 1 hour (3600 seconds)
         - Refresh token can be used to obtain new access tokens via /refreshToken endpoint
         - Store both tokens securely on the client side
+
+        **Organization deletion:**
+        - If the user's organization is **scheduled for deletion** (`organizations.deletion_scheduled_at` is set), login is rejected with `403 ORGANIZATION_SCHEDULED_FOR_DELETION`.
+        - **Only the organization owner** may still log in during the deletion window (e.g. to recover the organization via `/recoverOrganization`); all other members are locked out.
       operationId: login
       requestBody:
         required: true
@@ -640,14 +644,22 @@ paths:
                 error: INVALID_CREDENTIALS
                 message: Invalid email or password
         "403":
-          description: Forbidden - Email not verified
+          description: Forbidden - email not verified, or organization scheduled for deletion
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
-              example:
-                error: EMAIL_NOT_VERIFIED
-                message: Please verify your email address to login
+              examples:
+                emailNotVerified:
+                  summary: Email not verified
+                  value:
+                    error: EMAIL_NOT_VERIFIED
+                    message: Please verify your email address to login
+                organizationScheduledForDeletion:
+                  summary: Organization scheduled for deletion (non-owner)
+                  value:
+                    error: ORGANIZATION_SCHEDULED_FOR_DELETION
+                    message: Login is not allowed because your organization "Old Client" is scheduled for deletion (scheduled at 2026-06-19T00:00:00.000Z). Only the organization owner can log in during this period. Please contact your organization owner or support if you believe this is a mistake.
         "404":
           description: User profile not found
           content:
@@ -1453,6 +1465,7 @@ paths:
         **Security:**
         - New password must meet all password requirements
         - New password cannot be the same as the current password
+        - If the user's organization is **scheduled for deletion** (`organizations.deletion_scheduled_at` is set), the reset is rejected with `403 ORGANIZATION_SCHEDULED_FOR_DELETION` and the password is left unchanged.
       operationId: resetPassword
       requestBody:
         required: true
@@ -1524,6 +1537,15 @@ paths:
               example:
                 error: INVALID_TOKEN
                 message: Invalid or expired reset token
+        "403":
+          description: Organization scheduled for deletion — password reset not allowed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: ORGANIZATION_SCHEDULED_FOR_DELETION
+                message: Password reset is not allowed because your organization "Old Client" is scheduled for deletion (scheduled at 2026-06-19T00:00:00.000Z). Please contact support if you believe this is a mistake.
         "500":
           description: Internal server error
           content:
@@ -16403,6 +16425,7 @@ paths:
         Each org carries a human-readable status string the frontend can render verbatim:
         - **`"Active"`** — onboarding is complete. Either `onboarding.team_onboarding_completed = true` (V1) or per-org `branding_settings.logo` is set (V3).
         - **`"Deleting in N days"`** — `organizations.deletion_scheduled_at` is in the future. `N` is computed by `ceil((deletion_scheduled_at - now) / 1 day)`. Set via `/deleteOrganization` (30-day grace).
+          - Organizations whose `deletion_scheduled_at` has already **elapsed** (`<= now`) are **excluded** from the response entirely — they are pending permanent removal by the daily `organization-deletion-cleanup` pg_cron job and never appear with this status.
         - **`"Setup N of 4"`** — neither completed nor pending deletion. `N` is the step the org is currently on, inferred from filled fields (1: business_name; 2: business_address; 3: company_logo; 4: branding/team). Total is always 4 (the visible-to-user step count for the agency dashboard).
 
         ### Example response
@@ -18701,6 +18724,56 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
+  /sendOrganizationDeletedEmail:
+    get:
+      tags:
+        - Email Notifications
+      summary: Process expired organization deletions
+      description: |
+        Owns the full post-recovery-window deletion lifecycle for organizations.
+
+        Finds organizations whose `deletion_scheduled_at` has elapsed (`<= now`), and for each one:
+        1. Resolves the owner's email from `auth.users` (read **before** deletion).
+        2. Sends the `organization-deletion-completed` email (subject and body support a `{{business_name}}` placeholder).
+        3. Permanently deletes the organization row (child rows cascade via FKs).
+
+        Deletion proceeds even if the email send fails (the failure is logged in `results`), because the recovery window has already elapsed.
+
+        Designed to be **triggered by the `organization-deletion-cleanup` pg_cron job** (daily at 00:00) via `pg_net`. The cron resolves the project URL and service-role key from Supabase Vault and POSTs to this function with a `Bearer` service-role token.
+      operationId: sendOrganizationDeletedEmail
+      responses:
+        "200":
+          description: Operation successful
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrganizationDeletionCleanupResponse"
+        "500":
+          description: Error response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    post:
+      tags:
+        - Email Notifications
+      summary: Process expired organization deletions (POST)
+      description: Same as GET method, allows triggering via POST request (used by the pg_cron + pg_net trigger).
+      operationId: sendOrganizationDeletedEmailPost
+      responses:
+        "200":
+          description: Operation successful
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrganizationDeletionCleanupResponse"
+        "500":
+          description: Error response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
   /setMaintenanceEmailStatus:
     post:
       tags:
@@ -20010,6 +20083,25 @@ components:
               type: boolean
               description: Whether the user's email is verified
               example: true
+        organizations:
+          type: array
+          description: |
+            Organizations the user can access (owned + member), for the org switcher.
+
+            Filtering rules:
+            - Organizations whose `deletion_scheduled_at` has **elapsed** (`<= now`) are **excluded** for everyone, including the owner — they are pending permanent removal by the `organization-deletion-cleanup` pg_cron job.
+            - Organizations still inside their deletion grace window (`deletion_scheduled_at` in the future) are returned to the **owner** only; non-owners do not see them.
+          items:
+            type: object
+            properties:
+              id: { type: string, format: uuid }
+              business_name: { type: string, nullable: true }
+              business_email: { type: string, nullable: true }
+              role: { type: string, enum: [OWNER, ADMIN, MARKETER, TECHNICIAN] }
+              is_active: { type: boolean }
+              deletion_scheduled_at: { type: string, nullable: true }
+              onboarding_step: { type: integer, minimum: 0, maximum: 4 }
+              isAgencyAccount: { type: boolean }
 
     ForgotPasswordRequest:
       type: object
@@ -20221,6 +20313,44 @@ components:
         error:
           type: string
           description: Error message if success is false
+
+    OrganizationDeletionCleanupResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          example: success
+        message:
+          type: string
+          example: "Processed 2 expired organization(s): 2 deleted, 2 email(s) sent"
+        emails_sent:
+          type: integer
+          description: Number of deletion-completed emails successfully sent.
+          example: 2
+        organizations_deleted:
+          type: integer
+          description: Number of organization rows permanently deleted.
+          example: 2
+        total_processed:
+          type: integer
+          description: Number of expired organizations evaluated this run.
+          example: 2
+        processingTimeMs:
+          type: integer
+          example: 620
+        results:
+          type: array
+          items:
+            type: object
+            properties:
+              organization_id: { type: string, format: uuid }
+              business_name: { type: string, nullable: true }
+              email: { type: string, format: email }
+              email_sent: { type: boolean }
+              deleted: { type: boolean }
+              error:
+                type: string
+                description: Present if the email and/or delete step failed.
 
     Error:
       type: object

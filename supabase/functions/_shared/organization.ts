@@ -190,6 +190,16 @@ export async function getUserOrganizations(
 
       if (!role) continue;
 
+      // Skip organizations whose deletion recovery window has already elapsed.
+      // These are pending permanent removal by the organization-deletion-cleanup
+      // cron and must not be shown to anyone, including the owner.
+      if (
+        org.deletion_scheduled_at &&
+        new Date(org.deletion_scheduled_at).getTime() <= Date.now()
+      ) {
+        continue;
+      }
+
       // Non-owners do not see orgs pending deletion
       if (org.deletion_scheduled_at && role !== "OWNER") continue;
 

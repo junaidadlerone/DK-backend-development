@@ -120,6 +120,13 @@ Deno.serve(async (req) => {
       roleByOrgId.set(o.id, o.role as "OWNER" | "ADMIN");
     }
 
+    // Exclude organizations whose deletion recovery window has already elapsed
+    // (deletion_scheduled_at < now). These are pending permanent removal by the
+    // organization-deletion-cleanup cron and should no longer appear in the
+    // overview. Orgs not scheduled for deletion, or scheduled in the future,
+    // are still returned.
+    const nowIso = new Date().toISOString();
+
     // Batched fetches in parallel.
     const [
       { data: fullOrgs, error: orgsErr },
@@ -128,7 +135,9 @@ Deno.serve(async (req) => {
       { data: paymentRows, error: payErr },
       { data: onboardingRows, error: onbErr },
     ] = await Promise.all([
-      supabase.from("organizations").select("*").in("id", orgIds),
+      supabase.from("organizations").select("*").in("id", orgIds).or(
+        `deletion_scheduled_at.is.null,deletion_scheduled_at.gte.${nowIso}`,
+      ),
       supabase.from("campaigns").select("*").in("organization_id", orgIds).eq(
         "status->>name",
         "Active",
