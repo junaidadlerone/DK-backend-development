@@ -4947,8 +4947,10 @@ paths:
 
         **Business Rules:**
         - Accepts either database UUID or PostGrid template ID
-        - Template must belong to user's organization OR be a universal template
+        - Template is accessible when it is owned by the user's organization, is universal, OR is the front/back of a template bundle shared with the user's organization (V3 agency sharing via `template_bundles.shared_with_organization_ids`)
         - Universal templates (is_universal=true) are accessible to all organizations
+        - Inaccessible templates return `404 TEMPLATE_NOT_FOUND` (existence is not disclosed)
+        - Service-role callers bypass the organization access check
         - Returns error if template is deleted
         - User must be authenticated
         - Response includes isUniversal and isManualEdit flags
