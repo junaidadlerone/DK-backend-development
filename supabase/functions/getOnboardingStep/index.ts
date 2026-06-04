@@ -2,7 +2,7 @@
 import { corsResponse, errorResponse, successResponse } from "../_shared/response.ts";
 import { createSupabaseClient } from "../_shared/client.ts";
 import { getUserFromRequest } from "../_shared/history.ts";
-import { getUserOrganizationId } from "../_shared/organization.ts";
+import { getUserOrganizationId, validateOrganizationAccess } from "../_shared/organization.ts";
 
 /**
  * Get Onboarding Step Edge Function
@@ -34,8 +34,22 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Get user's organization
-    const organizationId = await getUserOrganizationId(supabase, user.userId);
+    // Honor optional ?organization_id=... query param (frontend passes this to
+    // read a specific org's onboarding step, e.g. a client sub-org rather than
+    // the caller's active org). Falls back to the caller's active org.
+    const url = new URL(req.url);
+    const requestedOrgId = url.searchParams.get("organization_id");
+    console.log("Request Org Id: "+requestedOrgId);
+    let organizationId: string | null = null;
+    if (requestedOrgId) {
+      const hasAccess = await validateOrganizationAccess(supabase, requestedOrgId, user.userId);
+      if (!hasAccess) {
+        return errorResponse("FORBIDDEN", "You do not have access to this organization", 403);
+      }
+      organizationId = requestedOrgId;
+    } else {
+      organizationId = await getUserOrganizationId(supabase, user.userId);
+    }
     if (!organizationId) {
       return errorResponse(
         "NO_ORGANIZATION",
@@ -44,57 +58,62 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Check profile onboarding status first (Step 3 completion marker)
-    const { data: profile, error: profileError } = await supabase
-      .from("profiles")
-      .select("onboarding")
-      .eq("id", user.userId)
-      .single();
+    // Fetch the org + onboarding rows. Step logic mirrors
+    // getAgencyOverview.computeStatus exactly — derived purely from these table
+    // fields (NOT profiles.onboarding), so both endpoints agree for the same org.
+    const [{ data: org, error: orgError }, { data: onb, error: onbError }] =
+      await Promise.all([
+        supabase
+          .from("organizations")
+          .select("business_name, business_address, branding_settings")
+          .eq("id", organizationId)
+          .maybeSingle(),
+        supabase
+          .from("onboarding")
+          .select(
+            "business_name, street_address, company_logo, team_onboarding_completed, team_members_invited",
+          )
+          .eq("organization_id", organizationId)
+          .maybeSingle(),
+      ]);
 
-    if (profileError) {
-      console.error("Error fetching profile:", profileError);
-      return errorResponse("FETCH_FAILED", "Failed to fetch profile", 500);
+    if (orgError) {
+      console.error("Error fetching organization:", orgError);
+      return errorResponse("FETCH_FAILED", "Failed to fetch organization", 500);
     }
-
-    // If profile.onboarding is true, Step 3 is complete
-    if (profile.onboarding === true) {
-      return successResponse({
-        completed_step: 3,
-        next_step: null
-      }, 200);
-    }
-
-    // Fetch onboarding details for Steps 1, 2, and 3
-    const { data: onboardingData, error: onboardingError } = await supabase
-      .from("onboarding")
-      .select("business_name, street_address, company_logo")
-      .eq("organization_id", organizationId)
-      .single();
-
-    if (onboardingError && onboardingError.code !== 'PGRST116') { // Ignore not found error
-      console.error("Error fetching onboarding data:", onboardingError);
+    if (onbError) {
+      console.error("Error fetching onboarding data:", onbError);
       return errorResponse("FETCH_FAILED", "Failed to fetch onboarding data", 500);
     }
 
+    // Onboarding is a 4-step procedure:
+    //   1. Business info (business_name)
+    //   2. Address info  (business_address / street_address)
+    //   3. Branding      (company_logo)
+    //   4. Team setup    (branding_settings.logo / team_onboarding_completed / team_members_invited)
+    // completed_step = highest completed step (0–4); next_step = the next one, or null when done.
+    const TOTAL = 4;
     let completed_step = 0;
     let next_step: number | null = 1;
 
-    if (onboardingData) {
-      // Check Step 3 (Branding)
-      if (onboardingData.company_logo) {
-        completed_step = 3;
-        next_step = null;
-      }
-      // Check Step 2 (Address Info)
-      else if (onboardingData.street_address) {
-        completed_step = 2;
-        next_step = 3;
-      } 
-      // Check Step 1 (Business Info)
-      else if (onboardingData.business_name) {
-        completed_step = 1;
-        next_step = 2;
-      }
+    // Step 4 ("complete") — same "Active" condition as getAgencyOverview.
+    const hasBranding = !!(org.branding_settings && org.branding_settings.logo);
+    const teamDone = onb?.team_onboarding_completed === true;
+    const teamInvited = onb?.team_members_invited === true;
+
+    let isComplete = false
+    if (hasBranding || teamDone || teamInvited) {
+      isComplete = true;
+    };
+
+    if (isComplete) {
+      completed_step = TOTAL;
+      next_step = null;
+    } else {
+      if (org?.business_name || onb?.business_name) completed_step = 1;
+      if (org?.business_address || onb?.street_address) completed_step = 2;
+      if (onb?.company_logo) completed_step = 3;
+      next_step = completed_step < TOTAL ? completed_step + 1 : null;
     }
 
     return successResponse({

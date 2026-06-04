@@ -14,6 +14,45 @@ import { isAgencyUser } from "../_shared/agencyGate.ts";
  * One request = four batched DB queries. No N+1.
  */
 
+/**
+ * Per-org status string.
+ * Priority: pending-deletion > onboarding-complete > setup-in-progress.
+ */
+function computeStatus(org: any, onb: any | undefined): string {
+  if (org.deletion_scheduled_at) {
+    const msRemaining = new Date(org.deletion_scheduled_at).getTime() - Date.now();
+    const daysRemaining = Math.max(0, Math.ceil(msRemaining / (1000 * 60 * 60 * 24)));
+    return `Deleting in ${daysRemaining} day${daysRemaining === 1 ? "" : "s"}`;
+  }
+  // "Active" if any of:
+  //  - per-org branding is set (V3 business step 4 / V3 agency step 2 agency_logo)
+  //  - V1 team-onboarding step finished
+  //  - V3 agency step 3 (team_members_invited) marked done
+  const hasBranding = !!(org.branding_settings && org.branding_settings.logo);
+  const teamDone = onb?.team_onboarding_completed === true;
+  const teamInvited = onb?.team_members_invited === true;
+  if (hasBranding || teamDone || teamInvited) return "Active";
+  // Report the current (highest completed) step from filled fields — NOT
+  // the next step — over a 4-step total (V1 + V3 business). Step 4
+  // (team/branding) completion is caught by the "Active" check above, so
+  // `completed` here is 0–3.
+  const TOTAL = 4;
+  let completed = 0;
+  if (org.business_name || onb?.business_name) completed = 1;
+  if (org.business_address || onb?.street_address) completed = 2;
+  if (onb?.company_logo) completed = 3;
+  return `Setup ${completed} of ${TOTAL}`;
+}
+
+/** Categorize a computed status string into one of the filter buckets. */
+function statusCategory(s: string): "active" | "setup" | "deleting" | "unknown" {
+  if (!s) return "unknown";
+  if (s === "Active") return "active";
+  if (s.startsWith("Setup")) return "setup";
+  if (s.startsWith("Deleting")) return "deleting";
+  return "unknown";
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return corsResponse();
   if (req.method !== "GET") {
@@ -182,36 +221,6 @@ Deno.serve(async (req) => {
       onboardingByOrg.set(row.organization_id, row);
     }
 
-    // Per-org status string.
-    // Priority: pending-deletion > onboarding-complete > setup-in-progress.
-    function computeStatus(org: any, onb: any | undefined): string {
-      if (org.deletion_scheduled_at) {
-        const msRemaining = new Date(org.deletion_scheduled_at).getTime() - Date.now();
-        const daysRemaining = Math.max(0, Math.ceil(msRemaining / (1000 * 60 * 60 * 24)));
-        return `Deleting in ${daysRemaining} day${daysRemaining === 1 ? "" : "s"}`;
-      }
-      // "Active" if any of:
-      //  - per-org branding is set (V3 business step 4 / V3 agency step 2 agency_logo)
-      //  - V1 team-onboarding step finished
-      //  - V3 agency step 3 (team_members_invited) marked done
-      const hasBranding = !!(org.branding_settings && org.branding_settings.logo);
-      const teamDone = onb?.team_onboarding_completed === true;
-      const teamInvited = onb?.team_members_invited === true;
-      if (hasBranding || teamDone || teamInvited) return "Active";
-
-      // Infer current step from filled fields. Always shown over a 4-step total
-      // (V1 + V3 business). V3 agency has 5 steps but its 5th step is the first
-      // client's branding — for the agency org's own status, 4 steps is the
-      // observable boundary.
-      const TOTAL = 4;
-      let completed = 0;
-      if (org.business_name || onb?.business_name) completed = 1;
-      if (org.business_address || onb?.street_address) completed = 2;
-      if (onb?.company_logo) completed = 3;
-      const currentStep = Math.min(completed + 1, TOTAL);
-      return `Setup ${currentStep} of ${TOTAL}`;
-    }
-
     // Index org rows by id; strip organization_members for privacy.
     const orgById = new Map<string, any>();
     for (const o of fullOrgs ?? []) {
@@ -266,15 +275,6 @@ Deno.serve(async (req) => {
         total_campaign_count: campaignCountByOrg.get(o.id) ?? 0,
       };
     }).filter(Boolean);
-
-    // Categorize the computed status string into one of the filter buckets.
-    function statusCategory(s: string): "active" | "setup" | "deleting" | "unknown" {
-      if (!s) return "unknown";
-      if (s === "Active") return "active";
-      if (s.startsWith("Setup")) return "setup";
-      if (s.startsWith("Deleting")) return "deleting";
-      return "unknown";
-    }
 
     // Apply filters in JS (these are computed fields, can't be pushed to SQL).
     const filtered = allOrganizations.filter((o: any) => {

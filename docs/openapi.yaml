@@ -13991,21 +13991,36 @@ paths:
       description: |
         Returns the completed onboarding step and the next step for the user's organization.
 
-        **Logic:**
-        - Checks organization data for completion of steps
-        - Returns step progress (0-3)
+        **Logic:** (identical to the per-org status logic in `getAgencyOverview`)
+        - Onboarding is a 4-step procedure, derived from the `organizations` + `onboarding` table fields:
+          1. Business info (`business_name`)
+          2. Address info (`business_address` / `street_address`)
+          3. Branding (`company_logo`)
+          4. Team setup — "complete" when any of `branding_settings.logo`, `team_onboarding_completed`, or `team_members_invited` is set
+        - `completed_step` is the highest completed step (0–4); `next_step` is the step to complete next, or `null` when complete.
+        - Note: this does **not** use `profiles.onboarding`, so it stays consistent with the `"Setup N of 4"` / `"Active"` status from `getAgencyOverview` for the same org.
 
         **Response Structure:**
         ```json
         {
-          "completed_step": 1,
-          "next_step": 2
+          "completed_step": 3,
+          "next_step": 4
         }
         ```
       operationId: getOnboardingStep
       security:
         - BearerAuth: []
         - SupabaseAuth: []
+      parameters:
+        - name: organization_id
+          in: query
+          required: false
+          description: |
+            Target a specific organization's onboarding step (e.g. a client sub-org rather than the caller's active org). The caller must have access to it (`403 FORBIDDEN` otherwise). If omitted, falls back to the caller's active organization.
+          schema:
+            type: string
+            format: uuid
+          example: c19b0772-fa37-4e47-af5e-5b48bc9f679d
       responses:
         "200":
           description: Onboarding progress retrieved successfully
@@ -14016,19 +14031,36 @@ paths:
                 properties:
                   completed_step:
                     type: integer
-                    description: The highest step number completed (0-3)
-                    example: 1
+                    description: The highest step number completed (0-4)
+                    example: 3
                   next_step:
                     type: integer
                     nullable: true
-                    description: The next step to complete, or null if finished
-                    example: 2
+                    description: The next step to complete (up to 4), or null if finished
+                    example: 4
         "401":
           description: Unauthorized
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+        "403":
+          description: No access to the requested organization, or user has no organization
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              examples:
+                forbidden:
+                  summary: No access to the requested organization_id
+                  value:
+                    error: FORBIDDEN
+                    message: You do not have access to this organization
+                noOrganization:
+                  summary: User not associated with any organization
+                  value:
+                    error: NO_ORGANIZATION
+                    message: User is not associated with any organization
         "500":
           description: Internal server error
           content:
@@ -16426,7 +16458,7 @@ paths:
         - **`"Active"`** — onboarding is complete. Either `onboarding.team_onboarding_completed = true` (V1) or per-org `branding_settings.logo` is set (V3).
         - **`"Deleting in N days"`** — `organizations.deletion_scheduled_at` is in the future. `N` is computed by `ceil((deletion_scheduled_at - now) / 1 day)`. Set via `/deleteOrganization` (30-day grace).
           - Organizations whose `deletion_scheduled_at` has already **elapsed** (`<= now`) are **excluded** from the response entirely — they are pending permanent removal by the daily `organization-deletion-cleanup` pg_cron job and never appear with this status.
-        - **`"Setup N of 4"`** — neither completed nor pending deletion. `N` is the step the org is currently on, inferred from filled fields (1: business_name; 2: business_address; 3: company_logo; 4: branding/team). Total is always 4 (the visible-to-user step count for the agency dashboard).
+        - **`"Setup N of 4"`** — neither completed nor pending deletion. `N` is the **highest completed** step (0–3), inferred from filled fields (1: business_name; 2: business_address; 3: company_logo). Step 4 (branding/team) completion surfaces as `"Active"` instead. Total is always 4 (the visible-to-user step count for the agency dashboard).
 
         ### Example response
         ```json
@@ -16464,7 +16496,7 @@ paths:
                 "business_name": "New Client",
                 "business_address": "123 Main St, ...",
                 "role": "OWNER",
-                "status": "Setup 3 of 4",
+                "status": "Setup 2 of 4",
                 "active_campaigns": [], "active_campaign_count": 0,
                 "total_qr_scans": 0, "total_spend": 0, "total_campaign_count": 0
               }
