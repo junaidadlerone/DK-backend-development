@@ -5,7 +5,7 @@ import {
   getUserProfile,
   isValidEmail,
 } from "../_shared/client.ts";
-import { getUserOrganizations } from "../_shared/organization.ts";
+import { getUserOrganizationId, getUserOrganizations } from "../_shared/organization.ts";
 import type { LoginRequest, LoginResponse } from "../_shared/types.ts";
 
 /**
@@ -93,8 +93,34 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Fetch all orgs the user can access for the org dropdown
     const supabaseService = createSupabaseClient();
+
+    // Block login if the user's organization is scheduled for deletion.
+    // Only the org owner may still log in during the deletion window (e.g. to
+    // recover the organization); all other members are locked out.
+    const organizationId = await getUserOrganizationId(
+      supabaseService,
+      authData.user.id
+    );
+    if (organizationId) {
+      const { data: org } = await supabaseService
+        .from("organizations")
+        .select("business_name, owner_id, deletion_scheduled_at")
+        .eq("id", organizationId)
+        .maybeSingle();
+
+      if (org?.deletion_scheduled_at && org.owner_id !== authData.user.id) {
+        return errorResponse(
+          "ORGANIZATION_SCHEDULED_FOR_DELETION",
+          `Login is not allowed because your organization${
+            org.business_name ? ` "${org.business_name}"` : ""
+          } is scheduled for deletion (scheduled at ${org.deletion_scheduled_at}). Only the organization owner can log in during this period. Please contact your organization owner or support if you believe this is a mistake.`,
+          403
+        );
+      }
+    }
+
+    // Fetch all orgs the user can access for the org dropdown
     const organizations = await getUserOrganizations(
       supabaseService,
       authData.user.id,

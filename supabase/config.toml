@@ -661,3 +661,7 @@ verify_jwt = false
 [functions.getOnboardingDetails]
 entrypoint = "./functions/getOnboardingDetails/index.ts"
 verify_jwt = false
+
+[functions.sendOrganizationDeletedEmail]
+entrypoint = "./functions/sendOrganizationDeletedEmail/index.ts"
+verify_jwt = false
