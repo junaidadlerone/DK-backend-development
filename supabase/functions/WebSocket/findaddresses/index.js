@@ -15,6 +15,13 @@ const GOOGLE_MAPS_API_KEY = process.env.GOOGLE_MAPS_API_KEY;
 const RENTCAST_API_KEY = process.env.RENTCAST_API_KEY;
 const RENTCAST_BASE_URL = 'https://api.rentcast.io/v1';
 const METERS_PER_MILE = 1609.344;
+
+// Hard cap on addresses produced per discovery session. Protects the
+// downstream postcardsendingsocket from queuing more sends than a single
+// WebSocket session can drain. Applied to BOTH modes:
+//   - count mode: clamps `data.count` to MAX before the search
+//   - radius mode: slices the post-search result set to MAX
+const MAX_ADDRESSES_PER_SEARCH = 500;
 const RENTCAST_RESIDENTIAL_TYPES = new Set([
     'Single Family', 'Condo', 'Townhouse', 'Manufactured', 'Multi-Family', 'Apartment'
 ]);
@@ -773,9 +780,15 @@ async function handleGetAddressesFromZone(ws, message)
         {
             throw new Error('Radius cannot exceed 50,000 meters');
         }
-        if (data.count && data.count > 10000)
+        // Count-mode clamp: silently reduce to MAX_ADDRESSES_PER_SEARCH and
+        // emit a warning so the frontend can show what happened.
+        if (data.count && data.count > MAX_ADDRESSES_PER_SEARCH)
         {
-            throw new Error('Count cannot exceed 10,000 buildings');
+            ws.send(JSON.stringify({
+                type: 'warning',
+                message: `Requested ${data.count} addresses, capped at ${MAX_ADDRESSES_PER_SEARCH} (send-capacity limit).`
+            }));
+            data.count = MAX_ADDRESSES_PER_SEARCH;
         }
 
         const authToken = headers.authorization?.replace('Bearer ', '') || headers.apikey;
@@ -867,6 +880,30 @@ async function handleGetAddressesFromZone(ws, message)
             totalFound = osmResult.totalFound;
             mode = osmResult.mode;
             searchRadius = osmResult.searchRadius;
+        }
+
+        // Radius-mode safety net: count mode is already clamped at input, but
+        // radius mode can return arbitrarily many properties from RentCast/OSM.
+        // Slice both result containers to MAX_ADDRESSES_PER_SEARCH so the rest
+        // of the pipeline (conversion + DB save + downstream postcard send)
+        // is bounded.
+        if (rentcastProperties && rentcastProperties.length > MAX_ADDRESSES_PER_SEARCH)
+        {
+            const found = rentcastProperties.length;
+            rentcastProperties = rentcastProperties.slice(0, MAX_ADDRESSES_PER_SEARCH);
+            ws.send(JSON.stringify({
+                type: 'warning',
+                message: `Found ${found} properties; capped at ${MAX_ADDRESSES_PER_SEARCH} (send-capacity limit).`
+            }));
+        }
+        if (osmBuildings && osmBuildings.length > MAX_ADDRESSES_PER_SEARCH)
+        {
+            const found = osmBuildings.length;
+            osmBuildings = osmBuildings.slice(0, MAX_ADDRESSES_PER_SEARCH);
+            ws.send(JSON.stringify({
+                type: 'warning',
+                message: `Found ${found} buildings; capped at ${MAX_ADDRESSES_PER_SEARCH} (send-capacity limit).`
+            }));
         }
 
         const resultCount = fetchSource === 'rentcast'
