@@ -98,15 +98,11 @@ Deno.serve(async (req) => {
     // Determine if templateId is a UUID (database ID) or PostGrid template ID
     const isDbId = isUUID(templateId);
 
-    // Build query to get templates
+    // Fetch the template by id / postgrid id. Access is checked in JS afterward
+    // so we can honor V3 agency sharing (which lives on template_bundles, not
+    // on the templates table).
     let query = supabase.from("templates").select("*");
 
-    // Apply organization filter only if NOT a service role
-    if (!user.isServiceRole) {
-      query = query.or(`organization_id.eq.${organizationId},is_universal.eq.true`);
-    }
-
-    // Query by appropriate field
     if (isDbId) {
       query = query.eq("id", templateId);
     } else {
@@ -122,6 +118,42 @@ Deno.serve(async (req) => {
         "Template not found or doesn't belong to your organization",
         404
       );
+    }
+
+    // Access check (skipped for service role):
+    //   1. template is owned by the active org
+    //   2. template is universal
+    //   3. template is the front/back of a bundle shared with the active org
+    //      (V3 agency sharing — added so single-template fetch stays in sync
+    //      with getTemplateBundleById / getAllTemplatesBundles, which already
+    //      surface shared-in templates for the active org).
+    // Returns 404 (not 403) when inaccessible, preserving the original behavior
+    // of not disclosing whether the template exists.
+    if (!user.isServiceRole) {
+      const ownsTemplate = template.organization_id === organizationId;
+      const isUniversal = template.is_universal === true;
+
+      let isSharedViaBundle = false;
+      if (!ownsTemplate && !isUniversal) {
+        const { data: sharedBundles } = await supabase
+          .from("template_bundles")
+          .select("id")
+          .or(
+            `template_front_id.eq.${template.id},template_back_id.eq.${template.id}`,
+          )
+          .contains("shared_with_organization_ids", [organizationId])
+          .limit(1);
+        isSharedViaBundle = Array.isArray(sharedBundles) &&
+          sharedBundles.length > 0;
+      }
+
+      if (!ownsTemplate && !isUniversal && !isSharedViaBundle) {
+        return errorResponse(
+          "TEMPLATE_NOT_FOUND",
+          "Template not found or doesn't belong to your organization",
+          404,
+        );
+      }
     }
 
     // Check if template is deleted
