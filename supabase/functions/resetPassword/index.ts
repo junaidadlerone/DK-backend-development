@@ -1,5 +1,6 @@
 import { corsResponse, errorResponse, successResponse } from "../_shared/response.ts";
 import { createSupabaseClient, validatePassword } from "../_shared/client.ts";
+import { getUserOrganizationId } from "../_shared/organization.ts";
 import type { ResetPasswordRequest, MessageResponse } from "../_shared/types.ts";
 
 /**
@@ -58,6 +59,29 @@ Deno.serve(async (req) => {
         "Invalid or expired reset token",
         401
       );
+    }
+
+    // Block the reset if the user's organization is scheduled for deletion.
+    // A scheduled org is on its way out (30-day recovery window or already
+    // elapsed and pending the cleanup cron), so we don't let its users set a
+    // new password.
+    const organizationId = await getUserOrganizationId(supabase, user.id);
+    if (organizationId) {
+      const { data: org } = await supabase
+        .from("organizations")
+        .select("business_name, deletion_scheduled_at")
+        .eq("id", organizationId)
+        .maybeSingle();
+
+      if (org?.deletion_scheduled_at) {
+        return errorResponse(
+          "ORGANIZATION_SCHEDULED_FOR_DELETION",
+          `Password reset is not allowed because your organization${
+            org.business_name ? ` "${org.business_name}"` : ""
+          } is scheduled for deletion (scheduled at ${org.deletion_scheduled_at}). Please contact support if you believe this is a mistake.`,
+          403
+        );
+      }
     }
 
     // Check if the new password is the same as the current password
