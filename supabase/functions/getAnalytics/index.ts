@@ -111,6 +111,14 @@ interface CampaignsAnalyticsData {
   total_spent_display?: any;
   total_leads_generated: number;
   avg_scan_rate: number;
+  // Postcard-level delivery breakdown (sourced from postcard_sends, same
+  // semantics as getAnalyticsV2). total_initated mirrors total_postcards_sent.
+  total_postcards_initiated: {
+    total_initated: number;
+    returned: number;
+    cancelled: number;
+    total_delivered: number;
+  };
   overview: {
     currency: string;
     // Enriched
@@ -735,12 +743,43 @@ async function computeCampaignsAnalytics(
   // Calculate average scan rate
   const avgScanRate = scanRateCount > 0 ? scanRateSum / scanRateCount : 0;
 
+  // Postcard-level delivery breakdown from postcard_sends. Mirrors the status
+  // mapping used in getAnalyticsV2:
+  //   total_delivered → postgrid_status = "completed"
+  //   cancelled       → postgrid_status = "cancelled"
+  //   returned        → imb_status      = "returned_to_sender"
+  const { data: postcardSends, error: postcardSendsError } = await supabase
+    .from("postcard_sends")
+    .select("postgrid_status, imb_status")
+    .eq("organization_id", organizationId);
+
+  if (postcardSendsError) {
+    console.error("Error fetching postcard_sends:", postcardSendsError);
+    throw new Error("Failed to fetch postcard_sends");
+  }
+
+  let postcardsDelivered = 0;
+  let postcardsCancelled = 0;
+  let postcardsReturned = 0;
+
+  for (const p of postcardSends || []) {
+    if (p.postgrid_status === "completed") postcardsDelivered++;
+    if (p.postgrid_status === "cancelled") postcardsCancelled++;
+    if (p.imb_status === "returned_to_sender") postcardsReturned++;
+  }
+
   const analyticsData: CampaignsAnalyticsData = {
     active_campaigns: activeCampaigns,
     total_postcards_sent: totalPostcardsSent,
     total_spent: totalSpent,
     total_leads_generated: totalLeadsGenerated,
     avg_scan_rate: Math.round(avgScanRate * 100) / 100, // Round to 2 decimal places
+    total_postcards_initiated: {
+      total_initated: totalPostcardsSent,
+      returned: postcardsReturned,
+      cancelled: postcardsCancelled,
+      total_delivered: postcardsDelivered,
+    },
     overview: {
       currency: "USD",
       currency_display: {

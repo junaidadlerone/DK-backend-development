@@ -9768,6 +9768,11 @@ paths:
                       total_spent: 16260
                       total_leads_generated: 342
                       avg_scan_rate: 12.45
+                      total_postcards_initiated:
+                        total_initated: 5420
+                        returned: 12
+                        cancelled: 8
+                        total_delivered: 5000
                       overview:
                         currency: "USD"
                         total_leads_generated_breakdown: "15 This week"
@@ -9921,6 +9926,10 @@ paths:
         | `total_scans` | PostGrid tracker API | All-time total QR scans — sum of `visitCount` across all org campaign trackers |
         | `spent_to_date` | `payment_history` | Sum of `amount_paid` for this organization across all campaigns |
         | `spent_to_date_display` | derived | Currency-formatted `spent_to_date` using the user's saved currency preference |
+        | `total_postcards_delivered.total_initiated` | `campaigns.postcards_sent` | Sum of all campaigns' `postcards_sent` |
+        | `total_postcards_delivered.total_delivered` | `postgrid_status = completed` | Count of delivered postcards (same as `delivered`) |
+        | `total_postcards_delivered.returned` | `imb_status = returned_to_sender` | Count of returned postcards |
+        | `total_postcards_delivered.cancelled` | `postgrid_status = cancelled` | Count of cancelled postcards |
 
         ---
 
@@ -10339,6 +10348,11 @@ paths:
                         currency_code: "USD"
                         symbol: "$"
                         formatted: "$4,950.00"
+                      total_postcards_delivered:
+                        returned: 12
+                        cancelled: 8
+                        total_initiated: 5000
+                        total_delivered: 1200
                 delivery_funnel:
                   summary: "delivery_funnel response"
                   value:
@@ -21265,6 +21279,26 @@ components:
           format: float
           description: "Average scan_rate across all campaigns (rounded to 2 decimals)"
           example: 12.45
+        total_postcards_initiated:
+          type: object
+          description: "Postcard-level delivery breakdown sourced from postcard_sends (same status semantics as getAnalyticsV2)"
+          properties:
+            total_initated:
+              type: integer
+              description: "Same as total_postcards_sent (sum of all campaigns' postcards_sent)"
+              example: 5420
+            returned:
+              type: integer
+              description: "Postcards with imb_status returned_to_sender"
+              example: 12
+            cancelled:
+              type: integer
+              description: "Postcards with postgrid_status cancelled"
+              example: 8
+            total_delivered:
+              type: integer
+              description: "Postcards with postgrid_status completed"
+              example: 5000
         overview:
           type: object
           properties:
@@ -21434,6 +21468,26 @@ components:
             formatted:
               type: string
               example: "$4,950.00"
+        total_postcards_delivered:
+          type: object
+          description: "Postcard delivery breakdown. total_initiated mirrors the campaign postcards_sent aggregate; the rest are sourced from postcard_sends statuses"
+          properties:
+            returned:
+              type: integer
+              description: "Postcards with imb_status returned_to_sender"
+              example: 12
+            cancelled:
+              type: integer
+              description: "Postcards with postgrid_status cancelled"
+              example: 8
+            total_initiated:
+              type: integer
+              description: "Sum of all campaigns' postcards_sent"
+              example: 5000
+            total_delivered:
+              type: integer
+              description: "Postcards with postgrid_status completed (same as delivered)"
+              example: 1200
 
     FunnelBucket:
       type: object
