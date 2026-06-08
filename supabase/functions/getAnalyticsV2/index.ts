@@ -119,6 +119,14 @@ interface DashboardCardsData {
     symbol: string;
     formatted: string;
   };
+  // Postcard delivery breakdown. total_initiated mirrors the campaign
+  // postcards_sent aggregate; the rest come from postcard_sends statuses.
+  total_postcards_delivered: {
+    returned: number;
+    cancelled: number;
+    total_initiated: number;
+    total_delivered: number;
+  };
 }
 
 interface FunnelBucket {
@@ -600,7 +608,7 @@ async function computeDashboardCards(
 
   let postcardsQuery = supabase
     .from("postcard_sends")
-    .select("postgrid_status")
+    .select("postgrid_status, imb_status")
     .eq("organization_id", organizationId);
   let paymentsQuery = supabase
     .from("payment_history")
@@ -632,12 +640,14 @@ async function computeDashboardCards(
     throw new Error("Failed to fetch postcard data");
   }
 
-  const postcards: Array<{ postgrid_status: string }> = postcardsResult.data ?? [];
+  const postcards: Array<{ postgrid_status: string; imb_status: string | null }> = postcardsResult.data ?? [];
   const payments: Array<{ campaign_id: string; amount_paid: number }> = paymentsResult.data ?? [];
   const campaignList: Array<{ id: string; postgrid_tracker_id: string | null; postcards_sent: number }> = campaignsResult.data ?? [];
 
   let inFlight = 0;
   let delivered = 0;
+  let cancelled = 0;
+  let returned = 0;
 
   for (const p of postcards) {
     if (IN_FLIGHT_STATUSES.includes(p.postgrid_status)) {
@@ -645,7 +655,15 @@ async function computeDashboardCards(
     } else if (p.postgrid_status === "completed") {
       delivered++;
     }
+    if (p.postgrid_status === "cancelled") cancelled++;
+    if (p.imb_status === "returned_to_sender") returned++;
   }
+
+  // total_initiated mirrors getAnalytics: the campaign postcards_sent aggregate.
+  const totalInitiated = campaignList.reduce(
+    (sum, c) => sum + (c.postcards_sent || 0),
+    0,
+  );
 
   const totalSent = postcards.length;
   const deliveryRate =
@@ -732,6 +750,12 @@ async function computeDashboardCards(
     peak_hour: peakHour,
     spent_to_date: spentRounded,
     spent_to_date_display: enrichCurrency(spentRounded, preferences.currency ?? "USD"),
+    total_postcards_delivered: {
+      returned,
+      cancelled,
+      total_initiated: totalInitiated,
+      total_delivered: delivered,
+    },
   };
 }
 
@@ -1080,6 +1104,12 @@ function buildSimulatedAnalytics(analyticsType: string, filters: AnalyticsFilter
         total_scans:           totalScans,
         spent_to_date:         spentToDate,
         spent_to_date_display: enrichCurrency(spentToDate, "USD"),
+        total_postcards_delivered: {
+          returned,
+          cancelled,
+          total_initiated: total,
+          total_delivered: completed,
+        },
       };
 
     case "delivery_funnel":
