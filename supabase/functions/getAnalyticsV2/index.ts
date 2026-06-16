@@ -768,17 +768,20 @@ async function computeDashboardCards(
  *
  *   postgrid_status (standard lifecycle field — all orders):
  *     completed             → delivered
- *     processed_for_delivery→ processed
- *     printing              → printing
- *     ready                 → ready
+ *     processed_for_delivery┐
+ *     printing              ┤ each reported individually AND aggregated into
+ *     ready                 ┘ in_transit (IN_FLIGHT_STATUSES — still in pipeline)
  *     cancelled             → cancelled
  *
  *   imb_status (Intelligent-Mail Tracking — US only, nullable):
- *     entered_mail_stream   ┐
- *     out_for_delivery      ┘ both → in_transit (postcard is inside USPS network)
- *     returned_to_sender      → returned
+ *     returned_to_sender    → returned
  *
- * Note: imb_status fields will be 0 for non-US orders or before USPS first scans.
+ * in_transit mirrors computePostcardOverview: it is the count of postcards whose
+ * postgrid_status is still in flight (IN_FLIGHT_STATUSES = ready/printing/
+ * processed_for_delivery). This avoids the previous double-counting where a
+ * delivered postcard's stale imb_status (out_for_delivery) also counted as
+ * in_transit. returned is tracked from imb_status, matching getAnalytics.
+ *
  * Percentages are rounded to 2 decimal places. All return 0 when total is 0.
  */
 async function computeDeliveryFunnel(
@@ -812,19 +815,17 @@ async function computeDeliveryFunnel(
     cancelled: 0,
   };
 
-  // Count buckets from imb_status (Intelligent-Mail Tracking, US only)
-  const imbCounts: Record<string, number> = {
-    entered_mail_stream: 0,
-    out_for_delivery: 0,
-    returned_to_sender: 0,
-  };
+  // in_transit mirrors computePostcardOverview: postcards still in the delivery
+  // pipeline (postgrid_status ∈ IN_FLIGHT_STATUSES). returned is tracked from
+  // imb_status, matching getAnalytics.
+  let inTransitCount = 0;
+  let returnedCount = 0;
 
   for (const p of postcards) {
     const s = p.postgrid_status;
     if (s in statusCounts) statusCounts[s]++;
-
-    const imb = p.imb_status;
-    if (imb && imb in imbCounts) imbCounts[imb]++;
+    if (IN_FLIGHT_STATUSES.includes(s)) inTransitCount++;
+    if (p.imb_status === "returned_to_sender") returnedCount++;
   }
 
   const bucket = (count: number): FunnelBucket => ({
@@ -840,10 +841,11 @@ async function computeDeliveryFunnel(
     printing: bucket(statusCounts.printing),
     ready: bucket(statusCounts.ready),
     cancelled: bucket(statusCounts.cancelled),
-    // From imb_status — both entered_mail_stream and out_for_delivery mean
-    // the postcard is inside the USPS network (in transit toward the recipient)
-    in_transit: bucket(imbCounts.entered_mail_stream + imbCounts.out_for_delivery),
-    returned: bucket(imbCounts.returned_to_sender),
+    // Aggregate of the in-flight postgrid_status buckets (ready/printing/
+    // processed_for_delivery) — same definition as computePostcardOverview.
+    in_transit: bucket(inTransitCount),
+    // From imb_status
+    returned: bucket(returnedCount),
   };
 }
 
