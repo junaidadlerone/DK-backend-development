@@ -789,44 +789,46 @@ async function computeDeliveryFunnel(
   organizationId: string,
   filters: AnalyticsFilters,
 ): Promise<DeliveryFunnelData> {
-  let query = supabase
-    .from("postcard_sends")
-    .select("postgrid_status, imb_status")
-    .eq("organization_id", organizationId);
-  if (filters.campaign_ids) query = query.in("campaign_id", filters.campaign_ids);
-  if (filters.since) query = query.gte("created_at", filters.since);
-  const { data: rows, error } = await query;
-
-  if (error) {
-    console.error("Error fetching postcard_sends for delivery funnel:", error);
-    throw new Error("Failed to fetch postcard data");
-  }
-
-  const postcards: Array<{ postgrid_status: string; imb_status: string | null }> =
-    rows ?? [];
-  const total = postcards.length;
-
-  // Count buckets from postgrid_status (standard field)
-  const statusCounts: Record<string, number> = {
-    completed: 0,
-    processed_for_delivery: 0,
-    printing: 0,
-    ready: 0,
-    cancelled: 0,
+  // Use exact COUNT head-queries (head: true transfers no rows) rather than
+  // fetching rows and counting in memory. PostgREST caps row responses at 1000
+  // by default, which silently truncated large orgs and dropped the newest
+  // postcards from the all-time funnel. Counts are not subject to that cap.
+  const countFor = async (
+    column?: "postgrid_status" | "imb_status",
+    value?: string,
+  ): Promise<number> => {
+    let q = supabase
+      .from("postcard_sends")
+      .select("id", { count: "exact", head: true })
+      .eq("organization_id", organizationId);
+    if (filters.campaign_ids) q = q.in("campaign_id", filters.campaign_ids);
+    if (filters.since) q = q.gte("created_at", filters.since);
+    if (column && value !== undefined) q = q.eq(column, value);
+    const { count, error } = await q;
+    if (error) {
+      console.error("Error counting postcard_sends for delivery funnel:", error);
+      throw new Error("Failed to fetch postcard data");
+    }
+    return count ?? 0;
   };
 
-  // in_transit mirrors computePostcardOverview: postcards still in the delivery
-  // pipeline (postgrid_status ∈ IN_FLIGHT_STATUSES). returned is tracked from
-  // imb_status, matching getAnalytics.
-  let inTransitCount = 0;
-  let returnedCount = 0;
-
-  for (const p of postcards) {
-    const s = p.postgrid_status;
-    if (s in statusCounts) statusCounts[s]++;
-    if (IN_FLIGHT_STATUSES.includes(s)) inTransitCount++;
-    if (p.imb_status === "returned_to_sender") returnedCount++;
-  }
+  const [
+    total,
+    completed,
+    processed,
+    printing,
+    ready,
+    cancelled,
+    returned,
+  ] = await Promise.all([
+    countFor(),
+    countFor("postgrid_status", "completed"),
+    countFor("postgrid_status", "processed_for_delivery"),
+    countFor("postgrid_status", "printing"),
+    countFor("postgrid_status", "ready"),
+    countFor("postgrid_status", "cancelled"),
+    countFor("imb_status", "returned_to_sender"),
+  ]);
 
   const bucket = (count: number): FunnelBucket => ({
     count,
@@ -836,16 +838,16 @@ async function computeDeliveryFunnel(
   return {
     total_postcards_sent: total,
     // From postgrid_status
-    delivered: bucket(statusCounts.completed),
-    processed: bucket(statusCounts.processed_for_delivery),
-    printing: bucket(statusCounts.printing),
-    ready: bucket(statusCounts.ready),
-    cancelled: bucket(statusCounts.cancelled),
+    delivered: bucket(completed),
+    processed: bucket(processed),
+    printing: bucket(printing),
+    ready: bucket(ready),
+    cancelled: bucket(cancelled),
     // Aggregate of the in-flight postgrid_status buckets (ready/printing/
     // processed_for_delivery) — same definition as computePostcardOverview.
-    in_transit: bucket(inTransitCount),
+    in_transit: bucket(processed + printing + ready),
     // From imb_status
-    returned: bucket(returnedCount),
+    returned: bucket(returned),
   };
 }
 
