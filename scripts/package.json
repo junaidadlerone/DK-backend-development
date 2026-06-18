@@ -4,13 +4,20 @@
   "description": "",
   "main": "test_find_addresses.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "embed": "tsx embed-docs.ts"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "type": "commonjs",
+  "type": "module",
   "dependencies": {
+    "@supabase/supabase-js": "^2.49.4",
+    "openai": "^4.103.0",
     "ws": "^8.20.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.4",
+    "@types/node": "^22.15.29"
   }
 }
