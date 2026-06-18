@@ -1,3 +1,4 @@
+import { traceable } from "npm:langsmith/traceable";
 import { createSupabaseClient } from "../_shared/client.ts";
 import { errorResponse, corsResponse } from "../_shared/response.ts";
 import { ACTIVE_TOOLS } from "../_shared/chatTools.ts";
@@ -12,6 +13,64 @@ const SSE_HEADERS = {
   "Access-Control-Allow-Headers":
     "authorization, x-client-info, apikey, content-type, accept",
 };
+
+// --- LangSmith-traced pipeline steps ---
+
+const embedQuery = traceable(
+  async (message: string): Promise<number[]> => {
+    const res = await fetch("https://api.openai.com/v1/embeddings", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${OPENAI_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ model: "text-embedding-3-small", input: message }),
+    });
+    if (!res.ok) throw new Error(`Embed error: ${res.status}`);
+    const data = await res.json();
+    return data.data[0].embedding as number[];
+  },
+  { name: "embed-query", runType: "embedding" },
+);
+
+const retrieveChunks = traceable(
+  async (
+    supabase: ReturnType<typeof createSupabaseClient>,
+    embedding: number[],
+  ): Promise<{ content: string }[]> => {
+    const { data } = await supabase.rpc("match_knowledge_chunks", {
+      query_embedding: embedding,
+      match_threshold: 0.25,
+      match_count: 8,
+    });
+    return (data ?? []) as { content: string }[];
+  },
+  { name: "retrieve-chunks", runType: "retrieval" },
+);
+
+const generateResponse = traceable(
+  async (messages: object[]): Promise<Response> => {
+    const res = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${OPENAI_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "gpt-4o-mini",
+        messages,
+        tools: ACTIVE_TOOLS.length > 0 ? ACTIVE_TOOLS : undefined,
+        stream: true,
+        max_tokens: 800,
+        temperature: 0.2,
+      }),
+    });
+    return res;
+  },
+  { name: "generate-response", runType: "llm" },
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return corsResponse();
@@ -77,34 +136,16 @@ Deno.serve(async (req: Request) => {
     .order("created_at", { ascending: true })
     .limit(12);
 
-  // --- Embed user message ---
-  const embedRes = await fetch("https://api.openai.com/v1/embeddings", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${OPENAI_API_KEY}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ model: "text-embedding-3-small", input: message }),
-  });
-
-  if (!embedRes.ok) {
-    console.error("OpenAI embed error:", await embedRes.text());
+  // --- Embed + retrieve (LangSmith traced) ---
+  let queryEmbedding: number[];
+  try {
+    queryEmbedding = await embedQuery(message);
+  } catch {
     return errorResponse("OpenAI error", "Failed to embed query", 500);
   }
 
-  const embedData = await embedRes.json();
-  const queryEmbedding = embedData.data[0].embedding;
-
-  // --- Retrieve top-k relevant knowledge chunks ---
-  const { data: chunks } = await supabase.rpc("match_knowledge_chunks", {
-    query_embedding: queryEmbedding,
-    match_threshold: 0.25,
-    match_count: 8,
-  });
-
-  const context = (chunks ?? [])
-    .map((c: { content: string }) => c.content)
-    .join("\n\n---\n\n");
+  const chunks = await retrieveChunks(supabase, queryEmbedding);
+  const context = chunks.map((c) => c.content).join("\n\n---\n\n");
 
   const systemPrompt = `You are the DoorKnocker support assistant. DoorKnocker is a web application for managing door-to-door marketing campaigns — including postcard campaigns, targeting zones, address lists, and analytics.
 
@@ -130,7 +171,6 @@ It is always better to admit you don't know and point the user to hello@texasgro
 KNOWLEDGE BASE CONTEXT:
 ${context || "No matching context found for this query."}`;
 
-  // Build OpenAI messages array
   const openAIMessages = [
     { role: "system", content: systemPrompt },
     ...(history ?? []).map((m: { role: string; content: string }) => ({
@@ -161,23 +201,13 @@ ${context || "No matching context found for this query."}`;
       .eq("id", sessionId);
   }
 
-  // --- Call OpenAI (streaming) ---
-  const chatRes = await fetch("https://api.openai.com/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${OPENAI_API_KEY}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model: "gpt-4o-mini",
-      messages: openAIMessages,
-      // Pass tools only when active (Tier 2+). Tier 1 keeps this undefined.
-      tools: ACTIVE_TOOLS.length > 0 ? ACTIVE_TOOLS : undefined,
-      stream: true,
-      max_tokens: 800,
-      temperature: 0.2,
-    }),
-  });
+  // --- Call OpenAI streaming (LangSmith traced) ---
+  let chatRes: Response;
+  try {
+    chatRes = await generateResponse(openAIMessages);
+  } catch {
+    return errorResponse("OpenAI error", "Failed to generate response", 500);
+  }
 
   if (!chatRes.ok) {
     console.error("OpenAI chat error:", await chatRes.text());

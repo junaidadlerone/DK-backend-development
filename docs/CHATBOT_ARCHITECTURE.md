@@ -12,23 +12,27 @@
 4. [High-Level Architecture](#high-level-architecture)
 5. [Request Flow (Per Message)](#request-flow-per-message)
 6. [Knowledge Base Pipeline](#knowledge-base-pipeline)
-7. [Database Schema](#database-schema)
-8. [Frontend Components](#frontend-components)
-9. [Review Flow](#review-flow)
-10. [Tier 2 / Tier 3 Upgrade Path](#tier-2--tier-3-upgrade-path)
-11. [Cost Estimate](#cost-estimate)
-12. [Secrets & Config](#secrets--config)
+7. [Observability — LangSmith Tracing](#observability--langsmith-tracing)
+8. [Conversation History](#conversation-history)
+9. [Database Schema](#database-schema)
+10. [Frontend Components](#frontend-components)
+11. [Review Flow](#review-flow)
+12. [Tier 2 / Tier 3 Upgrade Path](#tier-2--tier-3-upgrade-path)
+13. [Cost Estimate](#cost-estimate)
+14. [Secrets & Config](#secrets--config)
 
 ---
 
 ## Overview
 
-DoorKnocker includes a floating in-app support chatbot powered by **OpenAI GPT-4o-mini** and **Retrieval Augmented Generation (RAG)** over a Supabase pgvector knowledge base.
+DoorKnocker includes a floating in-app support chatbot powered by **OpenAI GPT-4o-mini** and **Retrieval Augmented Generation (RAG)** over a Supabase pgvector knowledge base. Every pipeline step is traced in **LangSmith** for observability.
 
 **What it does (Tier 1 — live):**
-- Answers questions about the app using the embedded knowledge base
+- Answers questions about the app using a curated human-written knowledge base
 - Maintains per-user conversation history across sessions
+- Lets users browse and restore past conversations (history panel, like ChatGPT/Claude)
 - Asks for a star rating + comment after 6+ exchanges
+- Traces every embed/retrieve/generate step to LangSmith for monitoring
 
 **What it will do (Tier 2/3 — architecture ready):**
 - Navigate users to specific pages on their behalf
@@ -36,7 +40,7 @@ DoorKnocker includes a floating in-app support chatbot powered by **OpenAI GPT-4
 - Run multi-step agentic workflows
 
 RAG works like this: instead of relying on what GPT already knows (which is nothing about DoorKnocker), we:
-1. Write plain-English docs about the app
+1. Write plain-English docs about the app (28 files under `docs/kb/`)
 2. Convert them to number vectors (embeddings) that represent meaning
 3. Store those vectors in Supabase pgvector
 4. At query time, find the docs most similar to the user's question and inject them into the GPT prompt
@@ -48,8 +52,8 @@ RAG works like this: instead of relying on what GPT already knows (which is noth
 
 ```mermaid
 graph LR
-    T1["🟢 Tier 1 — ACTIVE\nKnowledge Q&A\nRAG-powered answers\nReview collection"]
-    T2["🟡 Tier 2 — READY\nNavigation actions\nnavagate_to_page tool\nrequest_confirmation gate"]
+    T1["🟢 Tier 1 — ACTIVE\nKnowledge Q&A\nRAG-powered answers\nConversation history\nReview collection\nLangSmith tracing"]
+    T2["🟡 Tier 2 — READY\nNavigation actions\nnavigate_to_page tool\nrequest_confirmation gate"]
     T3["🔵 Tier 3 — PLANNED\nAgentic workflows\nMulti-step loops\nCreate campaigns, manage zones"]
 
     T1 -->|"flip ACTIVE_TOOLS\nin _shared/chatTools.ts"| T2
@@ -79,9 +83,11 @@ graph LR
 | Reviews | Supabase Postgres | `reviews` table | $0 (within plan) |
 | Backend logic | Supabase Edge Functions | Deno runtime | $0 (within free limits) |
 | Streaming | Server-Sent Events (SSE) | — | — |
-| Knowledge base | Markdown files in repo | 44 docs / 178 chunks | $0 |
+| Observability | LangSmith | `DoorKnocker` project | Free tier |
+| Knowledge base authoring | Notion database | 29 pages, 10 categories | $0 |
+| Knowledge base storage | Supabase pgvector | Synced from Notion via embed script | $0 |
 | Optional review sync | Notion API | Requires `NOTION_TOKEN` + `NOTION_DATABASE_ID` | $0 |
-| Frontend | React + Vite | Custom hooks + components | $0 |
+| Frontend | React + Vite | Single custom component, no third-party chat UI | $0 |
 
 ---
 
@@ -90,25 +96,25 @@ graph LR
 ```mermaid
 graph TB
     subgraph Frontend ["Frontend — React App (Vite)"]
-        CW["ChatWidget\n(floating button)"]
-        CD["ChatDrawer\n(chat panel)"]
-        CM["ChatMessage\n(bubbles)"]
-        RP["ReviewPrompt\n(star rating)"]
-        UC["useChat hook\n(state + SSE streaming)"]
-        LS["localStorage\ndk_chat_session_id"]
+        DKC["DoorKnockerChat.tsx\nfloating button + full chat panel\n• drag-to-resize\n• history panel view\n• SSE streaming\n• ReactMarkdown rendering"]
+        RP["ReviewPrompt.tsx\n(star rating)"]
+        LS["localStorage\ndk_chat_session_id\ndk_chat_open\ndk_chat_size"]
 
-        CW --> CD
-        CD --> CM
-        CD --> RP
-        CD --> UC
-        UC --> LS
+        DKC --> RP
+        DKC --> LS
     end
 
     subgraph EdgeFunctions ["Supabase Edge Functions (Deno)"]
-        CF["chat/index.ts\nMain orchestrator"]
+        CF["chat/index.ts\nMain RAG orchestrator\n+ LangSmith traceable wrappers"]
+        GH["getChatHistory/index.ts\nLoad session messages on open"]
+        GS["getChatSessions/index.ts\nList user's past sessions"]
         SR["submitReview/index.ts\nSave ratings"]
         CT["_shared/chatTools.ts\nTool registry"]
         CF --> CT
+    end
+
+    subgraph LangSmith ["LangSmith (smith.langchain.com)"]
+        LS_PROJ["DoorKnocker project\nTraces: embed → retrieve → generate\nLatency, token cost, inputs/outputs"]
     end
 
     subgraph OpenAI ["OpenAI APIs"]
@@ -117,33 +123,43 @@ graph TB
     end
 
     subgraph Supabase ["Supabase (Postgres + pgvector)"]
-        KC["knowledge_chunks\n178 embedded doc chunks"]
+        KC["knowledge_chunks\nSynced from Notion\nsource_file: notion/<page-id>"]
         CS["chat_sessions\nper-user threads"]
         CH["chat_messages\nfull history"]
         RV["reviews\nstar ratings"]
-        MS["match_knowledge_chunks()\nHNSW similarity search"]
+        MS["match_knowledge_chunks()\nHNSW cosine similarity\nthreshold: 0.25, top-8"]
+        GUS["get_user_chat_sessions()\nSQL helper — last 20 sessions\nwith title + message count"]
     end
 
     subgraph Notion ["Notion (optional)"]
         NDB["Reviews database\nNOTION_DATABASE_ID"]
     end
 
-    UC -->|"POST /functions/v1/chat\nBearer JWT + message"| CF
-    UC -->|"POST /functions/v1/submitReview\nrating + comment"| SR
+    DKC -->|"POST /functions/v1/chat\nBearer JWT + message"| CF
+    DKC -->|"GET /functions/v1/getChatHistory\n?session_id=xxx"| GH
+    DKC -->|"GET /functions/v1/getChatSessions"| GS
+    DKC -->|"POST /functions/v1/submitReview\nrating + comment"| SR
 
-    CF -->|"embed query"| EMB
-    CF -->|"rpc match_knowledge_chunks"| MS
+    CF -->|"embed-query (traceable)"| EMB
+    CF -->|"retrieve-chunks (traceable)"| MS
     MS --> KC
-    CF -->|"stream chat"| GPT
+    CF -->|"generate-response (traceable)"| GPT
     CF -->|"read/write"| CS
     CF -->|"read/write"| CH
-    CF -->|"SSE stream delta chunks"| UC
+    CF -->|"SSE delta chunks"| DKC
+    CF -.->|"trace events"| LS_PROJ
+
+    GH -->|"SELECT messages"| CH
+    GS -->|"rpc"| GUS
+    GUS --> CS
+    GUS --> CH
 
     SR -->|"insert"| RV
     SR -->|"optional sync"| NDB
 
     style Frontend fill:#e8f4f8,stroke:#0288d1,color:#000
     style EdgeFunctions fill:#f3e5f5,stroke:#7b1fa2,color:#000
+    style LangSmith fill:#ffe8cc,stroke:#e67e00,color:#000
     style OpenAI fill:#fff8e1,stroke:#f57f17,color:#000
     style Supabase fill:#e8f5e9,stroke:#2e7d32,color:#000
     style Notion fill:#fce4ec,stroke:#c62828,color:#000
@@ -156,12 +172,13 @@ graph TB
 ```mermaid
 sequenceDiagram
     actor User
-    participant FE as React Frontend<br/>(useChat hook)
+    participant FE as DoorKnockerChat.tsx<br/>(React)
     participant CF as chat Edge Function<br/>(Deno)
     participant Auth as Supabase Auth
     participant DB as Supabase Postgres
     participant EMB as OpenAI Embeddings<br/>text-embedding-3-small
     participant GPT as OpenAI Chat<br/>gpt-4o-mini
+    participant LS as LangSmith
 
     User->>FE: Types a message, hits Send
     FE->>FE: Optimistically renders user bubble<br/>+ empty assistant bubble (streaming=true)
@@ -182,11 +199,15 @@ sequenceDiagram
     CF->>DB: SELECT last 12 chat_messages for session
     DB-->>CF: conversation history
 
+    Note over CF,LS: embed-query (LangSmith traceable)
     CF->>EMB: POST /v1/embeddings<br/>{ model: text-embedding-3-small, input: message }
     EMB-->>CF: 1536-dim vector
+    CF-.->LS: trace: embed-query (latency, tokens)
 
-    CF->>DB: rpc match_knowledge_chunks(<br/>  query_embedding,<br/>  match_threshold: 0.4,<br/>  match_count: 5<br/>)
-    DB-->>CF: top-5 relevant doc chunks
+    Note over CF,LS: retrieve-chunks (LangSmith traceable)
+    CF->>DB: rpc match_knowledge_chunks(<br/>  query_embedding,<br/>  match_threshold: 0.25,<br/>  match_count: 8<br/>)
+    DB-->>CF: top-8 relevant KB chunks
+    CF-.->LS: trace: retrieve-chunks (chunk count, similarity scores)
 
     Note over CF: Build prompt:<br/>system = DK support role + injected chunks<br/>messages = history + user message
 
@@ -197,7 +218,9 @@ sequenceDiagram
         Note over CF: Will send show_review_prompt=true in final SSE event
     end
 
+    Note over CF,LS: generate-response (LangSmith traceable)
     CF->>GPT: POST /v1/chat/completions<br/>{ model, messages, tools: [], stream: true }
+    CF-.->LS: trace: generate-response (model, prompt, latency, tokens)
 
     loop Stream chunks
         GPT-->>CF: SSE: data: { delta: "You can..." }
@@ -209,7 +232,7 @@ sequenceDiagram
     CF->>DB: INSERT chat_messages { role: assistant, content: fullContent }
     CF-->>FE: SSE: data: { done: true, session_id, show_review_prompt }
 
-    FE->>FE: Mark streaming=false<br/>Save session_id to localStorage
+    FE->>FE: Mark streaming=false<br/>Save session_id to localStorage<br/>Invalidate session list cache
     alt show_review_prompt = true
         FE->>FE: Render ReviewPrompt component inline
     end
@@ -221,43 +244,156 @@ sequenceDiagram
 
 ```mermaid
 flowchart TD
-    A["App UI at\nlocalhost:5173"] -->|Playwright crawl| B["dk-crawl.cjs\nPlaywright script"]
-    B -->|"navigates every route\ncaptures headings, buttons,\nform fields, page content"| C["44 Markdown files\nin dk+_backend/docs/"]
+    subgraph Notion ["Notion (source of truth)"]
+        NDB["Knowledge Base database\n29 pages · 10 categories\nStatus: Active / Draft / Archived"]
+    end
 
-    C --> C1["pages/*.md\n(per-route docs)"]
-    C --> C2["features/*.md\n(flow docs)"]
-    C --> C3["faq.md\ngetting-started.md\nbilling.md"]
+    subgraph Scripts ["dk+_backend/scripts/"]
+        EX["export-to-notion.ts\nOne-time: markdown → Notion pages"]
+        EM["embed-notion.ts\nNotion pages → pgvector chunks"]
+    end
 
-    C1 --> D["embed-docs.ts\nNode.js embed script"]
-    C2 --> D
-    C3 --> D
+    subgraph Supabase ["Supabase (vector store)"]
+        KC[("knowledge_chunks\npgvector HNSW index\nsource_file: notion/<page-id>")]
+    end
 
-    D -->|"chunk at 1600 chars\n200-char overlap"| E["Text chunks\n~178 total"]
-    E -->|"POST /v1/embeddings\ntext-embedding-3-small"| F["1536-dim vectors"]
-    F -->|"DELETE old + INSERT new\nfor each source_file"| G[("knowledge_chunks\nSupabase pgvector\nHNSW index")]
+    NDB -->|"databases.query()\nfetchBlocks() recursive\nblocksToText()"| EM
+    EM -->|"chunk 1600 chars / 200 overlap\nPOST /v1/embeddings\ntext-embedding-3-small"| KC
 
-    H["User asks a question"] -->|"same embedding model"| I["Query vector"]
-    I -->|"match_knowledge_chunks()\ncosine similarity > 0.4\ntop 5 results"| G
-    G -->|"relevant chunks"| J["Injected into\nsystem prompt"]
+    F["User asks a question"] -->|"embed query"| G["Query vector"]
+    G -->|"match_knowledge_chunks()\ncosine similarity > 0.25\ntop-8 results"| KC
+    KC -->|"relevant chunks"| H["Injected into system prompt"]
 
-    style G fill:#e8f5e9,stroke:#2e7d32,color:#000
-    style F fill:#fff8e1,stroke:#f57f17,color:#000
+    style Notion fill:#ffe8cc,stroke:#e67e00,color:#000
+    style Supabase fill:#e8f5e9,stroke:#2e7d32,color:#000
+    style Scripts fill:#f3e5f5,stroke:#7b1fa2,color:#000
 ```
 
-**Updating the knowledge base:**
+**Notion database structure:**
+
+| Property | Type | Values |
+|---|---|---|
+| Name | Title | Article title |
+| Category | Select | Product · Campaigns · Targeting · Templates · Analytics · Referrals · Team & Roles · Agency · Settings & Account · Support |
+| Status | Select | **Active** (embedded) · Draft (skipped) · Archived (skipped) |
+
+Page body contains the full KB content as Notion blocks (headings, bullets, tables, code blocks).
+
+**Adding / editing KB content:**
+
+1. Open the Notion database and edit or create a page
+2. Set Status = **Active**
+3. Re-run the embed script — only that page's chunks are replaced
 
 ```bash
-# 1. Edit any .md file in dk+_backend/docs/
-# 2. Re-run the embed script — changes are live immediately
-
 cd dk+_backend/scripts
+NOTION_TOKEN=ntn_... \
+NOTION_DATABASE_ID=383b289c05d380caa9c3cc90727ee532 \
 OPENAI_API_KEY=sk-... \
 SUPABASE_URL=https://xnflihspegizweqidvow.supabase.co \
 SUPABASE_SERVICE_KEY=eyJ... \
-npm run embed
+npm run embed:notion
+```
+
+**First-time full sync (or after bulk edits):**
+
+```bash
+# Add CLEAR_EXISTING=true to wipe and re-embed everything from scratch
+CLEAR_EXISTING=true ... npm run embed:notion
+```
+
+**One-time export (already done — do not re-run unless rebuilding from scratch):**
+
+```bash
+# Exports docs/kb/ markdown files to Notion. Skip if Notion already has content.
+NOTION_TOKEN=ntn_... NOTION_DATABASE_ID=... npm run export:notion
 ```
 
 No redeployment needed. The Edge Function always queries live pgvector.
+
+---
+
+## Observability — LangSmith Tracing
+
+Every message processed by the `chat` Edge Function produces a trace in **LangSmith** (`smith.langchain.com`, project: `DoorKnocker`). Each trace contains three nested spans:
+
+| Span | `runType` | What it captures |
+|---|---|---|
+| `embed-query` | `embedding` | Input text, output vector dimensions, latency, token count |
+| `retrieve-chunks` | `retrieval` | Query embedding, matched chunk count, similarity scores |
+| `generate-response` | `llm` | Full prompt (system + history + user), streamed output, model, latency, token cost |
+
+```mermaid
+flowchart LR
+    subgraph Trace ["LangSmith Trace (per message)"]
+        direction TB
+        R["Root run\n(chat Edge Function)"]
+        E["embed-query\nrunType: embedding\n~100-200ms"]
+        RC["retrieve-chunks\nrunType: retrieval\n~50ms"]
+        G["generate-response\nrunType: llm\n~1-3s streaming"]
+
+        R --> E --> RC --> G
+    end
+
+    CF["chat/index.ts"] -.->|"LANGCHAIN_TRACING_V2=true\nLANGCHAIN_API_KEY=...\nLANGCHAIN_PROJECT=DoorKnocker"| Trace
+```
+
+**How it's implemented** — `npm:langsmith/traceable` wraps each pipeline step:
+
+```typescript
+import { traceable } from "npm:langsmith/traceable";
+
+const embedQuery   = traceable(async (msg) => { ... }, { name: "embed-query",   runType: "embedding" });
+const retrieveChunks = traceable(async (sb, emb) => { ... }, { name: "retrieve-chunks", runType: "retrieval" });
+const generateResponse = traceable(async (msgs) => { ... }, { name: "generate-response", runType: "llm" });
+```
+
+LangSmith auto-detects `LANGCHAIN_TRACING_V2=true` and `LANGCHAIN_API_KEY` from the Supabase Edge Function environment — no SDK initialization needed.
+
+---
+
+## Conversation History
+
+Users can browse and restore past conversations from within the chat widget — similar to ChatGPT or Claude.
+
+```mermaid
+flowchart TD
+    A["User opens chat widget"] --> B["DoorKnockerChat.tsx\nloads session history\nGET getChatHistory?session_id=xxx"]
+    B --> C["Messages rendered\nin chat view"]
+
+    D["User clicks History icon\n(clock button in header)"] --> E["GET getChatSessions\nfetch last 20 sessions"]
+    E --> F["History panel shown\n• session title (first user message)\n• relative date\n• message count\n• current session highlighted"]
+
+    F --> G{User action}
+    G -->|"Click a session"| H["loadSession(id)\nreset messages\nset historyLoaded=false\nswitch to chat view\ntriggers getChatHistory"]
+    G -->|"New Conversation"| I["Clear session_id\nreset messages\nswitch to chat view"]
+
+    H --> C
+    I --> J["Blank chat\nnew session on first message"]
+```
+
+**New Edge Functions supporting history:**
+
+| Function | Method | Description |
+|---|---|---|
+| `getChatHistory` | `GET ?session_id=xxx` | Returns all messages for a session (auth-scoped) |
+| `getChatSessions` | `GET` | Returns last 20 sessions with title + message count |
+
+**`get_user_chat_sessions` SQL helper** (`migrations/20260618000000_chat_sessions_helper.sql`):
+```sql
+-- Derives session title from first user message (max 60 chars)
+-- Returns: id, created_at, title, message_count
+-- SECURITY DEFINER so Edge Function can call with service role
+SELECT cs.id, cs.created_at,
+  LEFT(COALESCE(
+    (SELECT content FROM chat_messages WHERE session_id = cs.id AND role='user'
+     ORDER BY created_at ASC LIMIT 1),
+    'New conversation'), 60) AS title,
+  (SELECT COUNT(*) FROM chat_messages WHERE session_id = cs.id) AS message_count
+FROM chat_sessions cs
+WHERE cs.user_id = p_user_id
+ORDER BY cs.created_at DESC LIMIT 20;
+```
 
 ---
 
@@ -316,8 +452,10 @@ erDiagram
 | `tool_name` + `tool_result` columns on `chat_messages` | Tier 2/3 tool call results stored without schema change |
 | `review_requested` boolean on `chat_sessions` | Prevents double-prompting on same session |
 | HNSW index on `embedding` | Sub-millisecond similarity search at scale |
-| Cosine similarity threshold 0.4 | Low enough to catch related content, high enough to avoid noise |
+| Cosine similarity threshold 0.25 | Lowered from 0.4 — catches semantically related content that was previously excluded |
+| Top-8 retrieved chunks | Raised from 5 — more context coverage for complex multi-part questions |
 | Last 12 messages in history | Balances context quality vs token cost |
+| `get_user_chat_sessions` SECURITY DEFINER function | Lets Edge Function aggregate title + count in one RPC without exposing raw table access |
 
 **RLS Policies:**
 
@@ -333,40 +471,43 @@ erDiagram
 
 ## Frontend Components
 
+The entire chat system is a single self-contained component. All previous files (`ChatWidget.tsx`, `ChatDrawer.tsx`, `ChatMessage.tsx`, `useChat.ts`) have been replaced.
+
 ```mermaid
 graph TD
     DL["DashboardLayout.tsx\n(every authenticated page)"]
-    DL --> CW
+    DL --> DKC
 
     subgraph ChatSystem ["Chat System — src/components/chat/"]
-        CW["ChatWidget.tsx\nfloating button, z-index 800\ntoggles open/close"]
-        CD["ChatDrawer.tsx\nfixed panel 320×500px\nheader + scrollable messages + input"]
-        CM["ChatMessage.tsx\nbubble per turn\nstreaming cursor animation"]
+        DKC["DoorKnockerChat.tsx\nAll-in-one floating chat widget\n\n• Floating trigger button (bottom-right)\n• Drag-to-resize from top-left handle\n• view: 'chat' | 'history' toggle\n• SSE streaming with delta accumulation\n• ReactMarkdown + remark-gfm rendering\n• Backend history loading on open\n• localStorage: session_id, open state, size"]
+
         RP["ReviewPrompt.tsx\n1–5 stars + textarea\nPOST to submitReview"]
     end
 
-    subgraph Hook ["src/hooks/useChat.ts"]
-        UC["useChat()\nall state + SSE logic"]
-        UC --> S1["messages: ChatMessage[]"]
-        UC --> S2["isStreaming: boolean"]
-        UC --> S3["showReviewPrompt: boolean"]
-        UC --> S4["error: string | null"]
-        UC --> S5["sessionIdRef → localStorage\ndk_chat_session_id"]
-    end
-
-    CW --> CD
-    CD --> CM
-    CD --> RP
-    CD --> UC
-
-    UC -->|"SSE fetch"| EF["chat Edge Function"]
-    RP -->|"POST fetch"| SR["submitReview Edge Function"]
+    DKC --> RP
+    DKC -->|"POST /functions/v1/chat"| CF["chat Edge Function"]
+    DKC -->|"GET /functions/v1/getChatHistory"| GH["getChatHistory Edge Function"]
+    DKC -->|"GET /functions/v1/getChatSessions"| GS["getChatSessions Edge Function"]
+    RP -->|"POST /functions/v1/submitReview"| SR["submitReview Edge Function"]
 
     style ChatSystem fill:#e8f4f8,stroke:#0288d1,color:#000
-    style Hook fill:#f3e5f5,stroke:#7b1fa2,color:#000
 ```
 
-**Session persistence:** `sessionIdRef` holds the UUID in memory and is backed by `localStorage['dk_chat_session_id']`. On reload, the existing session ID is sent to the Edge Function, which loads history from `chat_messages`. If the session is deleted or expired, a new one is created.
+**State managed inside `DoorKnockerChat.tsx`:**
+
+| State | Type | Purpose |
+|---|---|---|
+| `open` | `boolean` | Panel open/closed (persisted to `localStorage`) |
+| `view` | `"chat" \| "history"` | Which panel is showing |
+| `messages` | `Message[]` | Current session messages |
+| `input` | `string` | Textarea value |
+| `isStreaming` | `boolean` | Disables send while response is streaming |
+| `historyLoaded` | `boolean` | Guards history fetch on session open |
+| `showReview` | `boolean` | Triggers inline review prompt |
+| `sessions` | `Session[]` | History panel session list |
+| `sessionsLoaded` | `boolean` | Guards session list fetch on history open |
+| `sessionIdRef` | `RefObject<string>` | Current session UUID (backed by `localStorage`) |
+| `size` | `{w, h}` | Widget dimensions (persisted to `localStorage`) |
 
 ---
 
@@ -412,32 +553,25 @@ export const ACTIVE_TOOLS = TIER_2_TOOLS;
 **Step 2** — Add a tool execution handler in `chat/index.ts` inside an agent loop:
 
 ```typescript
-// Agent loop — runs until GPT stops calling tools
 while (true) {
   const response = await callOpenAI(messages, ACTIVE_TOOLS);
 
   if (response.finish_reason === "tool_calls") {
     for (const toolCall of response.tool_calls) {
       let result;
-
       switch (toolCall.function.name) {
         case "navigate_to_page":
-          // Stream a special SSE event the frontend intercepts to navigate
           result = { navigated: true, path: toolCall.function.arguments.path };
           break;
-
         case "request_confirmation":
-          // Pause and ask user to confirm — frontend shows [Confirm] / [Cancel]
           result = { awaiting_confirmation: true };
           break;
       }
-
       messages.push({ role: "tool", tool_call_id: toolCall.id, content: JSON.stringify(result) });
     }
-    continue; // loop back — GPT sees tool results and responds
+    continue;
   }
 
-  // No tool calls — stream text back to user and break
   streamToClient(response.content);
   break;
 }
@@ -500,7 +634,9 @@ sequenceDiagram
 
 *Based on avg ~1,500 input tokens + ~300 output tokens per message at gpt-4o-mini rates.*
 
-Embeddings: one-time cost of ~$0.0001 to embed all 178 chunks. Re-embedding on doc updates costs the same.
+Embeddings: one-time cost of ~$0.0001 to embed all docs. Re-embedding on doc updates costs the same.
+
+LangSmith: free tier covers up to 5,000 traces/month.
 
 ---
 
@@ -508,21 +644,31 @@ Embeddings: one-time cost of ~$0.0001 to embed all 178 chunks. Re-embedding on d
 
 | Secret | Where set | Used by |
 |---|---|---|
-| `OPENAI_API_KEY` | `supabase secrets set OPENAI_API_KEY=sk-...` | `chat` function (embed + chat) |
-| `NOTION_TOKEN` | `supabase secrets set NOTION_TOKEN=secret_...` | `submitReview` (optional) |
-| `NOTION_DATABASE_ID` | `supabase secrets set NOTION_DATABASE_ID=abc123` | `submitReview` (optional) |
-| `VITE_SUPABASE_URL` | Frontend `.env` | `useChat` hook |
+| `OPENAI_API_KEY` | `supabase secrets set` | `chat` function (embed + chat) |
+| `LANGCHAIN_API_KEY` | `supabase secrets set` | `chat` function (LangSmith tracing) |
+| `LANGCHAIN_TRACING_V2` | `supabase secrets set` (value: `true`) | `chat` function |
+| `LANGCHAIN_PROJECT` | `supabase secrets set` (value: `DoorKnocker`) | `chat` function |
+| `NOTION_TOKEN` | `supabase secrets set` | `submitReview` (optional) |
+| `NOTION_DATABASE_ID` | `supabase secrets set` | `submitReview` (optional) |
+| `VITE_SUPABASE_URL` | Frontend `.env` | `DoorKnockerChat.tsx` |
 | `VITE_SUPABASE_ANON_KEY` | Frontend `.env` | All Supabase client calls |
 
 **Deploying updates:**
 
 ```bash
-# Redeploy chat function after any backend change
+# Redeploy after any backend change
 cd dk+_backend
 supabase functions deploy chat
+supabase functions deploy getChatSessions
+supabase functions deploy getChatHistory
 supabase functions deploy submitReview
 
-# Rebuild knowledge base after editing docs
+# Sync knowledge base after editing pages in Notion
 cd dk+_backend/scripts
-OPENAI_API_KEY=sk-... SUPABASE_URL=... SUPABASE_SERVICE_KEY=... npm run embed
+NOTION_TOKEN=ntn_... \
+NOTION_DATABASE_ID=383b289c05d380caa9c3cc90727ee532 \
+OPENAI_API_KEY=sk-... \
+SUPABASE_URL=https://xnflihspegizweqidvow.supabase.co \
+SUPABASE_SERVICE_KEY=eyJ... \
+npm run embed:notion
 ```
