@@ -1,0 +1,62 @@
+name: Sync docs to public mirror
+
+# Push docs/openapi.yaml and docs/index.html to the public
+# junaidadlerone/dk-plus-api-docs repo so GitHub Pages can host them at
+#   https://junaidadlerone.github.io/dk-plus-api-docs/
+#
+# Auth uses an SSH deploy key:
+#   - Public key registered as a write-enabled deploy key on dk-plus-api-docs.
+#   - Private key stored in this repo's Actions secrets as `DOCS_DEPLOY_KEY`.
+#
+# Trigger:
+#   - Any push to `development` that touches the two docs files.
+#   - Manual via "Run workflow" (workflow_dispatch).
+
+on:
+  push:
+    branches:
+      - development
+    paths:
+      - 'docs/openapi.yaml'
+      - 'docs/index.html'
+  workflow_dispatch:
+
+concurrency:
+  # Coalesce simultaneous pushes — only the latest run wins.
+  group: sync-docs
+  cancel-in-progress: true
+
+jobs:
+  sync:
+    name: Mirror docs to dk-plus-api-docs
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Set up SSH agent with deploy key
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.DOCS_DEPLOY_KEY }}
+
+      - name: Clone target docs repo
+        run: |
+          git clone git@github.com:junaidadlerone/dk-plus-api-docs.git /tmp/docs-target
+
+      - name: Copy current docs
+        run: |
+          cp docs/openapi.yaml /tmp/docs-target/openapi.yaml
+          cp docs/index.html  /tmp/docs-target/index.html
+
+      - name: Commit and push if changed
+        working-directory: /tmp/docs-target
+        run: |
+          git config user.name  "docs-sync-bot"
+          git config user.email "docs-sync-bot@users.noreply.github.com"
+          if [[ -z "$(git status --porcelain openapi.yaml index.html)" ]]; then
+            echo "No docs changes since last sync."
+            exit 0
+          fi
+          git add openapi.yaml index.html
+          git commit -m "sync: openapi.yaml + index.html from DK-backend-development@${GITHUB_SHA::7}"
+          git push
