@@ -662,6 +662,10 @@ verify_jwt = false
 entrypoint = "./functions/getOnboardingDetails/index.ts"
 verify_jwt = false
 
+[functions.getPropertyCategories]
+entrypoint = "./functions/getPropertyCategories/index.ts"
+verify_jwt = false
+
 [functions.sendOrganizationDeletedEmail]
 entrypoint = "./functions/sendOrganizationDeletedEmail/index.ts"
 verify_jwt = false
