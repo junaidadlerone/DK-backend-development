@@ -22,7 +22,7 @@ interface CampaignData {
 }
 
 function campaignCostPerPostcard(campaign: CampaignData): number {
-  return campaign.paper_type === 'premium' ? 3.50 : 3.00;
+  return campaign.paper_type === 'premium' ? 3.00 : 3.00;
 }
 
 /**

@@ -12194,6 +12194,11 @@ paths:
         - If `coupon_code` is provided, it must be an active Stripe Promotion Code string (e.g. "10OFF")
         - Stripe enforces coupon redemption limits — expired/exhausted codes are rejected
         - Generates notification: "A charge of ${amount} made against {last4} card"
+        - **Address verification is free.** If the `description` contains "address" or
+          "validation", the request is treated as an address-verification charge: Stripe is
+          never called, no `payment_history` record is written, and the endpoint returns
+          `200` with `payment.amount = 0` and `payment.id = null`. Only postcard-sending
+          charges actually move money.
 
         **Receipt PDFs:**
         - All receipts are Stripe-hosted invoice PDFs (`receipt_url`)
@@ -12232,7 +12237,10 @@ paths:
                   default: "usd"
                 description:
                   type: string
-                  description: "Charge description (optional)"
+                  description: |
+                    Charge description (optional). If it contains "address" or "validation",
+                    the charge is classified as address verification, which is free — no money
+                    is charged and the endpoint returns 200 with amount 0 (see the 200 response).
                   example: "Campaign postcard printing"
                 campaign_name:
                   type: string
@@ -12253,6 +12261,46 @@ paths:
                   example: true
                   default: false
       responses:
+        "200":
+          description: |
+            Address verification — no charge applied. Returned when the `description` indicates
+            address verification (contains "address" or "validation"). Stripe is not called and
+            no `payment_history` record is written.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: "success"
+                  message:
+                    type: string
+                    example: "Address verification is free — no charge applied"
+                  payment:
+                    type: object
+                    properties:
+                      id:
+                        type: string
+                        nullable: true
+                        description: "Always null — no Stripe charge is created"
+                        example: null
+                      amount:
+                        type: number
+                        description: "Always 0 — address verification is not billed"
+                        example: 0
+                      currency:
+                        type: string
+                        example: "usd"
+                      status:
+                        type: string
+                        example: "succeeded"
+                      description:
+                        type: string
+                        example: "Address verification"
+                      payment_type:
+                        type: string
+                        example: "address_verification"
         "201":
           description: Payment succeeded
           content:

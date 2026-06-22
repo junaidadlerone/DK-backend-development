@@ -111,8 +111,9 @@ wss.on('connection', (ws) =>
 // =============================================================================
 let _premiumPaperId = null;
 
-async function resolvePaperType(paperInput, apiKey) {
-    if (!paperInput || paperInput === 'standard') return 'standard';
+async function resolvePaperType(_paperInput, apiKey) {
+    // All campaigns are premium now — the frontend hardcodes the premium flag.
+    // Always resolve to the premium paper ID; the standard branch is dead.
     if (!_premiumPaperId) {
         const res = await fetch('https://api.postgrid.com/print-mail/v1/premium_papers', {
             headers: { 'x-api-key': apiKey }

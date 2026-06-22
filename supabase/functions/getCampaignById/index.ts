@@ -107,7 +107,7 @@ Deno.serve(async (req) => {
       .select("amount_paid, payment_type, description")
       .eq("campaign_id", id);
 
-    const costPerPostcard = campaign.paper_type === 'premium' ? 3.50 : 3.00;
+    const costPerPostcard = campaign.paper_type === 'premium' ? 3.00 : 3.00;
 
     let cost_address_verification = 0;
     let cost_postcards = 0;
