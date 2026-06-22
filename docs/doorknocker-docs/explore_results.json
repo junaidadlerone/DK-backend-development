@@ -1,0 +1,244 @@
+[
+  {
+    "name": "dashboard",
+    "url": "https://door-knocker-plus-dev.vercel.app/dashboard",
+    "text": "HU\nhundred\nDashboard\nReferrals\nCampaigns\nTemplates\nTargeting\nAnalytics\nQuick Actions\nNotifications\nSettings\nAN\n\nAristotle Nico\n\naristotle@yopmail.com\n\nv 1.1.8\n\nDashboard\n\nCreate, Navigate, Lead & Iterate\n\n+ Create New Campaign\n+ Add New Referral\nAll Campaigns\n|\nLast 24h\nLast 7d\nThis Month\nAll Time\n\nIn-flight Postcards\n\n0\n\nPostcards Delivered\n\n668\n\n100 dropped\n\nDelivery Rate\n\n87.0%\n\nSpend-to-Date\n\n$78,632.93\n\nDelivery Funnel\n\n768 postcards sent\n\n100%\n\nDelivered\n668\n87.0%\nIn Transit\n0\n0.0%\nProcessed\n0\n0.0%\nPrinting\n0\n0.0%\nReady\n0\n0.0%\n\nEXCEPTIONS\n\nReturned\n0\n0.0%\nCancelled\n100\n13.0%\nWaste Meter\nAt Risk\n\n$300.00 | 100 pcs at risk\n\n13.0%\n\nDelayed >7 working days\n\n0 pcs·$0.00\n\nCancelled\n\n100 pcs·$300.00\n\nReturned\n\n0 pcs·$0.00\n\nScan Trend\nTotal\nJan 2026\nFeb 2026\nMar 2026\nApr 2026\nMay 2026\nJun 2026\n0\n5\n10\n15\n20\n25\n0\n0\n0\n25\n17\n0\nRecent Scans\n\nLocation Test #60\n\n2755 Sand Hill Rd | 1 month ago\n\nLocation Test #60\n\n2755 Sand Hill Rd | 1 month ago\n\nLocation Test #54\n\n3000 Sand Hill Rd | 1 month ago\n\nLocation Test #48\n\n228 Hamilton Ave | 1 month ago\n\nLocation Test #43\n\n1010 El Camino Real | 1 month ago\n\nCampaign Leaderboard\n\t\nScan %\n\t\nTotal Scans\n\n1\nLocation Test\n\t\n34.0%\n\t\n17 scans\n\n2\nLocation Test\n\t\n13.7%\n\t\n14 scans\n\n3\nDashboard Test\n\t\n12.0%\n\t\n6 scans\n\n4\nNile Campaign\n\t\n10.0%\n\t\n5 scans\n0",
+    "buttons": [
+      "HUhundred",
+      "Quick Actions",
+      "Notifications",
+      "ANAristotle Nicoaristotle@yopmail.com",
+      "Dashboard",
+      "Referrals",
+      "Campaigns",
+      "Templates",
+      "Targeting",
+      "Analytics",
+      "Settings",
+      "+ Create New Campaign",
+      "+ Add New Referral",
+      "All Campaigns",
+      "Last 24h",
+      "Last 7d",
+      "This Month",
+      "All Time"
+    ],
+    "fields": []
+  },
+  {
+    "name": "module_dashboard",
+    "url": "https://door-knocker-plus-dev.vercel.app/dashboard",
+    "text": "HU\nhundred\nDashboard\nReferrals\nCampaigns\nTemplates\nTargeting\nAnalytics\nQuick Actions\nNotifications\nSettings\nAN\n\nAristotle Nico\n\naristotle@yopmail.com\n\nv 1.1.8\n\nDashboard\n\nCreate, Navigate, Lead & Iterate\n\n+ Create New Campaign\n+ Add New Referral\nAll Campaigns\n|\nLast 24h\nLast 7d\nThis Month\nAll Time\n\nIn-flight Postcards\n\n0\n\nPostcards Delivered\n\n668\n\n100 dropped\n\nDelivery Rate\n\n87.0%\n\nSpend-to-Date\n\n$78,632.93\n\nDelivery Funnel\n\n768 postcards sent\n\n100%\n\nDelivered\n668\n87.0%\nIn Transit\n0\n0.0%\nProcessed\n0\n0.0%\nPrinting\n0\n0.0%\nReady\n0\n0.0%\n\nEXCEPTIONS\n\nReturned\n0\n0.0%\nCancelled\n100\n13.0%\nWaste Meter\nAt Risk\n\n$300.00 | 100 pcs at risk\n\n13.0%\n\nDelayed >7 working days\n\n0 pcs·$0.00\n\nCancelled\n\n100 pcs·$300.00\n\nReturned\n\n0 pcs·$0.00\n\nScan Trend\nTotal\nJan 2026\nFeb 2026\nMar 2026\nApr 2026\nMay 2026\nJun 2026\n0\n5\n10\n15\n20\n25\n0\n0\n0\n25\n17\n0\nRecent Scans\n\nLocation Test #60\n\n2755 Sand Hill Rd | 1 month ago\n\nLocation Test #60\n\n2755 Sand Hill Rd | 1 month ago\n\nLocation Test #54\n\n3000 Sand Hill Rd | 1 month ago\n\nLocation Test #48\n\n228 Hamilton Ave | 1 month ago\n\nLocation Test #43\n\n1010 El Camino Real | 1 month ago\n\nCampaign Leaderboard\n\t\nScan %\n\t\nTotal Scans\n\n1\nLocation Test\n\t\n34.0%\n\t\n17 scans\n\n2\nLocation Test\n\t\n13.7%\n\t\n14 scans\n\n3\nDashboard Test\n\t\n12.0%\n\t\n6 scans\n\n4\nNile Campaign\n\t\n10.0%\n\t\n5 scans\n0",
+    "buttons": [
+      "HUhundred",
+      "Quick Actions",
+      "Notifications",
+      "ANAristotle Nicoaristotle@yopmail.com",
+      "Dashboard",
+      "Referrals",
+      "Campaigns",
+      "Templates",
+      "Targeting",
+      "Analytics",
+      "Settings",
+      "+ Create New Campaign",
+      "+ Add New Referral",
+      "All Campaigns",
+      "Last 24h",
+      "Last 7d",
+      "This Month",
+      "All Time"
+    ],
+    "fields": []
+  },
+  {
+    "name": "module_campaigns",
+    "url": "https://door-knocker-plus-dev.vercel.app/campaigns",
+    "text": "HU\nhundred\nDashboard\nReferrals\nCampaigns\nTemplates\nTargeting\nAnalytics\nQuick Actions\nNotifications\nSettings\nAN\n\nAristotle Nico\n\naristotle@yopmail.com\n\nv 1.1.8\n\nCampaigns\n\nManage your campaigns\n\n+ Create New Campaign\n\nActive Campaigns\n\n18\n\nTotal Postcards Initiated\n\n768\n\nAverage Scan Rate\n\n2.4%\n\nTotal Leads Generated\n\n42\n\nTotal Spent\n\n$78,632.93\n\nStatus\n\t\nCampaign Name\n\t\nStatus\n\t\nPostcards Sent\n\t\nScan Rate\n\t\nTotal Spent\n\t\nStart Date\n\t\n\n\t\nLocation Test\n\tDraft\t\n0\n\t\n0.0%\n\t\n$1.25\n\tJun 04, 2026\t\n\n\t\nTesting Campaign\n\tDraft\t\n0\n\t\n0.0%\n\t\n$0.00\n\tJun 04, 2026\t\n\n\t\nTesting Campaign\n\tDraft\t\n0\n\t\n0.0%\n\t\n$0.00\n\tJun 04, 2026\t\n\n\t\nLocation Test\n\tDraft\t\n0\n\t\n0.0%\n\t\n$0.00\n\tJun 04, 2026\t\n\n\t\nAddress\n\tDraft\t\n0\n\t\n0.0%\n\t\n$0.00\n\tJun 04, 2026\t\n\n\t\nTesting Campaign\n\tDraft\t\n0\n\t\n0.0%\n\t\n$0.00\n\tJun 04, 2026\t\n\n\t\nTesting\n\tDraft\t\n0\n\t\n0.0%\n\t\n$0.00\n\tJun 04, 2026\t\n\n\t\nTesting Campaign\n\tActive\t\n0\n\t\n0.0%\n\t\n$30,250.00\n\tJun 04, 2026\t\n\n\t\nTesting Campaign 5\n\tActive\t\n0\n\t\n0.0%\n\t\n$35,250.00\n\tJun 04, 2026\t\n\n\t\nLocation Test 23\n\tActive\t\n0\n\t\n0.0%\n\t\n$5,287.50\n\tJun 03, 2026\t\nShowing 10 of 29\n1\n2\n3\n10\nrows per page\n0",
+    "buttons": [
+      "HUhundred",
+      "Quick Actions",
+      "Notifications",
+      "ANAristotle Nicoaristotle@yopmail.com",
+      "Dashboard",
+      "Referrals",
+      "Campaigns",
+      "Templates",
+      "Targeting",
+      "Analytics",
+      "Settings",
+      "+ Create New Campaign",
+      "Status",
+      "Campaign Name",
+      "Postcards Sent",
+      "Scan Rate",
+      "Total Spent",
+      "Start Date",
+      "1",
+      "2",
+      "3",
+      "10"
+    ],
+    "fields": [
+      {
+        "tag": "INPUT",
+        "type": "text",
+        "name": "",
+        "ph": "Search campaigns...",
+        "label": null,
+        "required": false
+      },
+      {
+        "tag": "INPUT",
+        "type": "text",
+        "name": "",
+        "ph": "Start Date",
+        "label": null,
+        "required": false
+      }
+    ]
+  },
+  {
+    "name": "module_referrals",
+    "url": "https://door-knocker-plus-dev.vercel.app/referrals",
+    "text": "HU\nhundred\nDashboard\nReferrals\nCampaigns\nTemplates\nTargeting\nAnalytics\nQuick Actions\nNotifications\nSettings\nAN\n\nAristotle Nico\n\naristotle@yopmail.com\n\nv 1.1.8\n\nReferrals\n\nAdd referrals, start campaigns and get leads\n\n+ Add New Referrals\n\nTotal Referrals\n\n3\n\nCampaign Ready Referrals\n\n3\n\nCampaigns Published Referrals\n\n0\n\nAverage Referrals Value\n\n$700,000.00\n\nJob Type\nStatus\nAll Values\nNewest First\n\t\nReferral Name\n\t\nAddress\n\t\nJob Type\n\t\nJob Value\n\t\nStatus\n\t\nCampaign Used\n\t\n\n\t\nPaul Walker\n+925551234565\n\t\nMartin Luther King, Jr. National Historical Park, Atlanta, Alaska, 67858\n\t\nAC Maintenance\n\t\n$1M\n\tReady\t\n\t\n\n\t\nJohn Wick\nN/A\n\t\nMartin Luther King, Jr. National Historical Park, Atlanta, Alaska, 67858\n\t\nAC Installation\n\t\n$1M\n\tReady\t\n\t\n\n\t\nTesting Mate\n+925551234565\n\t\nMartin Luther King, Jr. National Historical Park, Atlanta, Alabama, 67858\n\t\nAC Repair\n\t\n$100,000.00\n\tReady\t\n\t\nShowing 3 of 3\n1\n10\nrows per page\n0",
+    "buttons": [
+      "HUhundred",
+      "Quick Actions",
+      "Notifications",
+      "ANAristotle Nicoaristotle@yopmail.com",
+      "Dashboard",
+      "Referrals",
+      "Campaigns",
+      "Templates",
+      "Targeting",
+      "Analytics",
+      "Settings",
+      "+ Add New Referrals",
+      "Job Type",
+      "Status",
+      "All Values",
+      "Newest First",
+      "Referral Name",
+      "Address",
+      "Job Value",
+      "Campaign Used",
+      "1",
+      "10"
+    ],
+    "fields": [
+      {
+        "tag": "INPUT",
+        "type": "text",
+        "name": "",
+        "ph": "Search referrals",
+        "label": null,
+        "required": false
+      }
+    ]
+  },
+  {
+    "name": "module_templates",
+    "url": "https://door-knocker-plus-dev.vercel.app/templates",
+    "text": "HU\nhundred\nDashboard\nReferrals\nCampaigns\nTemplates\nTargeting\nAnalytics\nQuick Actions\nNotifications\nSettings\nAN\n\nAristotle Nico\n\naristotle@yopmail.com\n\nv 1.1.8\n\nTemplates\n\nManage your templates\n\nCreate New Template\n\nTotal Templates\n\n5\n\nActive Templates\n\n5\n\nDraft Templates\n\n2\n\nInactive Templates\n\n0\n\nSize\nCreated By\nSort By\nAll Templates\nLibrary Templates\nAgency Templates\nUser Templates\n0",
+    "buttons": [
+      "HUhundred",
+      "Quick Actions",
+      "Notifications",
+      "ANAristotle Nicoaristotle@yopmail.com",
+      "Dashboard",
+      "Referrals",
+      "Campaigns",
+      "Templates",
+      "Targeting",
+      "Analytics",
+      "Settings",
+      "Create New Template",
+      "Size",
+      "Created By",
+      "Sort By",
+      "All Templates",
+      "Library Templates",
+      "Agency Templates",
+      "User Templates"
+    ],
+    "fields": [
+      {
+        "tag": "INPUT",
+        "type": "text",
+        "name": "",
+        "ph": "Search templates",
+        "label": null,
+        "required": false
+      }
+    ]
+  },
+  {
+    "name": "module_settings",
+    "url": "https://door-knocker-plus-dev.vercel.app/settings",
+    "text": "HU\nhundred\nDashboard\nReferrals\nCampaigns\nTemplates\nTargeting\nAnalytics\nQuick Actions\nNotifications\nSettings\nAN\n\nAristotle Nico\n\naristotle@yopmail.com\n\nv 1.1.8\n\nSettings\n\nManage everything about your organization, preferences and team\n\nOrganization\nPayments & Billing\nBranding & Design\nUser Management\nBusiness Details\nBusiness Name *\nIndustry\nAdvertising & Marketing\nBusiness Address *\nContact Details\nEmail *\nPhone Number\nWebsite\nCancel\nSave Changes\nDelete Organization\n\nDelete all your data including referrals, campaigns, templates and analytical data\n\nDelete Organization\n0",
+    "buttons": [
+      "HUhundred",
+      "Quick Actions",
+      "Notifications",
+      "ANAristotle Nicoaristotle@yopmail.com",
+      "Dashboard",
+      "Referrals",
+      "Campaigns",
+      "Templates",
+      "Targeting",
+      "Analytics",
+      "Settings",
+      "Organization",
+      "Payments & Billing",
+      "Branding & Design",
+      "User Management",
+      "Advertising & Marketing",
+      "Cancel",
+      "Save Changes",
+      "Delete Organization"
+    ],
+    "fields": [
+      {
+        "tag": "INPUT",
+        "type": "text",
+        "name": "",
+        "ph": "Enter business name",
+        "label": null,
+        "required": false
+      },
+      {
+        "tag": "INPUT",
+        "type": "text",
+        "name": "",
+        "ph": "Enter business address",
+        "label": null,
+        "required": false
+      },
+      {
+        "tag": "INPUT",
+        "type": "email",
+        "name": "",
+        "ph": "Enter business email",
+        "label": null,
+        "required": false
+      },
+      {
+        "tag": "INPUT",
+        "type": "tel",
+        "name": "",
+        "ph": "Enter phone number",
+        "label": null,
+        "required": false
+      },
+      {
+        "tag": "INPUT",
+        "type": "url",
+        "name": "",
+        "ph": "Enter website link",
+        "label": null,
+        "required": false
+      }
+    ]
+  }
+]

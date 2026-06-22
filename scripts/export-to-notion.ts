@@ -20,7 +20,9 @@ import { join, dirname, relative } from "path";
 import { fileURLToPath } from "url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const DOCS_DIR = join(__dirname, "../docs/kb");
+const DOCS_DIR = process.env.DOCS_DIR
+  ? join(__dirname, process.env.DOCS_DIR)
+  : join(__dirname, "../docs/kb");
 
 const NOTION_TOKEN = process.env.NOTION_TOKEN ?? "";
 const NOTION_DATABASE_ID = process.env.NOTION_DATABASE_ID ?? "";
@@ -34,6 +36,7 @@ const notion = new Client({ auth: NOTION_TOKEN });
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 const CATEGORY_MAP: Record<string, string> = {
+  // folder-based (docs/kb/ structure)
   "01-product": "Product",
   "02-campaigns": "Campaigns",
   "03-targeting": "Targeting",
@@ -44,6 +47,14 @@ const CATEGORY_MAP: Record<string, string> = {
   "08-agency": "Agency",
   "09-settings-and-account": "Settings & Account",
   "10-support": "Support",
+  "11-user-guide": "User Guide",
+  // filename-based (doorknocker-docs/ flat structure)
+  "README.md": "User Guide",
+  "01_dashboard.md": "Product",
+  "02_campaigns.md": "Campaigns",
+  "03_referrals.md": "Referrals",
+  "04_templates.md": "Templates",
+  "05_settings.md": "Settings & Account",
 };
 
 // ── Inline markdown → Notion rich text ───────────────────────────────────────
@@ -69,7 +80,14 @@ function parseRichText(text: string): any[] {
     } else if (match[3] !== undefined) {
       parts.push({ type: "text", text: { content: match[3].slice(0, 2000) }, annotations: { code: true } });
     } else if (match[4] !== undefined && match[5] !== undefined) {
-      parts.push({ type: "text", text: { content: match[4].slice(0, 2000), link: { url: match[5] } } });
+      const url = match[5];
+      const isAbsolute = url.startsWith("http://") || url.startsWith("https://");
+      parts.push({
+        type: "text",
+        text: isAbsolute
+          ? { content: match[4].slice(0, 2000), link: { url } }
+          : { content: match[4].slice(0, 2000) },
+      });
     }
 
     lastIndex = match.index + match[0].length;
@@ -246,8 +264,13 @@ function walkDir(dir: string): string[] {
 
 function getCategory(filePath: string): string {
   const rel = relative(DOCS_DIR, filePath);
-  const folder = rel.split("/")[0];
-  return CATEGORY_MAP[folder] ?? folder;
+  const parts = rel.split("/");
+  if (parts.length === 1) {
+    // flat file — match by filename
+    return CATEGORY_MAP[parts[0]] ?? "User Guide";
+  }
+  // subdirectory file — match by folder name
+  return CATEGORY_MAP[parts[0]] ?? parts[0];
 }
 
 // ── Notion helpers ────────────────────────────────────────────────────────────
@@ -272,6 +295,7 @@ async function setupDatabase(): Promise<void> {
           { name: "Agency", color: "red" },
           { name: "Settings & Account", color: "brown" },
           { name: "Support", color: "default" },
+          { name: "User Guide", color: "blue" },
         ],
       },
     };

@@ -1,0 +1,27 @@
+[
+  {
+    "name": "cc_setup_01_radius_default",
+    "url": "https://door-knocker-plus-dev.vercel.app/campaigns/create?campaignId=e94e0856-d186-442f-91bb-b4230a11afa9",
+    "text": "HU\nhundred\nDashboard\nReferrals\nCampaigns\nTemplates\nTargeting\nAnalytics\nQuick Actions\nNotifications\nSettings\nAN\n\nAristotle Nico\n\naristotle@yopmail.com\n\nv 1.1.8\n\nCampaigns\nCreate New Campaign\nCreate New Campaign\nBack\nVerify Addresses\n\nLoading campaign data..."
+  },
+  {
+    "name": "cc_setup_02_count_mode",
+    "url": "https://door-knocker-plus-dev.vercel.app/campaigns/create?campaignId=e94e0856-d186-442f-91bb-b4230a11afa9",
+    "text": "HU\nhundred\nDashboard\nReferrals\nCampaigns\nTemplates\nTargeting\nAnalytics\nQuick Actions\nNotifications\nSettings\nAN\n\nAristotle Nico\n\naristotle@yopmail.com\n\nv 1.1.8\n\nThis campaign is not launched yet\nCampaigns\nDoc LZ Setup\nDoc LZ Setup\nCreated on Jun 19, 2026\nDraft\nEdit Campaign\nBack\nVerify Addresses\nChoose Your Target Audience\nUse Referral Address\nCreate New Zone\nSelect Existing Zone\nRadius Mode\nCount Mode\nNumber of Addresses\nFind Addresses\nPostcard Design\nFront\nBack\nFull Screen Preview\nEdit Template\nCampaign Overview\n\nReferral\n\nNo referral selected\n\nTemplate\n\nLoading template...\n\nEstimated Start Date\n\nNot set\n\nTargeting\n\nPlease select targeting zone"
+  },
+  {
+    "name": "cc_setup_03_address_autocomplete",
+    "url": "https://door-knocker-plus-dev.vercel.app/campaigns/create?campaignId=e94e0856-d186-442f-91bb-b4230a11afa9",
+    "text": "HU\nhundred\nDashboard\nReferrals\nCampaigns\nTemplates\nTargeting\nAnalytics\nQuick Actions\nNotifications\nSettings\nAN\n\nAristotle Nico\n\naristotle@yopmail.com\n\nv 1.1.8\n\nThis campaign is not launched yet\nCampaigns\nDoc LZ Setup\nDoc LZ Setup\nCreated on Jun 19, 2026\nDraft\nEdit Campaign\nBack\nVerify Addresses\nChoose Your Target Audience\nUse Referral Address\nCreate New Zone\nSelect Existing Zone\n2755, Sand Hill Road, New Memphis, Clinton County, Illinois, 62265, United States\n2755, Sand Hill Road, Sand Hill, Marshall County, West Virginia, 26003, United States\n2755, Sand Hill Road, Menlo Park, San Mateo County, California, 94025, United States\n2755, Sand Hill Road, Coal Township, Jackson County, Ohio, 45640, United States\n2755, Sand Hill Road, Witt Springs, Estill County, Kentucky, 40336, United States\nRadius Mode\nCount Mode\nRadius\n0.1 miles\nFind Addresses\nPostcard Design\nFront\nBack\nFull Screen Preview\nEdit Template\nCampaign Overview\n\nReferral\n\nNo referral selected\n\nTemplate\n\nModern Detached Home Front / Modern Detached Home Back\n\nFormat: 4 x 6\n\nEstimated Start Date\n\nNot set\n\nTargeting\n\nPlease select targeting zone"
+  },
+  {
+    "name": "cc_setup_04_address_selected",
+    "url": "https://door-knocker-plus-dev.vercel.app/campaigns/create?campaignId=e94e0856-d186-442f-91bb-b4230a11afa9",
+    "text": "HU\nhundred\nDashboard\nReferrals\nCampaigns\nTemplates\nTargeting\nAnalytics\nQuick Actions\nNotifications\nSettings\nAN\n\nAristotle Nico\n\naristotle@yopmail.com\n\nv 1.1.8\n\nThis campaign is not launched yet\nCampaigns\nDoc LZ Setup\nDoc LZ Setup\nCreated on Jun 19, 2026\nDraft\nEdit Campaign\nBack\nVerify Addresses\nChoose Your Target Audience\nUse Referral Address\nCreate New Zone\nSelect Existing Zone\nRadius Mode\nCount Mode\nRadius\n0.1 miles\nFind Addresses\nPostcard Design\nFront\nBack\nFull Screen Preview\nEdit Template\nCampaign Overview\n\nReferral\n\nNo referral selected\n\nTemplate\n\nModern Detached Home Front / Modern Detached Home Back\n\nFormat: 4 x 6\n\nEstimated Start Date\n\nNot set\n\nTargeting\n\nPlease select targeting zone"
+  },
+  {
+    "name": "cc_setup_05_addresses_found",
+    "url": "https://door-knocker-plus-dev.vercel.app/campaigns/create?campaignId=e94e0856-d186-442f-91bb-b4230a11afa9",
+    "text": "HU\nhundred\nDashboard\nReferrals\nCampaigns\nTemplates\nTargeting\nAnalytics\nQuick Actions\nNotifications\nSettings\nAN\n\nAristotle Nico\n\naristotle@yopmail.com\n\nv 1.1.8\n\nThis campaign is not launched yet\nCampaigns\nDoc LZ Setup\nDoc LZ Setup\nCreated on Jun 19, 2026\nDraft\nEdit Campaign\nBack\nVerify Addresses\nChoose Your Target Audience\nUse Referral Address\nCreate New Zone\nSelect Existing Zone\nRadius Mode\nCount Mode\nRadius\n0.1 miles\n\nUnable to process the address. Please check that the address is valid and try again.\n\nFind Addresses\nPostcard Design\nFront\nBack\nFull Screen Preview\nEdit Template\nCampaign Overview\n\nReferral\n\nNo referral selected\n\nTemplate\n\nModern Detached Home Front / Modern Detached Home Back\n\nFormat: 4 x 6\n\nEstimated Start Date\n\nNot set\n\nTargeting\n\nPlease select targeting zone"
+  }
+]

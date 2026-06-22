@@ -1,0 +1,30 @@
+[
+  {
+    "text": "Dashboard",
+    "href": "/dashboard"
+  },
+  {
+    "text": "Referrals",
+    "href": "/referrals"
+  },
+  {
+    "text": "Campaigns",
+    "href": "/campaigns"
+  },
+  {
+    "text": "Templates",
+    "href": "/templates"
+  },
+  {
+    "text": "Targeting",
+    "href": "/targeting"
+  },
+  {
+    "text": "Analytics",
+    "href": "/analytics"
+  },
+  {
+    "text": "Settings",
+    "href": "/settings"
+  }
+]

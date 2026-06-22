@@ -1,0 +1,123 @@
+[
+  {
+    "name": "cc_lz_slider_filled",
+    "url": "https://door-knocker-plus-dev.vercel.app/campaigns",
+    "text": "HU\nhundred\nDashboard\nReferrals\nCampaigns\nTemplates\nTargeting\nAnalytics\nQuick Actions\nNotifications\nSettings\nAN\n\nAristotle Nico\n\naristotle@yopmail.com\n\nv 1.1.8\n\nCampaigns\n\nManage your campaigns\n\n+ Create New Campaign\n\nActive Campaigns\n\n18\n\nTotal Postcards Initiated\n\n768\n\nAverage Scan Rate\n\n2.4%\n\nTotal Leads Generated\n\n42\n\nTotal Spent\n\n$78,632.93\n\nStatus\n\t\nCampaign Name\n\t\nStatus\n\t\nPostcards Sent\n\t\nScan Rate\n\t\nTotal Spent\n\t\nStart Date\n\t\n\n\t\nLocation Test\n\tDraft\t\n0\n\t\n0.0%\n\t\n$1.25\n\tJun 04, 2026\t\n\t\nTesting Campaign\n\tDraft\t\n0\n\t\n0.0%\n\t\n$0.00\n\tJun 04, 2026\t\n\t\nTesting Campaign\n\tDraft\t\n0\n\t\n0.0%\n\t\n$0.00\n\tJun 04, 2026\t\n\t\nLocation Test\n\tDraft\t\n0\n\t\n0.0%\n\t\n$0.00\n\tJun 04, 2026\t\n\t\nAddress\n\tDraft\t\n0\n\t\n0.0%\n\t\n$0.00\n\tJun 04, 2026\t\n\t\nTesting Campaign\n\tDraft\t\n0\n\t\n0.0%\n\t\n$0.00\n\tJun 04, 2026\t\n\t\nTesting\n\tDraft\t\n0\n\t\n0.0%\n\t\n$0.00\n\tJun 04, 2026\t\n\t\nTesting Campaign\n\tActive\t\n0\n\t\n0.0%\n\t\n$30,250.00\n\tJun 04, 2026\t\n\t\nTesting Campaign 5\n\tActive\t\n0\n\t\n0.0%\n\t\n$35,250.00\n\tJun 04, 2026\t\n\t\nLocation Test 23\n\tActive\t\n0\n\t\n0.0%\n\t\n$5,287.50\n\tJun 03, 2026\t\nShowing 10 of 29\n1\n2\n3\n10\nrows per page\nClose\nCreate Campaign\nCampaign Name *\n11/20\nType *\nFor Referrals\n\nUse past customers to create a postcard campaign showcasing their location\n\nLocation Zone\n\nYou can either create a new location zone or use an existing one for your campaign\n\nAddress List\n\nUpload a custom list of addresses to send postcards to.\n\nEstimated Start Date *\nPrevious Month\nNext Month\nJune 2026\nSunday\nSu\nMonday\nMo\nTuesday\nTu\nWednesday\nWe\nThursday\nTh\nFriday\nFr\nSaturday\nSa\n31123456\n78910111213\n14151617181920\n21222324252627\n2829301234\n\nPostcards start processing on this date. They may take an additional 2-5 business days to arrive at their destination\n\nDisclaimer Text *\n80/500\n\nLegal disclaimers or additional terms\n\nCreate Campaign",
+    "buttons": [
+      "HUhundred",
+      "Quick Actions",
+      "Notifications",
+      "ANAristotle Nicoaristotle@yopmail.com",
+      "Dashboard",
+      "Referrals",
+      "Campaigns",
+      "Templates",
+      "Targeting",
+      "Analytics",
+      "Settings",
+      "+ Create New Campaign",
+      "Status",
+      "Campaign Name",
+      "Postcards Sent",
+      "Scan Rate",
+      "Total Spent",
+      "Start Date",
+      "1",
+      "2",
+      "3",
+      "10",
+      "Close",
+      "Previous Month",
+      "Next Month",
+      "Create Campaign"
+    ],
+    "fields": [
+      {
+        "type": "text",
+        "ph": "Search campaigns...",
+        "required": false
+      },
+      {
+        "type": "text",
+        "ph": "Start Date",
+        "required": false
+      },
+      {
+        "type": "text",
+        "ph": "Summer Sale Campaign",
+        "required": false
+      },
+      {
+        "type": "text",
+        "ph": "Select a date",
+        "required": false
+      },
+      {
+        "type": "textarea",
+        "ph": "",
+        "required": false
+      }
+    ]
+  },
+  {
+    "name": "cc_lz_02_after_create",
+    "url": "https://door-knocker-plus-dev.vercel.app/campaigns",
+    "text": "HU\nhundred\nDashboard\nReferrals\nCampaigns\nTemplates\nTargeting\nAnalytics\nQuick Actions\nNotifications\nSettings\nAN\n\nAristotle Nico\n\naristotle@yopmail.com\n\nv 1.1.8\n\nCampaigns\n\nManage your campaigns\n\n+ Create New Campaign\n\nActive Campaigns\n\n18\n\nTotal Postcards Initiated\n\n768\n\nAverage Scan Rate\n\n2.4%\n\nTotal Leads Generated\n\n42\n\nTotal Spent\n\n$78,632.93\n\nStatus\n\t\nCampaign Name\n\t\nStatus\n\t\nPostcards Sent\n\t\nScan Rate\n\t\nTotal Spent\n\t\nStart Date\n\t\n\n\t\nLocation Test\n\tDraft\t\n0\n\t\n0.0%\n\t\n$1.25\n\tJun 04, 2026\t\n\t\nTesting Campaign\n\tDraft\t\n0\n\t\n0.0%\n\t\n$0.00\n\tJun 04, 2026\t\n\t\nTesting Campaign\n\tDraft\t\n0\n\t\n0.0%\n\t\n$0.00\n\tJun 04, 2026\t\n\t\nLocation Test\n\tDraft\t\n0\n\t\n0.0%\n\t\n$0.00\n\tJun 04, 2026\t\n\t\nAddress\n\tDraft\t\n0\n\t\n0.0%\n\t\n$0.00\n\tJun 04, 2026\t\n\t\nTesting Campaign\n\tDraft\t\n0\n\t\n0.0%\n\t\n$0.00\n\tJun 04, 2026\t\n\t\nTesting\n\tDraft\t\n0\n\t\n0.0%\n\t\n$0.00\n\tJun 04, 2026\t\n\t\nTesting Campaign\n\tActive\t\n0\n\t\n0.0%\n\t\n$30,250.00\n\tJun 04, 2026\t\n\t\nTesting Campaign 5\n\tActive\t\n0\n\t\n0.0%\n\t\n$35,250.00\n\tJun 04, 2026\t\n\t\nLocation Test 23\n\tActive\t\n0\n\t\n0.0%\n\t\n$5,287.50\n\tJun 03, 2026\t\nShowing 10 of 29\n1\n2\n3\n10\nrows per page\nClose\nPick a Template\nAll Sizes\n4x6\n6x9\n6x11\nNewest First\nOldest First\nMost Used\nA-Z\nZ-A\nAll Templates\nLibrary Templates\nUser Templates\nAgency Templates\nLoading templates...\nContinue without Editing\nOpen in Editor",
+    "buttons": [
+      "HUhundred",
+      "Quick Actions",
+      "Notifications",
+      "ANAristotle Nicoaristotle@yopmail.com",
+      "Dashboard",
+      "Referrals",
+      "Campaigns",
+      "Templates",
+      "Targeting",
+      "Analytics",
+      "Settings",
+      "+ Create New Campaign",
+      "Status",
+      "Campaign Name",
+      "Postcards Sent",
+      "Scan Rate",
+      "Total Spent",
+      "Start Date",
+      "1",
+      "2",
+      "3",
+      "10",
+      "Close",
+      "All Templates",
+      "Library Templates",
+      "User Templates",
+      "Agency Templates",
+      "Continue without Editing",
+      "Open in Editor"
+    ],
+    "fields": [
+      {
+        "type": "text",
+        "ph": "Search campaigns...",
+        "required": false
+      },
+      {
+        "type": "text",
+        "ph": "Start Date",
+        "required": false
+      },
+      {
+        "type": "text",
+        "ph": "Search templates",
+        "required": false
+      },
+      {
+        "type": "select-one",
+        "required": false
+      },
+      {
+        "type": "select-one",
+        "required": false
+      }
+    ]
+  }
+]

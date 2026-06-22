@@ -1,0 +1,63 @@
+[
+  {
+    "name": "cc_lz_06_after_confirm",
+    "url": "https://door-knocker-plus-dev.vercel.app/campaigns",
+    "text": "HU\nhundred\nDashboard\nReferrals\nCampaigns\nTemplates\nTargeting\nAnalytics\nQuick Actions\nNotifications\nSettings\nAN\n\nAristotle Nico\n\naristotle@yopmail.com\n\nv 1.1.8\n\nCampaigns\n\nManage your campaigns\n\n+ Create New Campaign\n\nActive Campaigns\n\n18\n\nTotal Postcards Initiated\n\n768\n\nAverage Scan Rate\n\n2.2%\n\nTotal Leads Generated\n\n42\n\nTotal Spent\n\n$78,632.93\n\nStatus\n\t\nCampaign Name\n\t\nStatus\n\t\nPostcards Sent\n\t\nScan Rate\n\t\nTotal Spent\n\t\nStart Date\n\t\n\n\t\nDoc Probe T\n\tDraft\t\n0\n\t\n0.0%\n\t\n$0.00\n\tJun 19, 2026\t\n\t\nDoc Test LZ2\n\tDraft\t\n0\n\t\n0.0%\n\t\n$0.00\n\tJun 19, 2026\t\n\t\nDoc Test LZ\n\tDraft\t\n0\n\t\n0.0%\n\t\n$0.00\n\tJun 19, 2026\t\n\t\nLocation Test\n\tDraft\t\n0\n\t\n0.0%\n\t\n$1.25\n\tJun 04, 2026\t\n\t\nTesting Campaign\n\tDraft\t\n0\n\t\n0.0%\n\t\n$0.00\n\tJun 04, 2026\t\n\t\nTesting Campaign\n\tDraft\t\n0\n\t\n0.0%\n\t\n$0.00\n\tJun 04, 2026\t\n\t\nLocation Test\n\tDraft\t\n0\n\t\n0.0%\n\t\n$0.00\n\tJun 04, 2026\t\n\t\nAddress\n\tDraft\t\n0\n\t\n0.0%\n\t\n$0.00\n\tJun 04, 2026\t\n\t\nTesting Campaign\n\tDraft\t\n0\n\t\n0.0%\n\t\n$0.00\n\tJun 04, 2026\t\n\t\nTesting\n\tDraft\t\n0\n\t\n0.0%\n\t\n$0.00\n\tJun 04, 2026\t\nShowing 10 of 32\n1\n2\n...\n4\n10\nrows per page\nClose\nPick a Template\nAll Sizes\n4x6\n6x9\n6x11\nNewest First\nOldest First\nMost Used\nA-Z\nZ-A\nAll Templates\nLibrary Templates\nUser Templates\nAgency Templates\nTesting\n\nTesting\n\nNile Test\n\nNile Test\n\nPlumbing Emergency - Copy\n\nPlumbing Emergency - Copy\n\ntest\n\ntest\n\nTesting\n\nTesting\n\nBusiness Card\n\nBusiness Card\n\nCountryside Home\n\nCountryside Home\n\nSelected\nModern Detached Home\n\nModern Detached Home\n\nElegant House\n\nElegant House\n\nLocal Plumber\n\nLocal Plumber\n\nPlumbing Emergency\n\nPlumbing Emergency\n\nLocal Plumbing Business\n\nLocal Plumbing Business\n\nBusiness Card\n\nBusiness Card\n\nCountryside Home\n\nCountryside Home\n\nLocal Plumber\n\nLocal Plumber\n\nLocal Plumbing Business\n\nLocal Plumbing Business\n\nModern Detached Home\n\nModern Detached Home\n\nPlumbing Emergency\n\nPlumbing Emergency\n\nBusiness Card\n\nBusiness Card\n\nCountryside Home\n\nCountryside Home\n\nElegant House\n\nElegant House\n\nLocal Plumber\n\nLocal Plumber\n\nLocal Plumbing Business\n\nLocal Plumbing Business\n\nModern Detach",
+    "buttons": [
+      "HUhundred",
+      "Quick Actions",
+      "Notifications",
+      "ANAristotle Nicoaristotle@yopmail.com",
+      "Dashboard",
+      "Referrals",
+      "Campaigns",
+      "Templates",
+      "Targeting",
+      "Analytics",
+      "Settings",
+      "+ Create New Campaign",
+      "Status",
+      "Campaign Name",
+      "Postcards Sent",
+      "Scan Rate",
+      "Total Spent",
+      "Start Date",
+      "1",
+      "2",
+      "4",
+      "10",
+      "Close",
+      "All Templates",
+      "Library Templates",
+      "User Templates",
+      "Agency Templates",
+      "Continue without Editing",
+      "Open in Editor"
+    ],
+    "fields": [
+      {
+        "type": "text",
+        "ph": "Search campaigns...",
+        "required": false
+      },
+      {
+        "type": "text",
+        "ph": "Start Date",
+        "required": false
+      },
+      {
+        "type": "text",
+        "ph": "Search templates",
+        "required": false
+      },
+      {
+        "type": "select-one",
+        "required": false
+      },
+      {
+        "type": "select-one",
+        "required": false
+      }
+    ]
+  }
+]

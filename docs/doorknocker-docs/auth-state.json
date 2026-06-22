@@ -1,0 +1,45 @@
+{
+  "cookies": [
+    {
+      "name": "m",
+      "value": "608d40e3-97bb-4edd-80ac-c8fd85fc59cfda6f13",
+      "domain": "m.stripe.com",
+      "path": "/",
+      "expires": 1816409771.180909,
+      "httpOnly": true,
+      "secure": true,
+      "sameSite": "None"
+    },
+    {
+      "name": "__stripe_mid",
+      "value": "0bb81855-d8a9-49be-9350-91ac31ac5bff256a70",
+      "domain": ".door-knocker-plus-dev.vercel.app",
+      "path": "/",
+      "expires": 1813385771,
+      "httpOnly": false,
+      "secure": true,
+      "sameSite": "Strict"
+    },
+    {
+      "name": "__stripe_sid",
+      "value": "c85532d4-9632-4840-a09a-e479e40e15baf9803d",
+      "domain": ".door-knocker-plus-dev.vercel.app",
+      "path": "/",
+      "expires": 1781851571,
+      "httpOnly": false,
+      "secure": true,
+      "sameSite": "Strict"
+    }
+  ],
+  "origins": [
+    {
+      "origin": "https://door-knocker-plus-dev.vercel.app",
+      "localStorage": [
+        {
+          "name": "persist:doorKnockerRoot",
+          "value": "{\"auth\":\"{\\\"user\\\":{\\\"id\\\":\\\"042689b4-5830-49ee-9ee6-9dc29a5e69b9\\\",\\\"email\\\":\\\"aristotle@yopmail.com\\\",\\\"role\\\":\\\"ADMIN\\\",\\\"fullName\\\":\\\"Aristotle Nico\\\",\\\"full_name\\\":\\\"Aristotle Nico\\\",\\\"created_at\\\":\\\"2026-04-09T09:23:22.442206Z\\\",\\\"onboarding\\\":true,\\\"multi_org_enabled\\\":true,\\\"is_super_admin\\\":true,\\\"active_organization_id\\\":\\\"6ccc7b00-b755-4bac-94f1-b764b188822e\\\",\\\"organizations\\\":[{\\\"id\\\":\\\"6ccc7b00-b755-4bac-94f1-b764b188822e\\\",\\\"business_name\\\":\\\"hundred\\\",\\\"business_email\\\":null,\\\"role\\\":\\\"OWNER\\\",\\\"is_active\\\":true,\\\"deletion_scheduled_at\\\":null,\\\"onboarding_step\\\":4,\\\"isAgencyAccount\\\":false},{\\\"id\\\":\\\"faf63af4-84e9-4e92-b987-15a765b7fcc6\\\",\\\"business_name\\\":\\\"QA-AUTO-HappyPath-893501\\\",\\\"business_email\\\":null,\\\"role\\\":\\\"OWNER\\\",\\\"is_active\\\":false,\\\"deletion_scheduled_at\\\":null,\\\"onboarding_step\\\":1,\\\"isAgencyAccount\\\":true},{\\\"id\\\":\\\"0065e4ed-12a9-4acf-b0b0-0e7b7ed39352\\\",\\\"business_name\\\":\\\"Gaustavo\\\",\\\"business_email\\\":\\\"shahzaib@adlerone.us\\\",\\\"role\\\":\\\"OWNER\\\",\\\"is_active\\\":false,\\\"deletion_scheduled_at\\\":null,\\\"onboarding_step\\\":4,\\\"isAgencyAccount\\\":false},{\\\"id\\\":\\\"6e8086ff-2c48-4378-942e-cbce50dbf6a0\\\",\\\"business_name\\\":\\\"hundred\\\",\\\"business_email\\\":null,\\\"role\\\":\\\"OWNER\\\",\\\"is_active\\\":false,\\\"deletion_scheduled_at\\\":null,\\\"onboarding_step\\\":4,\\\"isAgencyAccount\\\":false},{\\\"id\\\":\\\"cc781392-6099-4d67-9cee-07d273f3fd99\\\",\\\"business_name\\\":\\\"Cloud 9\\\",\\\"business_email\\\":null,\\\"role\\\":\\\"OWNER\\\",\\\"is_active\\\":false,\\\"deletion_scheduled_at\\\":null,\\\"onboarding_step\\\":4,\\\"isAgencyAccount\\\":false}]},\\\"token\\\":\\\"eyJhbGciOiJFUzI1NiIsImtpZCI6ImQzZWVlN2IzLTg2ZWQtNDdjZC04M2UzLTdmNzg3OTI3NDM0YSIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJodHRwczovL3huZmxpaHNwZWdpendlcWlkdm93LnN1cGFiYXNlLmNvL2F1dGgvdjEiLCJzdWIiOiIwNDI2ODliNC01ODMwLTQ5ZWUtOWVlNi05ZGMyOWE1ZTY5YjkiLCJhdWQiOiJhdXRoZW50aWNhdGVkIiwiZXhwIjoxNzgxODUzMzYyLCJpYXQiOjE3ODE4NDk3NjIsImVtYWlsIjoiYXJpc3RvdGxlQHlvcG1haWwuY29tIiwicGhvbmUiOiIiLCJhcHBfbWV0YWRhdGEiOnsicHJvdmlkZXIiOiJlbWFpbCIsInByb3ZpZGVycyI6WyJlbWFpbCJdfSwidXNlcl9tZXRhZGF0YSI6eyJlbWFpbF92ZXJpZmllZCI6dHJ1ZSwiZnVsbF9uYW1lIjoiQXJpc3RvdGxlIE5pY28ifSwicm9sZSI6ImF1dGhlbnRpY2F0ZWQiLCJhYWwiOiJhYWwxIiwiYW1yIjpbeyJtZXRob2QiOiJwYXNzd29yZCIsInRpbWVzdGFtcCI6MTc4MTg0OTc2Mn1dLCJzZXNzaW9uX2lkIjoiOTk2ZTNlMDItMzQ5ZS00ZDU1LThkZjEtYjFlMWRiYWE4NTQ3IiwiaXNfYW5vbnltb3VzIjpmYWxzZX0.wOpjMaPhLpqvNZpQyTFNGt1RBR1uNLss_3EO771NSFbgXYy2YBYWkGfVTVO6ge2r5QaEmHO1XlLPaLH9q-et2A\\\",\\\"refreshToken\\\":\\\"fklh64y6zmjz\\\",\\\"expiresAt\\\":1781853366632,\\\"isAuthenticated\\\":true,\\\"activeOrganizationId\\\":\\\"6ccc7b00-b755-4bac-94f1-b764b188822e\\\",\\\"organizationType\\\":null}\",\"_persist\":\"{\\\"version\\\":2,\\\"rehydrated\\\":true}\"}"
+        }
+      ]
+    }
+  ]
+}

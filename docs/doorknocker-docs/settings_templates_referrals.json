@@ -1,0 +1,358 @@
+[
+  {
+    "name": "settings_01_organization",
+    "url": "https://door-knocker-plus-dev.vercel.app/settings",
+    "text": "HU\nhundred\nDashboard\nReferrals\nCampaigns\nTemplates\nTargeting\nAnalytics\nQuick Actions\nNotifications\nSettings\nAN\n\nAristotle Nico\n\naristotle@yopmail.com\n\nv 1.1.8\n\nSettings\n\nManage everything about your organization, preferences and team\n\nOrganization\nPayments & Billing\nBranding & Design\nUser Management\nBusiness Details\nBusiness Name *\nIndustry\nAdvertising & Marketing\nBusiness Address *\nContact Details\nEmail *\nPhone Number\nWebsite\nCancel\nSave Changes\nDelete Organization\n\nDelete all your data including referrals, campaigns, templates and analytical data\n\nDelete Organization",
+    "buttons": [
+      "HUhundred",
+      "Quick Actions",
+      "Notifications",
+      "ANAristotle Nicoaristotle@yopmail.com",
+      "Dashboard",
+      "Referrals",
+      "Campaigns",
+      "Templates",
+      "Targeting",
+      "Analytics",
+      "Settings",
+      "Organization",
+      "Payments & Billing",
+      "Branding & Design",
+      "User Management",
+      "Advertising & Marketing",
+      "Cancel",
+      "Save Changes",
+      "Delete Organization"
+    ],
+    "fields": [
+      {
+        "type": "text",
+        "ph": "Enter business name",
+        "req": false
+      },
+      {
+        "type": "text",
+        "ph": "Enter business address",
+        "req": false
+      },
+      {
+        "type": "email",
+        "ph": "Enter business email",
+        "req": false
+      },
+      {
+        "type": "tel",
+        "ph": "Enter phone number",
+        "req": false
+      },
+      {
+        "type": "url",
+        "ph": "Enter website link",
+        "req": false
+      }
+    ]
+  },
+  {
+    "name": "settings_payments_billing",
+    "url": "https://door-knocker-plus-dev.vercel.app/settings?tab=subscription",
+    "text": "HU\nhundred\nDashboard\nReferrals\nCampaigns\nTemplates\nTargeting\nAnalytics\nQuick Actions\nNotifications\nSettings\nAN\n\nAristotle Nico\n\naristotle@yopmail.com\n\nv 1.1.8\n\nSettings\n\nManage everything about your organization, preferences and team\n\nOrganization\nPayments & Billing\nBranding & Design\nUser Management\nLoading payment methods...\nBilling History\nInvoice\n\t\nAmount\n\t\nStatus\n\t\n\nLoading billing history...",
+    "buttons": [
+      "HUhundred",
+      "Quick Actions",
+      "Notifications",
+      "ANAristotle Nicoaristotle@yopmail.com",
+      "Dashboard",
+      "Referrals",
+      "Campaigns",
+      "Templates",
+      "Targeting",
+      "Analytics",
+      "Settings",
+      "Organization",
+      "Payments & Billing",
+      "Branding & Design",
+      "User Management",
+      "Invoice",
+      "Amount",
+      "Status"
+    ],
+    "fields": []
+  },
+  {
+    "name": "settings_branding_design",
+    "url": "https://door-knocker-plus-dev.vercel.app/settings?tab=branding",
+    "text": "HU\nhundred\nDashboard\nReferrals\nCampaigns\nTemplates\nTargeting\nAnalytics\nQuick Actions\nNotifications\nSettings\nAN\n\nAristotle Nico\n\naristotle@yopmail.com\n\nv 1.1.8\n\nSettings\n\nManage everything about your organization, preferences and team\n\nOrganization\nPayments & Billing\nBranding & Design\nUser Management\nColors & Fonts\nBrand Colors\nPrimary Color\nSecondary Color\nAccent Color\nTypography\nHeading Font\nPoppins\nBody Font\nPoppins\nCompany Logo\nRemove logo\nSave Changes",
+    "buttons": [
+      "HUhundred",
+      "Quick Actions",
+      "Notifications",
+      "ANAristotle Nicoaristotle@yopmail.com",
+      "Dashboard",
+      "Referrals",
+      "Campaigns",
+      "Templates",
+      "Targeting",
+      "Analytics",
+      "Settings",
+      "Organization",
+      "Payments & Billing",
+      "Branding & Design",
+      "User Management",
+      "Poppins",
+      "Remove logo",
+      "Save Changes"
+    ],
+    "fields": [
+      {
+        "type": "color",
+        "ph": "",
+        "req": false
+      },
+      {
+        "type": "text",
+        "ph": "#E36A00",
+        "req": false
+      },
+      {
+        "type": "color",
+        "ph": "",
+        "req": false
+      },
+      {
+        "type": "text",
+        "ph": "#1D1D20",
+        "req": false
+      },
+      {
+        "type": "color",
+        "ph": "",
+        "req": false
+      },
+      {
+        "type": "text",
+        "ph": "#47BAD7",
+        "req": false
+      }
+    ]
+  },
+  {
+    "name": "settings_user_management",
+    "url": "https://door-knocker-plus-dev.vercel.app/settings?tab=users",
+    "text": "HU\nhundred\nDashboard\nReferrals\nCampaigns\nTemplates\nTargeting\nAnalytics\nQuick Actions\nNotifications\nSettings\nAN\n\nAristotle Nico\n\naristotle@yopmail.com\n\nv 1.1.8\n\nSettings\n\nManage everything about your organization, preferences and team\n\nOrganization\nPayments & Billing\nBranding & Design\nUser Management\nUser Management\nAdd User\nRole\nAdded by\nLoading...",
+    "buttons": [
+      "HUhundred",
+      "Quick Actions",
+      "Notifications",
+      "ANAristotle Nicoaristotle@yopmail.com",
+      "Dashboard",
+      "Referrals",
+      "Campaigns",
+      "Templates",
+      "Targeting",
+      "Analytics",
+      "Settings",
+      "Organization",
+      "Payments & Billing",
+      "Branding & Design",
+      "User Management",
+      "Add User",
+      "Role",
+      "Added by"
+    ],
+    "fields": [
+      {
+        "type": "text",
+        "ph": "Search Users",
+        "req": false
+      }
+    ]
+  },
+  {
+    "name": "templates_01_list",
+    "url": "https://door-knocker-plus-dev.vercel.app/templates",
+    "text": "HU\nhundred\nDashboard\nReferrals\nCampaigns\nTemplates\nTargeting\nAnalytics\nQuick Actions\nNotifications\nSettings\nAN\n\nAristotle Nico\n\naristotle@yopmail.com\n\nv 1.1.8\n\nTemplates\n\nManage your templates\n\nCreate New Template\n\nTotal Templates\n\n5\n\nActive Templates\n\n5\n\nDraft Templates\n\n2\n\nInactive Templates\n\n0\n\nSize\nCreated By\nSort By\nAll Templates\nLibrary Templates\nAgency Templates\nUser Templates\n\nTesting\n\n6 x 9\n\nNile Test\n\n6 x 9\n\nPlumbing Emergency - Copy\n\n4 x 6\n\ntest\n\n6 x 9\n\nTesting\n\n6 x 9\n\nBusiness Card\n\n4 x 6\n\nCountryside Home\n\n4 x 6\n\nModern Detached Home\n\n4 x 6",
+    "buttons": [
+      "HUhundred",
+      "Quick Actions",
+      "Notifications",
+      "ANAristotle Nicoaristotle@yopmail.com",
+      "Dashboard",
+      "Referrals",
+      "Campaigns",
+      "Templates",
+      "Targeting",
+      "Analytics",
+      "Settings",
+      "Create New Template",
+      "Size",
+      "Created By",
+      "Sort By",
+      "All Templates",
+      "Library Templates",
+      "Agency Templates",
+      "User Templates"
+    ],
+    "fields": [
+      {
+        "type": "text",
+        "ph": "Search templates",
+        "req": false
+      }
+    ]
+  },
+  {
+    "name": "templates_02_create",
+    "url": "https://door-knocker-plus-dev.vercel.app/templates",
+    "text": "HU\nhundred\nDashboard\nReferrals\nCampaigns\nTemplates\nTargeting\nAnalytics\nQuick Actions\nNotifications\nSettings\nAN\n\nAristotle Nico\n\naristotle@yopmail.com\n\nv 1.1.8\n\nTemplates\n\nManage your templates\n\nCreate New Template\n\nTotal Templates\n\n5\n\nActive Templates\n\n5\n\nDraft Templates\n\n2\n\nInactive Templates\n\n0\n\nSize\nCreated By\nSort By\nAll Templates\nLibrary Templates\nAgency Templates\nUser Templates\n\nTesting\n\n6 x 9\n\nNile Test\n\n6 x 9\n\nPlumbing Emergency - Copy\n\n4 x 6\n\ntest\n\n6 x 9\n\nTesting\n\n6 x 9\n\nBusiness Card\n\n4 x 6\n\nCountryside Home\n\n4 x 6\n\nModern Detached Home\n\n4 x 6\n\nCreate Template\nTemplate Name *\nCanvas Size *\n4 x 6\n6 x 9\n6 x 11\nCreate Template",
+    "buttons": [
+      "HUhundred",
+      "Quick Actions",
+      "Notifications",
+      "ANAristotle Nicoaristotle@yopmail.com",
+      "Dashboard",
+      "Referrals",
+      "Campaigns",
+      "Templates",
+      "Targeting",
+      "Analytics",
+      "Settings",
+      "Create New Template",
+      "Size",
+      "Created By",
+      "Sort By",
+      "All Templates",
+      "Library Templates",
+      "Agency Templates",
+      "User Templates",
+      "Create Template"
+    ],
+    "fields": [
+      {
+        "type": "text",
+        "ph": "Search templates",
+        "req": false
+      },
+      {
+        "type": "text",
+        "ph": "Enter template name",
+        "req": false
+      },
+      {
+        "type": "select-one",
+        "req": false
+      }
+    ]
+  },
+  {
+    "name": "referrals_01_list",
+    "url": "https://door-knocker-plus-dev.vercel.app/referrals",
+    "text": "HU\nhundred\nDashboard\nReferrals\nCampaigns\nTemplates\nTargeting\nAnalytics\nQuick Actions\nNotifications\nSettings\nAN\n\nAristotle Nico\n\naristotle@yopmail.com\n\nv 1.1.8\n\nReferrals\n\nAdd referrals, start campaigns and get leads\n\n+ Add New Referrals\n\nTotal Referrals\n\n3\n\nCampaign Ready Referrals\n\n3\n\nCampaigns Published Referrals\n\n0\n\nAverage Referrals Value\n\n$700,000.00\n\nJob Type\nStatus\nAll Values\nNewest First\n\t\nReferral Name\n\t\nAddress\n\t\nJob Type\n\t\nJob Value\n\t\nStatus\n\t\nCampaign Used\n\t\n\n\t\nPaul Walker\n+925551234565\n\t\nMartin Luther King, Jr. National Historical Park, Atlanta, Alaska, 67858\n\t\nAC Maintenance\n\t\n$1M\n\tReady\t\nNo Campaign\n\t\n\t\nJohn Wick\nN/A\n\t\nMartin Luther King, Jr. National Historical Park, Atlanta, Alaska, 67858\n\t\nAC Installation\n\t\n$1M\n\tReady\t\nNo Campaign\n\t\n\t\nTesting Mate\n+925551234565\n\t\nMartin Luther King, Jr. National Historical Park, Atlanta, Alabama, 67858\n\t\nAC Repair\n\t\n$100,000.00\n\tReady\t\nReferrals\n\t\nShowing 3 of 3\n1\n10\nrows per page",
+    "buttons": [
+      "HUhundred",
+      "Quick Actions",
+      "Notifications",
+      "ANAristotle Nicoaristotle@yopmail.com",
+      "Dashboard",
+      "Referrals",
+      "Campaigns",
+      "Templates",
+      "Targeting",
+      "Analytics",
+      "Settings",
+      "+ Add New Referrals",
+      "Job Type",
+      "Status",
+      "All Values",
+      "Newest First",
+      "Referral Name",
+      "Address",
+      "Job Value",
+      "Campaign Used",
+      "1",
+      "10"
+    ],
+    "fields": [
+      {
+        "type": "text",
+        "ph": "Search referrals",
+        "req": false
+      }
+    ]
+  },
+  {
+    "name": "referrals_02_add_form",
+    "url": "https://door-knocker-plus-dev.vercel.app/referrals/create",
+    "text": "HU\nhundred\nDashboard\nReferrals\nCampaigns\nTemplates\nTargeting\nAnalytics\nQuick Actions\nNotifications\nSettings\nAN\n\nAristotle Nico\n\naristotle@yopmail.com\n\nv 1.1.8\n\nReferrals\nAdd New Referral\nAdd New Referral\nSave as Draft\nCreate Referral\nUpload Job Images\nMaximum 10 images allowed.\n*\n\nChoose a file or drag & drop it here\n\nJPEG, PNG, WebP, HEIC, HEIF formats, up to 25 MB\n\nUpload Image\nReferrer Name *\nEmail\nPhone Number\nCountry *\nUnited States of America\nStreet Address *\nCity *\nState *\nSelect a state\nZIP *\nJob Type *\nSelect a job type\nJob Value ($) *\nReferral Percentage %\nReferral percentage information\nNotes\n0/250\n\nReferrer Consent *\n\nI confirm that the referrer has provided written consent to use their name, photos, and address for this referral campaign, and agrees to the referral terms.",
+    "buttons": [
+      "HUhundred",
+      "Quick Actions",
+      "Notifications",
+      "ANAristotle Nicoaristotle@yopmail.com",
+      "Dashboard",
+      "Referrals",
+      "Campaigns",
+      "Templates",
+      "Targeting",
+      "Analytics",
+      "Settings",
+      "Save as Draft",
+      "Create Referral",
+      "Upload Image",
+      "United States of America",
+      "Select a state",
+      "Select a job type"
+    ],
+    "fields": [
+      {
+        "type": "file",
+        "ph": "",
+        "req": false
+      },
+      {
+        "type": "text",
+        "ph": "Enter name",
+        "req": false
+      },
+      {
+        "type": "email",
+        "ph": "Enter email",
+        "req": false
+      },
+      {
+        "type": "tel",
+        "ph": "Enter phone number",
+        "req": false
+      },
+      {
+        "type": "text",
+        "ph": "Enter your address",
+        "req": false
+      },
+      {
+        "type": "text",
+        "ph": "Enter city",
+        "req": false
+      },
+      {
+        "type": "text",
+        "ph": "Enter ZIP code",
+        "req": false
+      },
+      {
+        "type": "text",
+        "ph": "0.00",
+        "req": false
+      },
+      {
+        "type": "number",
+        "ph": "0.00",
+        "req": false
+      },
+      {
+        "type": "textarea",
+        "ph": "Add notes",
+        "req": false
+      }
+    ]
+  }
+]

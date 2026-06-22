@@ -1,0 +1,105 @@
+[
+  {
+    "name": "camp_active_detail",
+    "url": "https://door-knocker-plus-dev.vercel.app/campaigns",
+    "text": "HU\nhundred\nDashboard\nReferrals\nCampaigns\nTemplates\nTargeting\nAnalytics\nQuick Actions\nNotifications\nSettings\nAN\n\nAristotle Nico\n\naristotle@yopmail.com\n\nv 1.1.8\n\nCampaigns\n\nManage your campaigns\n\n+ Create New Campaign\n\nActive Campaigns\n\n18\n\nTotal Postcards Initiated\n\n768\n\nAverage Scan Rate\n\n2.1%\n\nTotal Leads Generated\n\n42\n\nTotal Spent\n\n$78,632.93\n\nStatus\n\t\nCampaign Name\n\t\nStatus\n\t\nPostcards Sent\n\t\nScan Rate\n\t\nTotal Spent\n\t\nStart Date\n\t\n\n\t\nDoc LZ Setup\n\tDraft\t\n0\n\t\n0.0%\n\t\n$0.00\n\tJun 19, 2026\t\n\t\nDoc Probe T\n\tDraft\t\n0\n\t\n0.0%\n\t\n$0.00\n\tJun 19, 2026\t\n\t\nDoc Test LZ2\n\tDraft\t\n0\n\t\n0.0%\n\t\n$0.00\n\tJun 19, 2026\t\n\t\nDoc Test LZ\n\tDraft\t\n0\n\t\n0.0%\n\t\n$0.00\n\tJun 19, 2026\t\n\t\nLocation Test\n\tDraft\t\n0\n\t\n0.0%\n\t\n$1.25\n\tJun 04, 2026\t\n\t\nTesting Campaign\n\tDraft\t\n0\n\t\n0.0%\n\t\n$0.00\n\tJun 04, 2026\t\n\t\nTesting Campaign\n\tDraft\t\n0\n\t\n0.0%\n\t\n$0.00\n\tJun 04, 2026\t\n\t\nLocation Test\n\tDraft\t\n0\n\t\n0.0%\n\t\n$0.00\n\tJun 04, 2026\t\n\t\nAddress\n\tDraft\t\n0\n\t\n0.0%\n\t\n$0.00\n\tJun 04, 2026\t\n\t\nTesting Campaign\n\tDraft\t\n0\n\t\n0.0%\n\t\n$0.00\n\tJun 04, 2026\t\nShowing 10 of 33\n1\n2\n...\n4\n10\nrows per page",
+    "buttons": [
+      "HUhundred",
+      "Quick Actions",
+      "Notifications",
+      "ANAristotle Nicoaristotle@yopmail.com",
+      "Dashboard",
+      "Referrals",
+      "Campaigns",
+      "Templates",
+      "Targeting",
+      "Analytics",
+      "Settings",
+      "+ Create New Campaign",
+      "Status",
+      "Campaign Name",
+      "Postcards Sent",
+      "Scan Rate",
+      "Total Spent",
+      "Start Date",
+      "1",
+      "2",
+      "4",
+      "10"
+    ],
+    "fields": [
+      {
+        "type": "text",
+        "ph": "Search campaigns...",
+        "required": false
+      },
+      {
+        "type": "text",
+        "ph": "Start Date",
+        "required": false
+      }
+    ]
+  },
+  {
+    "name": "camp_draft_detail",
+    "url": "https://door-knocker-plus-dev.vercel.app/campaigns/create?campaignId=e94e0856-d186-442f-91bb-b4230a11afa9",
+    "text": "HU\nhundred\nDashboard\nReferrals\nCampaigns\nTemplates\nTargeting\nAnalytics\nQuick Actions\nNotifications\nSettings\nAN\n\nAristotle Nico\n\naristotle@yopmail.com\n\nv 1.1.8\n\nThis campaign is not launched yet\nCampaigns\nDoc LZ Setup\nDoc LZ Setup\nCreated on Jun 19, 2026\nDraft\nEdit Campaign\nBack\nVerify Addresses\nChoose Your Target Audience\nUse Referral Address\nCreate New Zone\nSelect Existing Zone\nRadius Mode\nCount Mode\nRadius\n0.1 miles\nFind Addresses\nPostcard Design\nFront\nBack\nFull Screen Preview\nEdit Template\nCampaign Overview\n\nReferral\n\nNo referral selected\n\nTemplate\n\nLoading template...\n\nEstimated Start Date\n\nNot set\n\nTargeting\n\nPlease select targeting zone",
+    "buttons": [
+      "HUhundred",
+      "Quick Actions",
+      "Notifications",
+      "ANAristotle Nicoaristotle@yopmail.com",
+      "Dashboard",
+      "Referrals",
+      "Campaigns",
+      "Templates",
+      "Targeting",
+      "Analytics",
+      "Settings",
+      "Edit Campaign",
+      "Back",
+      "Verify Addresses",
+      "Find Addresses",
+      "Front",
+      "Full Screen Preview",
+      "Edit Template"
+    ],
+    "fields": [
+      {
+        "type": "radio",
+        "ph": "",
+        "required": false
+      },
+      {
+        "type": "radio",
+        "ph": "",
+        "required": false
+      },
+      {
+        "type": "radio",
+        "ph": "",
+        "required": false
+      },
+      {
+        "type": "text",
+        "ph": "Enter Address",
+        "required": false
+      },
+      {
+        "type": "radio",
+        "ph": "",
+        "required": false
+      },
+      {
+        "type": "radio",
+        "ph": "",
+        "required": false
+      },
+      {
+        "type": "range",
+        "ph": "",
+        "required": false
+      }
+    ]
+  }
+]

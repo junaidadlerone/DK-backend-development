@@ -6,12 +6,11 @@ const PORT = process.env.PORT || 8080;
 const SUPABASE_URL = 'https://xnflihspegizweqidvow.supabase.co';
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const OSM_NOMINATIM_URL = 'https://nominatim.openstreetmap.org';
-const OSM_OVERPASS_URL = 'https://overpass-api.de/api/interpreter';
 const USER_AGENT_BASE = 'DoorKnockerApp';
 const getRandomUserAgent = () => `${USER_AGENT_BASE}/1.0-${Math.floor(Math.random() * 90000) + 10000}`;
 const GOOGLE_MAPS_API_KEY = process.env.GOOGLE_MAPS_API_KEY;
 
-// Rentcast — primary property source for US residential addresses
+// Rentcast — sole property source for this socket
 const RENTCAST_API_KEY = process.env.RENTCAST_API_KEY;
 const RENTCAST_BASE_URL = 'https://api.rentcast.io/v1';
 const METERS_PER_MILE = 1609.344;
@@ -28,20 +27,8 @@ const RENTCAST_RESIDENTIAL_TYPES = new Set([
 
 // Retry configuration
 const MAX_RETRIES = 5;
-const NOMINATIM_MAX_RETRIES = 50;  // Keep retrying Nominatim until we get a result
 const INITIAL_RETRY_DELAY = 1000;
 const MAX_RETRY_DELAY = 32000;
-const NOMINATIM_MAX_RETRY_DELAY = 60000;  // Cap Nominatim backoff at 60s
-// Random delay between Nominatim calls: 1000–3000ms (randomness avoids looking like bulk scraping)
-const getNominatimDelay = () => Math.floor(Math.random() * 2000) + 1000;
-
-// Building classifications (used by OSM fallback path)
-const RESIDENTIAL_BUILDINGS = new Set([
-    'apartments', 'house', 'detached', 'residential', 'semidetached_house',
-    'terrace', 'dormitory', 'bungalow', 'static_caravan', 'cabin', 'houseboat',
-    'semi', 'villa', 'townhouse', 'duplex', 'mansion', 'cottage', 'chalet',
-    'condominium', 'farm', 'barracks'
-]);
 
 // ==================== UTILITY FUNCTIONS ====================
 
@@ -118,54 +105,6 @@ async function retryWithBackoff(fn, ws, operationName)
     }
 
     throw new Error(`${operationName} failed after ${MAX_RETRIES} attempts: ${lastError.message}`);
-}
-
-// Dedicated retry function for Nominatim — retries up to NOMINATIM_MAX_RETRIES times on 429,
-// respects Retry-After headers, and uses exponential backoff capped at NOMINATIM_MAX_RETRY_DELAY.
-async function retryNominatim(fn, ws, retryAfterRef)
-{
-    let lastError;
-
-    for (let attempt = 0; attempt < NOMINATIM_MAX_RETRIES; attempt++)
-    {
-        try
-        {
-            if (attempt > 0)
-            {
-                const backoff = Math.min(INITIAL_RETRY_DELAY * Math.pow(2, attempt - 1), NOMINATIM_MAX_RETRY_DELAY);
-                const jitter = backoff * (0.75 + Math.random() * 0.5);
-                const delay = retryAfterRef.value ? retryAfterRef.value * 1000 : Math.floor(jitter);
-                retryAfterRef.value = null;
-
-                ws.send(JSON.stringify({
-                    type: 'retry',
-                    message: `Retrying Nominatim reverse geocoding (attempt ${attempt + 1}/${NOMINATIM_MAX_RETRIES})...`,
-                    delay: delay
-                }));
-                await sleep(delay);
-            }
-
-            return await fn();
-        } catch (error)
-        {
-            lastError = error;
-
-            if (error.status >= 400 && error.status < 500 && error.status !== 429)
-            {
-                throw error;
-            }
-
-            if (attempt < NOMINATIM_MAX_RETRIES - 1)
-            {
-                ws.send(JSON.stringify({
-                    type: 'warning',
-                    message: `Nominatim reverse geocoding failed: ${error.message}. Retrying...`
-                }));
-            }
-        }
-    }
-
-    throw new Error(`Nominatim reverse geocoding failed after ${NOMINATIM_MAX_RETRIES} attempts: ${lastError.message}`);
 }
 
 async function parseAddress(addressInput, ws)
@@ -581,155 +520,6 @@ function buildTestProperties(center, data)
 
 // ==================== OPENSTREETMAP (FALLBACK) ====================
 
-async function fetchOpenStreetMapBuildings(center, data, ws)
-{
-    const { radius, count, searchType = 'ALL', polygon, mode } = data;
-    const isPolygonMode = mode === 'polygon' && Array.isArray(polygon) && polygon.length >= 3;
-    const isCountMode = !isPolygonMode && count && !radius;
-    let searchRadius = radius || 2000;
-
-    if (isPolygonMode)
-    {
-        ws.send(JSON.stringify({
-            type: 'progress',
-            message: `Searching OpenStreetMap inside polygon (${polygon.length} vertices)...`
-        }));
-        // Overpass uses the polygon vertices directly via poly:"lat lng lat lng ..."
-        // — more efficient than bbox + JS filter.
-    } else if (isCountMode)
-    {
-        ws.send(JSON.stringify({
-            type: 'progress',
-            message: `Finding approximately ${count} buildings...`
-        }));
-    } else
-    {
-        ws.send(JSON.stringify({
-            type: 'progress',
-            message: `Searching for buildings within ${radius}m radius...`
-        }));
-    }
-
-    const fetchBuildings = async () =>
-    {
-        const geoFilter = isPolygonMode
-            ? `(poly:"${polygon.map(p => `${p.lat} ${p.lng}`).join(' ')}")`
-            : `(around:${searchRadius},${center.lat},${center.lng})`;
-        const query = `
-      [out:json][timeout:90];
-      (
-        way["building"]${geoFilter};
-        relation["building"]${geoFilter};
-      );
-      out body;
-      >;
-      out skel qt;
-    `;
-
-        const response = await fetch(OSM_OVERPASS_URL, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/x-www-form-urlencoded',
-                'User-Agent': USER_AGENT_BASE
-            },
-            body: `data=${encodeURIComponent(query)}`
-        });
-
-        if (!response.ok)
-        {
-            const error = new Error(`error: ${response.statusText}`);
-            error.status = response.status;
-            throw error;
-        }
-
-        const result = await response.json();
-        return result.elements || [];
-    };
-
-    const elements = await retryWithBackoff(fetchBuildings, ws, 'Building discovery');
-
-    const buildings = [];
-    const nodeCache = {};
-
-    elements.forEach(el =>
-    {
-        if (el.type === 'node')
-        {
-            nodeCache[el.id] = { lat: el.lat, lon: el.lon };
-        }
-    });
-
-    for (const element of elements)
-    {
-        if (element.type === 'way' || element.type === 'relation')
-        {
-            if (!element.tags || !element.tags.building) continue;
-
-            let lat = 0, lon = 0, count = 0;
-
-            if (element.nodes)
-            {
-                for (const nodeId of element.nodes)
-                {
-                    if (nodeCache[nodeId])
-                    {
-                        lat += nodeCache[nodeId].lat;
-                        lon += nodeCache[nodeId].lon;
-                        count++;
-                    }
-                }
-            }
-
-            if (count > 0)
-            {
-                lat /= count;
-                lon /= count;
-
-                const buildingType = element.tags.building === 'yes' ? 'building' : element.tags.building;
-                const isResidential = RESIDENTIAL_BUILDINGS.has(buildingType);
-
-                buildings.push({
-                    lat,
-                    lon,
-                    tags: element.tags,
-                    osm_id: `way/${element.id}`,
-                    building_type: buildingType,
-                    residential: isResidential
-                });
-            }
-        }
-    }
-
-    ws.send(JSON.stringify({
-        type: 'progress',
-        message: `Found ${buildings.length} buildings`
-    }));
-
-    let filtered = buildings;
-    if (searchType === 'RESIDENTIAL')
-    {
-        filtered = buildings.filter(b => b.residential);
-    } else if (searchType === 'OTHER')
-    {
-        filtered = buildings.filter(b => !b.residential);
-    }
-
-    if (isCountMode && filtered.length > count)
-    {
-        filtered = filtered
-            .map(b => ({ ...b, distance: calculateDistance(center.lat, center.lng, b.lat, b.lon) }))
-            .sort((a, b) => a.distance - b.distance)
-            .slice(0, count);
-    }
-
-    return {
-        buildings: filtered,
-        totalFound: buildings.length,
-        mode: isPolygonMode ? 'polygon' : (isCountMode ? 'count' : 'radius'),
-        searchRadius
-    };
-}
-
 function calculateDistance(lat1, lon1, lat2, lon2)
 {
     const R = 6371e3;
@@ -744,97 +534,6 @@ function calculateDistance(lat1, lon1, lat2, lon2)
     const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 
     return Math.round(R * c);
-}
-
-async function convertOsmToAddress(building, center, ws, createdBy, zoneName, zoneTypeStr)
-{
-    const tags = building.tags || {};
-    const rawHousenumber = tags['addr:housenumber'] || tags.housenumber;
-    const housenumber = rawHousenumber ? rawHousenumber.split(';')[0].trim() : undefined;
-    const street = tags['addr:street'] || tags.street;
-    const city = tags['addr:city'] || tags.city;
-    const state = tags['addr:state'] || tags.state;
-    const postcode = tags['addr:postcode'] || tags.postcode;
-
-    let address = null;
-
-    if (housenumber && street)
-    {
-        const parts = [
-            housenumber + ' ' + street,
-            city,
-            state,
-            postcode
-        ].filter(Boolean);
-        address = parts.join(', ');
-    } else if (tags.name && housenumber)
-    {
-        const parts = [housenumber + ' ' + tags.name, city, state, postcode].filter(Boolean);
-        address = parts.join(', ');
-    }
-
-    if (!address && GOOGLE_MAPS_API_KEY)
-    {
-        // Google reverse geocoding. Used exclusively here — Nominatim reverse
-        // got rate-limited too aggressively in practice (50-retry loop with
-        // exponential backoff up to 60s emitted long visible delays to the
-        // frontend). Google's quota and reliability dominate that trade-off
-        // even though we pay ~$0.005 per call. This path only fires when
-        // RentCast returned no properties and we fell through to OSM Overpass,
-        // so it's a small slice of total traffic.
-        try
-        {
-            const googleResp = await fetch(
-                `https://maps.googleapis.com/maps/api/geocode/json?latlng=${building.lat},${building.lon}&key=${GOOGLE_MAPS_API_KEY}`
-            );
-            if (googleResp.ok)
-            {
-                const googleData = await googleResp.json();
-                if (googleData.status === 'OK' && googleData.results?.length > 0)
-                {
-                    // Strip the trailing country (", USA" / ", United States" / ", Canada")
-                    // to match the address format used elsewhere in this codebase.
-                    const formatted = googleData.results[0].formatted_address || '';
-                    address = formatted.replace(/,\s*(USA|United States|Canada)$/i, '').trim() || formatted;
-                }
-            } else
-            {
-                console.warn(`Google reverse geocoding HTTP ${googleResp.status} for ${building.lat},${building.lon}`);
-            }
-        } catch (googleError)
-        {
-            console.warn(`Google reverse geocoding failed for ${building.lat},${building.lon}:`, googleError.message);
-        }
-    }
-
-    if (!address)
-    {
-        address = `${building.lat.toFixed(6)}, ${building.lon.toFixed(6)}`;
-    }
-
-    return {
-        lat: building.lat,
-        long: building.lon,
-        address,
-        residential: building.residential,
-        building_type: building.building_type,
-        osm_id: building.osm_id,
-        propertyType: building.residential ? 'Single Family Home' : 'Other',
-        distanceFromCenter: calculateDistance(center.lat, center.lng, building.lat, building.lon),
-        targeting_zone_name: zoneName || 'Unnamed Zone',
-        campaigns_used_in: [],
-        zoneType: zoneTypeStr || 'radius',
-        postcards_sent: 0,
-        first_post_card_sent_date: null,
-        status: 'Unverified',
-        createdBy: createdBy || {
-            id: null,
-            user_role: 'TECHNICIAN',
-            full_name: 'System',
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString()
-        }
-    };
 }
 
 async function saveZoneToSupabase(zoneData, ws)
@@ -881,7 +580,7 @@ async function saveZoneToSupabase(zoneData, ws)
 // =============================================================================
 // Per-session state lives on `ws.discoveryState`:
 //   { candidates: [...], byId: Map<id, address>, excluded: Set<id>,
-//     center, mode, searchRadius, polygon, totalFound, fetchSource,
+//     center, mode, searchRadius, polygon, totalFound,
 //     residentialCount, otherCount, processingTimeMs,
 //     zoneName, zoneTypeStr, organizationId, createdByInfo, campaign_id,
 //     address (original input or null), searchData, subcategory_ids }
@@ -1069,50 +768,32 @@ async function runDiscoverySearch(ws, message)
     // ── 1. Center resolution ─────────────────────────────────────────────
     const center = isPolygonMode ? polygonCentroid(data.polygon) : await parseAddress(address, ws);
 
-    // ── 2. Fetch RentCast → OSM fallback (same as findaddresses) ─────────
-    let fetchSource = 'osm';
+    // ── 2. Fetch from RentCast (only source — no OSM fallback) ────────────
     let rentcastProperties = null;
-    let osmBuildings = null;
     let totalFound = 0;
     let mode, searchRadius;
 
     if (data.isTestMode === true) {
         ws.send(JSON.stringify({ type: 'progress', message: 'Test mode: generating sample addresses (RentCast skipped)...' }));
         rentcastProperties = buildTestProperties(center, data);
-        fetchSource = 'rentcast';
         totalFound = rentcastProperties.length;
         mode = requestedMode;
         searchRadius = data.radius || 1000;
         ws.send(JSON.stringify({ type: 'progress', message: `Generated ${rentcastProperties.length} test properties` }));
-    } else if (RENTCAST_API_KEY) {
-        try {
-            const rentcastResult = await fetchRentcastProperties(center, data, ws);
-            if (rentcastResult.properties.length > 0) {
-                fetchSource = 'rentcast';
-                rentcastProperties = rentcastResult.properties;
-                totalFound = rentcastResult.totalFound;
-                mode = rentcastResult.mode;
-                searchRadius = rentcastResult.searchRadius;
-                ws.send(JSON.stringify({ type: 'progress', message: `Found ${rentcastResult.properties.length} properties` }));
-            } else {
-                ws.send(JSON.stringify({ type: 'progress', message: 'Searching OpenStreetMap...' }));
-            }
-        } catch (rentcastError) {
-            console.warn('Property search unavailable, falling back to OSM:', rentcastError.message);
-            ws.send(JSON.stringify({ type: 'progress', message: 'Searching OpenStreetMap...' }));
+    } else {
+        if (!RENTCAST_API_KEY) {
+            throw new Error('RENTCAST_API_KEY not configured on the discovery service');
         }
+        const rentcastResult = await fetchRentcastProperties(center, data, ws);
+        rentcastProperties = rentcastResult.properties;
+        totalFound = rentcastResult.totalFound;
+        mode = rentcastResult.mode;
+        searchRadius = rentcastResult.searchRadius;
+        ws.send(JSON.stringify({ type: 'progress', message: `Found ${rentcastProperties.length} properties` }));
     }
 
-    if (fetchSource === 'osm') {
-        const osmResult = await fetchOpenStreetMapBuildings(center, data, ws);
-        osmBuildings = osmResult.buildings;
-        totalFound = osmResult.totalFound;
-        mode = osmResult.mode;
-        searchRadius = osmResult.searchRadius;
-    }
-
-    // Cap result sets to MAX_ADDRESSES_PER_SEARCH
-    if (rentcastProperties && rentcastProperties.length > MAX_ADDRESSES_PER_SEARCH) {
+    // Cap to MAX_ADDRESSES_PER_SEARCH
+    if (rentcastProperties.length > MAX_ADDRESSES_PER_SEARCH) {
         const found = rentcastProperties.length;
         rentcastProperties = rentcastProperties.slice(0, MAX_ADDRESSES_PER_SEARCH);
         ws.send(JSON.stringify({
@@ -1120,20 +801,8 @@ async function runDiscoverySearch(ws, message)
             message: `Found ${found} properties; capped at ${MAX_ADDRESSES_PER_SEARCH} (send-capacity limit).`,
         }));
     }
-    if (osmBuildings && osmBuildings.length > MAX_ADDRESSES_PER_SEARCH) {
-        const found = osmBuildings.length;
-        osmBuildings = osmBuildings.slice(0, MAX_ADDRESSES_PER_SEARCH);
-        ws.send(JSON.stringify({
-            type: 'warning',
-            message: `Found ${found} buildings; capped at ${MAX_ADDRESSES_PER_SEARCH} (send-capacity limit).`,
-        }));
-    }
 
-    const resultCount = fetchSource === 'rentcast'
-        ? rentcastProperties.length
-        : (osmBuildings?.length ?? 0);
-
-    if (resultCount === 0) {
+    if (rentcastProperties.length === 0) {
         ws.send(JSON.stringify({
             type: 'complete',
             status: 'error',
@@ -1142,6 +811,8 @@ async function runDiscoverySearch(ws, message)
         }));
         return null;
     }
+
+    const resultCount = rentcastProperties.length;
 
     // ── 3. Org + creator info ────────────────────────────────────────────
     const { organizationId, createdByInfo } = await resolveOrganization(authToken, ws);
@@ -1161,42 +832,14 @@ async function runDiscoverySearch(ws, message)
     ws.send(JSON.stringify({ type: 'progress', message: `Converting ${resultCount} properties to addresses...` }));
 
     const candidates = [];
-    if (fetchSource === 'rentcast') {
-        for (let i = 0; i < rentcastProperties.length; i++) {
-            const property = rentcastProperties[i];
-            const row = convertRentcastToAddress(property, center, createdByInfo, zoneName, zoneTypeStr);
-            row.id = property.id ? `rc_${property.id}` : `rc_${i}`;
-            row.included = true;   // default state for the curation UI
-            candidates.push(row);
-        }
-        ws.send(JSON.stringify({ type: 'progress', message: `Processed ${candidates.length} addresses` }));
-    } else {
-        let lastNominatimCallTime = 0;
-        for (let i = 0; i < osmBuildings.length; i++) {
-            const building = osmBuildings[i];
-            const tags = building.tags || {};
-            const needsNominatim = !(tags['addr:housenumber'] || tags.housenumber)
-                || !(tags['addr:street'] || tags.street);
-            if (needsNominatim) {
-                const now = Date.now();
-                const elapsed = now - lastNominatimCallTime;
-                const delay = getNominatimDelay();
-                if (elapsed < delay) await sleep(delay - elapsed);
-                lastNominatimCallTime = Date.now();
-            }
-            const row = await convertOsmToAddress(building, center, ws, createdByInfo, zoneName, zoneTypeStr);
-            row.id = building.osm_id ? `osm_${building.osm_id}` : `osm_${i}`;
-            row.included = true;
-            candidates.push(row);
-
-            if ((i + 1) % 10 === 0 || i === osmBuildings.length - 1) {
-                ws.send(JSON.stringify({
-                    type: 'progress',
-                    message: `Processed ${i + 1}/${osmBuildings.length} addresses...`,
-                }));
-            }
-        }
+    for (let i = 0; i < rentcastProperties.length; i++) {
+        const property = rentcastProperties[i];
+        const row = convertRentcastToAddress(property, center, createdByInfo, zoneName, zoneTypeStr);
+        row.id = property.id ? `rc_${property.id}` : `rc_${i}`;
+        row.included = true;   // default state for the curation UI
+        candidates.push(row);
     }
+    ws.send(JSON.stringify({ type: 'progress', message: `Processed ${candidates.length} addresses` }));
 
     const residentialCount = candidates.filter(a => a.residential).length;
     const otherCount = candidates.length - residentialCount;
@@ -1214,7 +857,6 @@ async function runDiscoverySearch(ws, message)
         searchRadius,
         polygon: isPolygonMode ? data.polygon : null,
         totalFound,
-        fetchSource,
         residentialCount,
         otherCount,
         processingTimeMs,
@@ -1239,7 +881,7 @@ async function runDiscoverySearch(ws, message)
         center: { lat: center.lat, long: center.lng, ...(isRadiusMode && { radius: data.radius }) },
         search_radius_meters: searchRadius,
         polygon: state.polygon,
-        source: fetchSource,
+        source: 'rentcast',
         residential_count: residentialCount,
         other_count: otherCount,
         candidates,   // full array — each has .id, .included, etc.
@@ -1346,7 +988,7 @@ async function finalizeZone(ws, message)
             residentialCount,
             otherCount,
             processingTimeMs: state.processingTimeMs,
-            source: state.fetchSource,
+            source: 'rentcast',
             subcategory_ids: state.subcategory_ids,
             polygon: state.polygon,
             search_mode: state.mode,
@@ -1402,7 +1044,7 @@ async function finalizeZone(ws, message)
                             zone_type: state.zoneTypeStr,
                             addresses_count: finalAddresses.length,
                             campaign_id: state.campaign_id || null,
-                            source: state.fetchSource,
+                            source: 'rentcast',
                         },
                         is_read: false,
                     }),
