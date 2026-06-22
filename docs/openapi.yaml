@@ -138,6 +138,175 @@ tags:
       **New endpoints:** completeOnboardingV3, getOnboardingStepV3, getOnboardingDetailsV3
 
       **Backwards compatibility:** V1 endpoints (completeOnboarding, getOnboardingStep, getOnboardingDetails) remain unchanged. V3 is a parallel surface.
+  - name: Discovery Sockets
+    description: |
+      **WebSocket** address-discovery service with property-type filtering, three search modes
+      (count / budget / polygon), and interactive pre-save curation. Complements the existing
+      `getAddressesFromZone` REST endpoint and `findaddresses` fire-and-forget socket — neither is
+      changed by this surface; the new socket lives alongside them.
+
+      OpenAPI 3.0 does not model WebSockets natively. The protocol is documented here in full.
+
+      ## Endpoints
+
+      - **Dev:** `wss://discoveraddresses-test-331293375800.europe-west1.run.app`
+      - **Prod:** `wss://discoveraddresses-331293375800.europe-west1.run.app`
+      - **Companion REST:** [`GET /getPropertyCategories`](#tag/Address-Discovery/operation/getPropertyCategories) — taxonomy the client uses to build the category / subcategory picker before opening the socket.
+
+      ## Session state machine
+
+      ```
+        connected → search_in_progress → candidates_ready ↔ curating → finalized
+                                              ▲ ▼
+                                          exclude/include
+      ```
+
+      The candidate array (the list of properties returned from the initial RentCast + OSM-fallback
+      search) lives in server memory for the lifetime of the WebSocket, keyed by stable per-address
+      ids. Clients toggle addresses in/out by id, then commit the curated subset via `finalize`.
+
+      ## Client → Server messages
+
+      ### `cmd: "search"` — start initial discovery
+
+      One of three modes (`data.mode`):
+
+      **Count mode** — center + N addresses:
+      ```jsonc
+      {
+        "cmd": "search",
+        "address": "Austin, TX",                        // string parseAddress() can geocode (lat,lng OR free text)
+        "data": {
+          "mode": "count",
+          "count": 100,                                  // capped at MAX_ADDRESSES_PER_SEARCH (500)
+          "subcategory_ids": ["single_family", "condo"], // OR omit for "all"
+          "radius_hint": 5000                            // OPTIONAL meters; if absent, expand-until-count
+        },
+        "headers": {
+          "authorization": "Bearer <jwt>",
+          "apikey": "<supabase_anon_key>"
+        },
+        "campaign_id": "<uuid>"                          // OPTIONAL; tags the saved zone
+      }
+      ```
+
+      **Budget mode** — `count = floor(budget_usd / 3)` since each postcard costs $3:
+      ```jsonc
+      {
+        "cmd": "search",
+        "address": "Austin, TX",
+        "data": {
+          "mode": "budget",
+          "budget_usd": 300,                             // → count = 100
+          "subcategory_ids": ["single_family"]
+        },
+        "headers": { ... },
+        "campaign_id": "<uuid>"
+      }
+      ```
+
+      **Polygon mode** — user-drawn polygon, no center needed (centroid derived for telemetry):
+      ```jsonc
+      {
+        "cmd": "search",
+        "data": {
+          "mode": "polygon",
+          "polygon": [                                   // closed ring; first/last point need not be equal
+            { "lat": 30.27, "lng": -97.75 },
+            { "lat": 30.27, "lng": -97.74 },
+            { "lat": 30.26, "lng": -97.74 },
+            { "lat": 30.26, "lng": -97.75 }
+          ],
+          "subcategory_ids": ["single_family", "townhouse"]
+        },
+        "headers": { ... },
+        "campaign_id": "<uuid>"
+      }
+      ```
+
+      Backwards-compat: `cmd: "getAddressesFromZone"` is accepted as an alias for `cmd: "search"`.
+
+      ### Curation commands (after the `candidates` event)
+
+      ```jsonc
+      { "cmd": "exclude",       "address_id": "rc_abc123" }
+      { "cmd": "include",       "address_id": "rc_abc123" }
+      { "cmd": "exclude_many",  "address_ids": ["rc_abc123", "rc_def456"] }
+      { "cmd": "include_many",  "address_ids": ["rc_abc123"] }
+      ```
+
+      `address_id` is a stable id the server assigns on initial discovery (`rc_<index>` for RentCast
+      results, `osm_<way_id>` for OSM results). It is included on each candidate row.
+
+      ### `cmd: "finalize"` — commit curated zone
+
+      ```jsonc
+      { "cmd": "finalize", "zone_name": "Austin Downtown — Single Family" }   // zone_name OPTIONAL
+      ```
+
+      ### `cmd: "cancel"` — drop state, close socket, no zone saved
+
+      ```jsonc
+      { "cmd": "cancel" }
+      ```
+
+      ## Server → Client events
+
+      - `progress` — streaming status during the initial search, same shape as `findaddresses` (`{ type: "progress", message, percent }`).
+      - `candidates` — emitted once when the initial search completes:
+        ```jsonc
+        {
+          "type": "candidates",
+          "mode": "count",
+          "total": 100,
+          "center": { "lat": 30.27, "lng": -97.75 },
+          "candidates": [
+            { "id": "rc_0", "address": "...", "lat": 30.27, "long": -97.75,
+              "propertyType": "Single Family", "included": true },
+            // ...
+          ]
+        }
+        ```
+      - `curation_update` — emitted after every `exclude` / `include` (and once per id in `*_many`):
+        ```jsonc
+        { "type": "curation_update", "address_id": "rc_0", "included": false, "selected_count": 99 }
+        ```
+      - `complete` — emitted after `finalize` succeeds:
+        ```jsonc
+        {
+          "type": "complete",
+          "status": "success",
+          "zone_id": "<uuid>",
+          "saved_count": 78,
+          "excluded_count": 22
+        }
+        ```
+      - `error` — any failure (auth, geocoding, RentCast/OSM exhaustion, DB write):
+        ```jsonc
+        { "type": "error", "message": "Unable to geocode address" }
+        ```
+
+      ## Curation: pre-save vs. post-save
+
+      Two complementary mechanisms; either marks an address as out and downstream consumers skip it:
+
+      1. **Pre-save** (this socket's `exclude` / `include`) — excluded addresses never enter the saved
+         zone row. Cleanest path, but only available during the active socket session.
+      2. **Post-save** — for zones already finalized: set `addresses[N].is_deleted = true` and PATCH the
+         zone via `updateAddressZoneById`. Both `postcardsendingsocket` and `addressverification` already
+         honor the flag (skip-on-`is_deleted`), so flagged addresses survive in the zone for audit but
+         are skipped by every consumer.
+
+      ## Frontend integration outline
+
+      1. On page load → `GET /getPropertyCategories` → render category / subcategory picker.
+      2. User picks mode + fills the form (count / budget / polygon-draw on map).
+      3. Open WebSocket → send `{ cmd: "search", ... }`.
+      4. Render streaming `progress` events.
+      5. On `candidates` → render the full address list on the map (all initially `included: true`).
+      6. User toggles any address → send `{ cmd: "exclude" / "include", address_id }` → receive `curation_update`.
+      7. User clicks "Save Zone" → send `{ cmd: "finalize", zone_name? }` → receive `complete` with `zone_id`.
+      8. User clicks Cancel → send `{ cmd: "cancel" }` (or just close the socket) → nothing is written.
 
 paths:
   /signUp:
@@ -2222,6 +2391,111 @@ paths:
                 $ref: "#/components/schemas/Error"
         "500":
           description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /getPropertyCategories:
+    get:
+      tags:
+        - Address Discovery
+        - Discovery Sockets
+      summary: List property category / subcategory taxonomy
+      description: |
+        Returns the two-level property taxonomy (Residential / Commercial / Land + subcategories)
+        used by the address-discovery UI. Each subcategory carries `rentcast_type` — the exact
+        value RentCast returns on its property rows.
+
+        The frontend renders the response as a category-then-subcategory picker, then echoes one
+        or more `subcategory_ids` to the `discoveraddresses` WebSocket when initiating a search.
+        The server filters RentCast results to `property.propertyType === rentcast_type`.
+
+        Response is static; caching at the edge is safe. JWT-gated to prevent unauthenticated
+        enumeration of the taxonomy.
+      operationId: getPropertyCategories
+      security:
+        - SupabaseAuth: []
+          BearerAuth: []
+      responses:
+        "200":
+          description: Taxonomy returned successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: success
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      required:
+                        - id
+                        - label
+                        - subcategories
+                      properties:
+                        id:
+                          type: string
+                          description: Category id (stable; safe to switch on)
+                          example: residential
+                        label:
+                          type: string
+                          description: Human-readable category label
+                          example: Residential
+                        subcategories:
+                          type: array
+                          items:
+                            type: object
+                            required:
+                              - id
+                              - label
+                              - rentcast_type
+                            properties:
+                              id:
+                                type: string
+                                description: Subcategory id (echoed back to the discovery socket)
+                                example: single_family
+                              label:
+                                type: string
+                                example: Single Family Home
+                              rentcast_type:
+                                type: string
+                                description: Exact RentCast `propertyType` enum value
+                                example: Single Family
+              example:
+                status: success
+                data:
+                  - id: residential
+                    label: Residential
+                    subcategories:
+                      - { id: single_family, label: "Single Family Home", rentcast_type: "Single Family" }
+                      - { id: condo,         label: "Condo",              rentcast_type: "Condo" }
+                      - { id: townhouse,     label: "Townhouse",          rentcast_type: "Townhouse" }
+                      - { id: multi_family,  label: "Multi-Family",       rentcast_type: "Multi-Family" }
+                      - { id: apartment,     label: "Apartment",          rentcast_type: "Apartment" }
+                      - { id: manufactured,  label: "Manufactured",       rentcast_type: "Manufactured" }
+                  - id: commercial
+                    label: Commercial
+                    subcategories:
+                      - { id: industrial, label: "Industrial", rentcast_type: "Industrial" }
+                      - { id: commercial, label: "Commercial", rentcast_type: "Commercial" }
+                      - { id: retail,     label: "Retail",     rentcast_type: "Retail" }
+                      - { id: office,     label: "Office",     rentcast_type: "Office" }
+                  - id: land
+                    label: Land
+                    subcategories:
+                      - { id: land, label: "Land / Lot", rentcast_type: "Land" }
+        "401":
+          description: Unauthorized — missing or invalid JWT
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "405":
+          description: Method not allowed (only GET is supported)
           content:
             application/json:
               schema:
