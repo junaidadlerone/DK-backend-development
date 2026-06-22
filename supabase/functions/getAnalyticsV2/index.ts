@@ -54,6 +54,37 @@ const WASTE_STATUS_THRESHOLDS = {
   // > 15%   → Critical
 } as const;
 
+// PostgREST caps each row response at 1000 by default, which silently truncated
+// analytics for large orgs (and dropped the newest rows, since results come back
+// oldest-first). fetchAllRows pages through the full result set with .range() so
+// every read of postcard_sends reflects the entire table.
+const QUERY_PAGE_SIZE = 1000;
+
+async function fetchAllRows<T>(
+  buildQuery: () => {
+    range: (
+      from: number,
+      to: number,
+    ) => PromiseLike<{ data: T[] | null; error: { message?: string } | null }>;
+  },
+  context: string,
+): Promise<T[]> {
+  const rows: T[] = [];
+  let from = 0;
+  for (;;) {
+    const { data, error } = await buildQuery().range(from, from + QUERY_PAGE_SIZE - 1);
+    if (error) {
+      console.error(`Error fetching ${context}:`, error);
+      throw new Error("Failed to fetch postcard data");
+    }
+    const batch = data ?? [];
+    rows.push(...batch);
+    if (batch.length < QUERY_PAGE_SIZE) break;
+    from += QUERY_PAGE_SIZE;
+  }
+  return rows;
+}
+
 type WasteMeterStatus = "Healthy" | "At Risk" | "Critical";
 
 interface AnalyticsV2Request {
@@ -606,10 +637,6 @@ async function computeDashboardCards(
     Deno.env.get("POSTGRID_POSTCARD_API_KEY") ??
     Deno.env.get("VITE_POSTGRID_POSTCARD_API_KEY");
 
-  let postcardsQuery = supabase
-    .from("postcard_sends")
-    .select("postgrid_status, imb_status")
-    .eq("organization_id", organizationId);
   let paymentsQuery = supabase
     .from("payment_history")
     .select("campaign_id, amount_paid")
@@ -620,27 +647,27 @@ async function computeDashboardCards(
     .eq("organization_id", organizationId);
 
   if (filters.campaign_ids) {
-    postcardsQuery = postcardsQuery.in("campaign_id", filters.campaign_ids);
     paymentsQuery = paymentsQuery.in("campaign_id", filters.campaign_ids);
     campaignsQuery = campaignsQuery.in("id", filters.campaign_ids);
   }
   if (filters.since) {
-    postcardsQuery = postcardsQuery.gte("created_at", filters.since);
     campaignsQuery = campaignsQuery.gte("created_at", filters.since);
   }
 
-  const [postcardsResult, paymentsResult, campaignsResult] = await Promise.all([
-    postcardsQuery,
+  const [postcards, paymentsResult, campaignsResult] = await Promise.all([
+    fetchAllRows<{ postgrid_status: string; imb_status: string | null }>(() => {
+      let q = supabase
+        .from("postcard_sends")
+        .select("postgrid_status, imb_status")
+        .eq("organization_id", organizationId);
+      if (filters.campaign_ids) q = q.in("campaign_id", filters.campaign_ids);
+      if (filters.since) q = q.gte("created_at", filters.since);
+      return q;
+    }, "postcard_sends (dashboard_cards)"),
     paymentsQuery,
     campaignsQuery,
   ]);
 
-  if (postcardsResult.error) {
-    console.error("Error fetching postcard_sends:", postcardsResult.error);
-    throw new Error("Failed to fetch postcard data");
-  }
-
-  const postcards: Array<{ postgrid_status: string; imb_status: string | null }> = postcardsResult.data ?? [];
   const payments: Array<{ campaign_id: string; amount_paid: number }> = paymentsResult.data ?? [];
   const campaignList: Array<{ id: string; postgrid_tracker_id: string | null; postcards_sent: number }> = campaignsResult.data ?? [];
 
@@ -789,44 +816,46 @@ async function computeDeliveryFunnel(
   organizationId: string,
   filters: AnalyticsFilters,
 ): Promise<DeliveryFunnelData> {
-  let query = supabase
-    .from("postcard_sends")
-    .select("postgrid_status, imb_status")
-    .eq("organization_id", organizationId);
-  if (filters.campaign_ids) query = query.in("campaign_id", filters.campaign_ids);
-  if (filters.since) query = query.gte("created_at", filters.since);
-  const { data: rows, error } = await query;
-
-  if (error) {
-    console.error("Error fetching postcard_sends for delivery funnel:", error);
-    throw new Error("Failed to fetch postcard data");
-  }
-
-  const postcards: Array<{ postgrid_status: string; imb_status: string | null }> =
-    rows ?? [];
-  const total = postcards.length;
-
-  // Count buckets from postgrid_status (standard field)
-  const statusCounts: Record<string, number> = {
-    completed: 0,
-    processed_for_delivery: 0,
-    printing: 0,
-    ready: 0,
-    cancelled: 0,
+  // Use exact COUNT head-queries (head: true transfers no rows) rather than
+  // fetching rows and counting in memory. PostgREST caps row responses at 1000
+  // by default, which silently truncated large orgs and dropped the newest
+  // postcards from the all-time funnel. Counts are not subject to that cap.
+  const countFor = async (
+    column?: "postgrid_status" | "imb_status",
+    value?: string,
+  ): Promise<number> => {
+    let q = supabase
+      .from("postcard_sends")
+      .select("id", { count: "exact", head: true })
+      .eq("organization_id", organizationId);
+    if (filters.campaign_ids) q = q.in("campaign_id", filters.campaign_ids);
+    if (filters.since) q = q.gte("created_at", filters.since);
+    if (column && value !== undefined) q = q.eq(column, value);
+    const { count, error } = await q;
+    if (error) {
+      console.error("Error counting postcard_sends for delivery funnel:", error);
+      throw new Error("Failed to fetch postcard data");
+    }
+    return count ?? 0;
   };
 
-  // in_transit mirrors computePostcardOverview: postcards still in the delivery
-  // pipeline (postgrid_status ∈ IN_FLIGHT_STATUSES). returned is tracked from
-  // imb_status, matching getAnalytics.
-  let inTransitCount = 0;
-  let returnedCount = 0;
-
-  for (const p of postcards) {
-    const s = p.postgrid_status;
-    if (s in statusCounts) statusCounts[s]++;
-    if (IN_FLIGHT_STATUSES.includes(s)) inTransitCount++;
-    if (p.imb_status === "returned_to_sender") returnedCount++;
-  }
+  const [
+    total,
+    completed,
+    processed,
+    printing,
+    ready,
+    cancelled,
+    returned,
+  ] = await Promise.all([
+    countFor(),
+    countFor("postgrid_status", "completed"),
+    countFor("postgrid_status", "processed_for_delivery"),
+    countFor("postgrid_status", "printing"),
+    countFor("postgrid_status", "ready"),
+    countFor("postgrid_status", "cancelled"),
+    countFor("imb_status", "returned_to_sender"),
+  ]);
 
   const bucket = (count: number): FunnelBucket => ({
     count,
@@ -836,16 +865,16 @@ async function computeDeliveryFunnel(
   return {
     total_postcards_sent: total,
     // From postgrid_status
-    delivered: bucket(statusCounts.completed),
-    processed: bucket(statusCounts.processed_for_delivery),
-    printing: bucket(statusCounts.printing),
-    ready: bucket(statusCounts.ready),
-    cancelled: bucket(statusCounts.cancelled),
+    delivered: bucket(completed),
+    processed: bucket(processed),
+    printing: bucket(printing),
+    ready: bucket(ready),
+    cancelled: bucket(cancelled),
     // Aggregate of the in-flight postgrid_status buckets (ready/printing/
     // processed_for_delivery) — same definition as computePostcardOverview.
-    in_transit: bucket(inTransitCount),
+    in_transit: bucket(processed + printing + ready),
     // From imb_status
-    returned: bucket(returnedCount),
+    returned: bucket(returned),
   };
 }
 
@@ -921,24 +950,19 @@ async function computeWasteMeter(
   preferences: any,
   filters: AnalyticsFilters,
 ): Promise<WasteMeterData> {
-  let query = supabase
-    .from("postcard_sends")
-    .select("postgrid_status, imb_status, created_at")
-    .eq("organization_id", organizationId);
-  if (filters.campaign_ids) query = query.in("campaign_id", filters.campaign_ids);
-  if (filters.since) query = query.gte("created_at", filters.since);
-  const { data: rows, error } = await query;
-
-  if (error) {
-    console.error("Error fetching postcard_sends for waste_meter:", error);
-    throw new Error("Failed to fetch postcard data");
-  }
-
-  const postcards: Array<{
+  const postcards = await fetchAllRows<{
     postgrid_status: string;
     imb_status: string | null;
     created_at: string;
-  }> = rows ?? [];
+  }>(() => {
+    let q = supabase
+      .from("postcard_sends")
+      .select("postgrid_status, imb_status, created_at")
+      .eq("organization_id", organizationId);
+    if (filters.campaign_ids) q = q.in("campaign_id", filters.campaign_ids);
+    if (filters.since) q = q.gte("created_at", filters.since);
+    return q;
+  }, "postcard_sends (waste_meter)");
 
   const total = postcards.length;
   let piecesReturned = 0;
@@ -1821,19 +1845,21 @@ async function computeRecentScans(
   }
 
   // 2. Fetch postcard_sends for address/number lookup — scope to campaign if filtered
-  let sendsQuery = supabase
-    .from("postcard_sends")
-    .select("postgrid_postcard_id, campaign_id, address, created_at")
-    .eq("organization_id", organizationId)
-    .order("campaign_id", { ascending: true })
-    .order("created_at", { ascending: true });
-  if (filters.campaign_ids) sendsQuery = sendsQuery.in("campaign_id", filters.campaign_ids);
-  const { data: sends, error: sendsError } = await sendsQuery;
-
-  if (sendsError) {
-    console.error("Error fetching postcard_sends for recent_scans:", sendsError);
-    throw new Error("Failed to fetch postcard data");
-  }
+  const sends = await fetchAllRows<{
+    postgrid_postcard_id: string;
+    campaign_id: string;
+    address: string | null;
+    created_at: string;
+  }>(() => {
+    let q = supabase
+      .from("postcard_sends")
+      .select("postgrid_postcard_id, campaign_id, address, created_at")
+      .eq("organization_id", organizationId)
+      .order("campaign_id", { ascending: true })
+      .order("created_at", { ascending: true });
+    if (filters.campaign_ids) q = q.in("campaign_id", filters.campaign_ids);
+    return q;
+  }, "postcard_sends (recent_scans)");
 
   // postcardId → delivery address
   const addressMap = new Map<string, string>();
@@ -2105,19 +2131,14 @@ async function computePerformanceTrend(
   const toDateStr = (d: Date): string => d.toISOString().slice(0, 10);
 
   // --- 1. Fetch all postcard_sends ---
-  let postcardsQuery = supabase
-    .from("postcard_sends")
-    .select("created_at, postgrid_status")
-    .eq("organization_id", organizationId);
-  if (filters.campaign_ids) postcardsQuery = postcardsQuery.in("campaign_id", filters.campaign_ids);
-  const { data: postcardsRaw, error: postcardsError } = await postcardsQuery;
-
-  if (postcardsError) {
-    console.error("Error fetching postcard_sends for performance_trend:", postcardsError);
-    throw new Error("Failed to fetch postcard data");
-  }
-
-  const postcards: Array<{ created_at: string; postgrid_status: string }> = postcardsRaw ?? [];
+  const postcards = await fetchAllRows<{ created_at: string; postgrid_status: string }>(() => {
+    let q = supabase
+      .from("postcard_sends")
+      .select("created_at, postgrid_status")
+      .eq("organization_id", organizationId);
+    if (filters.campaign_ids) q = q.in("campaign_id", filters.campaign_ids);
+    return q;
+  }, "postcard_sends (performance_trend)");
   const totalSent = postcards.length;
 
   // --- 2. Fetch PostGrid visits, bucket by date ---
@@ -2538,21 +2559,16 @@ async function computePostcardOverview(
 
   // 2. Fetch postcard_sends for all campaigns in one query
   const campaignIds = campaignList.map((c) => c.id);
-  let sendsQuery = supabase
-    .from("postcard_sends")
-    .select("postgrid_status, imb_status, campaign_id")
-    .eq("organization_id", organizationId)
-    .in("campaign_id", campaignIds);
-  if (filters.since) sendsQuery = sendsQuery.gte("created_at", filters.since);
-  const { data: sends, error: sendsError } = await sendsQuery;
-
-  if (sendsError) {
-    console.error("Error fetching postcard_sends for postcard_overview:", sendsError);
-    throw new Error("Failed to fetch postcard data");
-  }
-
   type SendRow = { postgrid_status: string; imb_status: string | null; campaign_id: string };
-  const sendRows: SendRow[] = sends ?? [];
+  const sendRows = await fetchAllRows<SendRow>(() => {
+    let q = supabase
+      .from("postcard_sends")
+      .select("postgrid_status, imb_status, campaign_id")
+      .eq("organization_id", organizationId)
+      .in("campaign_id", campaignIds);
+    if (filters.since) q = q.gte("created_at", filters.since);
+    return q;
+  }, "postcard_sends (postcard_overview)");
 
   // Group sends by campaign_id
   const sendsByCampaign = new Map<string, SendRow[]>();
@@ -2668,14 +2684,15 @@ async function computeActiveCampaigns(
 
   const campaignIds = campaigns.map((c) => c.id);
 
-  // Fetch all postcard_sends for active campaigns in one query
-  const { data: sendsRaw } = await supabase
-    .from("postcard_sends")
-    .select("campaign_id, postgrid_status, imb_status")
-    .in("campaign_id", campaignIds);
-
-  const sends: Array<{ campaign_id: string; postgrid_status: string; imb_status: string | null }> =
-    sendsRaw ?? [];
+  // Fetch all postcard_sends for active campaigns
+  const sends = await fetchAllRows<{ campaign_id: string; postgrid_status: string; imb_status: string | null }>(
+    () =>
+      supabase
+        .from("postcard_sends")
+        .select("campaign_id, postgrid_status, imb_status")
+        .in("campaign_id", campaignIds),
+    "postcard_sends (campaign breakdown)",
+  );
 
   const sendsByCampaign = new Map<string, typeof sends>();
   for (const s of sends) {
@@ -2998,13 +3015,17 @@ async function computeCampaignEngagement(
 
   // 2. Determine in-flight status per campaign from postcard_sends
   const campaignIds = campaignList.map((c) => c.id);
-  const { data: sendsRaw } = await supabase
-    .from("postcard_sends")
-    .select("campaign_id, postgrid_status")
-    .in("campaign_id", campaignIds);
+  const sendsRaw = await fetchAllRows<{ campaign_id: string; postgrid_status: string }>(
+    () =>
+      supabase
+        .from("postcard_sends")
+        .select("campaign_id, postgrid_status")
+        .in("campaign_id", campaignIds),
+    "postcard_sends (in-flight status)",
+  );
 
   const inFlightSet = new Set<string>();
-  for (const s of (sendsRaw ?? [])) {
+  for (const s of sendsRaw) {
     if (IN_FLIGHT_STATUSES.includes(s.postgrid_status)) inFlightSet.add(s.campaign_id);
   }
 

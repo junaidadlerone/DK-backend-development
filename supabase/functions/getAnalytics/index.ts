@@ -16,6 +16,37 @@ import { enrichCurrency } from "../_shared/currency.ts";
 // when available, otherwise falls back to postcards_sent * $3.00.
 const PRICE_PER_POSTCARD = 3.0;
 
+// PostgREST caps each row response at 1000 by default, which silently truncated
+// analytics for large orgs (and dropped the newest rows, since results come back
+// oldest-first). fetchAllRows pages through the full result set with .range() so
+// every read reflects the entire table.
+const QUERY_PAGE_SIZE = 1000;
+
+async function fetchAllRows<T>(
+  buildQuery: () => {
+    range: (
+      from: number,
+      to: number,
+    ) => PromiseLike<{ data: T[] | null; error: { message?: string } | null }>;
+  },
+  context: string,
+): Promise<T[]> {
+  const rows: T[] = [];
+  let from = 0;
+  for (;;) {
+    const { data, error } = await buildQuery().range(from, from + QUERY_PAGE_SIZE - 1);
+    if (error) {
+      console.error(`Error fetching ${context}:`, error);
+      throw new Error("Failed to fetch postcard_sends");
+    }
+    const batch = data ?? [];
+    rows.push(...batch);
+    if (batch.length < QUERY_PAGE_SIZE) break;
+    from += QUERY_PAGE_SIZE;
+  }
+  return rows;
+}
+
 async function computeTotalSpent(
   supabase: any,
   organizationId: string,
@@ -748,21 +779,23 @@ async function computeCampaignsAnalytics(
   //   total_delivered → postgrid_status = "completed"
   //   cancelled       → postgrid_status = "cancelled"
   //   returned        → imb_status      = "returned_to_sender"
-  const { data: postcardSends, error: postcardSendsError } = await supabase
-    .from("postcard_sends")
-    .select("postgrid_status, imb_status")
-    .eq("organization_id", organizationId);
-
-  if (postcardSendsError) {
-    console.error("Error fetching postcard_sends:", postcardSendsError);
-    throw new Error("Failed to fetch postcard_sends");
-  }
+  const postcardSends = await fetchAllRows<{
+    postgrid_status: string;
+    imb_status: string | null;
+  }>(
+    () =>
+      supabase
+        .from("postcard_sends")
+        .select("postgrid_status, imb_status")
+        .eq("organization_id", organizationId),
+    "postcard_sends",
+  );
 
   let postcardsDelivered = 0;
   let postcardsCancelled = 0;
   let postcardsReturned = 0;
 
-  for (const p of postcardSends || []) {
+  for (const p of postcardSends) {
     if (p.postgrid_status === "completed") postcardsDelivered++;
     if (p.postgrid_status === "cancelled") postcardsCancelled++;
     if (p.imb_status === "returned_to_sender") postcardsReturned++;
