@@ -117,7 +117,7 @@ Deno.serve(async (req) => {
         const scanRate = postcardsSent > 0 ? (totalClicks / postcardsSent) * 100 : 0;
         
         // ROI Calculation
-        const costPerPostcard = campaign.paper_type === 'premium' ? 3.50 : 3.00;
+        const costPerPostcard = campaign.paper_type === 'premium' ? 3.00 : 3.00;
         const assumedRevenuePerLead = 1000;
         const totalCost = postcardsSent * costPerPostcard;
         const estimatedRevenue = totalClicks * assumedRevenuePerLead;
