@@ -120,7 +120,7 @@ tags:
       Multi-org mode for agency owners (Super Admins). Enables creating and switching between
       multiple organizations under one account, with full tenant isolation.
 
-      **New endpoints:** createOrganization, switchOrganization,
+      **New endpoints:** enableMultiOrg, disableMultiOrg, createOrganization, switchOrganization,
       getUserOrganizations, deleteOrganization, recoverOrganization, transferOrganizationOwnership,
       getAgencyAccountOrganizationMembers
 
@@ -12499,6 +12499,116 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
+  /getAllTimeZones:
+    get:
+      tags:
+        - System Preferences
+      summary: Get all available timezones
+      description: |
+        Returns a list of all available timezones for user selection.
+
+        **Access:**
+        - Public (no authentication required)
+
+        **Response:**
+        - Array of timezone objects with id, symbol, and name
+      operationId: getAllTimeZones
+      responses:
+        "200":
+          description: Successfully retrieved timezones
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id:
+                      type: string
+                      format: uuid
+                      description: Unique timezone ID
+                    symbol:
+                      type: string
+                      description: UTC offset symbol
+                      example: "UTC-5"
+                    name:
+                      type: string
+                      description: Timezone name
+                      example: "Eastern Time (US)"
+              examples:
+                success:
+                  value:
+                    - id: "123e4567-e89b-12d3-a456-426614174000"
+                      symbol: "UTC-5"
+                      name: "Eastern Time (US)"
+                    - id: "123e4567-e89b-12d3-a456-426614174001"
+                      symbol: "UTC-8"
+                      name: "Pacific Time (US)"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /getAllCurrencies:
+    get:
+      tags:
+        - System Preferences
+      summary: Get all available currencies
+      description: |
+        Returns a list of all available currencies for user selection.
+
+        **Access:**
+        - Public (no authentication required)
+
+        **Response:**
+        - Array of currency objects with id, symbol, name, and abbreviation
+      operationId: getAllCurrencies
+      responses:
+        "200":
+          description: Successfully retrieved currencies
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id:
+                      type: string
+                      format: uuid
+                      description: Unique currency ID
+                    symbol:
+                      type: string
+                      description: Currency symbol
+                      example: "$"
+                    name:
+                      type: string
+                      description: Currency name
+                      example: "United States Dollar"
+                    abbreviation:
+                      type: string
+                      description: Currency abbreviation/code
+                      example: "USD"
+              examples:
+                success:
+                  value:
+                    - id: "223e4567-e89b-12d3-a456-426614174000"
+                      symbol: "$"
+                      name: "United States Dollar"
+                      abbreviation: "USD"
+                    - id: "223e4567-e89b-12d3-a456-426614174001"
+                      symbol: "€"
+                      name: "Euro"
+                      abbreviation: "EUR"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
   /createNewTemplateBundle:
     post:
       tags:
@@ -14388,7 +14498,7 @@ paths:
 
         **What happens:**
         - Sets `organizations.is_agency = (organization_type === "agency")` on the user's primary org.
-        - If `organization_type === "agency"`: also sets `profiles.is_super_admin = true` and `profiles.multi_org_enabled = true` on the caller's profile. This is required so the agency owner can later use `createOrganization` / `switchOrganization` to add more clients past the first one created in step 3.
+        - If `organization_type === "agency"`: also sets `profiles.is_super_admin = true` and `profiles.multi_org_enabled = true` on the caller's profile (equivalent to running `enableMultiOrg`). This is required so the agency owner can later use `createOrganization` / `switchOrganization` to add more clients past the first one created in step 3.
 
         ---
 
@@ -18429,6 +18539,158 @@ paths:
 
   # ─── Multi-Tenant Organization Management ──────────────────────────────────
 
+  /enableMultiOrg:
+    post:
+      tags:
+        - Multi-Tenant Organization Management
+      summary: Enable multi-org mode (Super Admin only)
+      description: |
+        Enables multi-org mode for the authenticated Super Admin, allowing them to create
+        and manage multiple organizations. Optionally saves intent questionnaire answers
+        for product analytics. Idempotent — safe to call if already enabled.
+      operationId: enableMultiOrg
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason_for_multiple_orgs:
+                  type: string
+                  nullable: true
+                  description: Why the user wants multiple orgs (intent question 1)
+                expected_org_count:
+                  type: string
+                  nullable: true
+                  description: How many orgs they expect to create (intent question 2)
+                teammate_overlap:
+                  type: string
+                  nullable: true
+                  description: Whether team members will overlap across orgs (intent question 3)
+            example:
+              reason_for_multiple_orgs: Managing multiple clients
+              expected_org_count: 3-5
+              teammate_overlap: Some overlap
+      responses:
+        "200":
+          description: Multi-org mode enabled (or was already enabled)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  message:
+                    type: string
+                  multi_org_enabled:
+                    type: boolean
+              example:
+                status: success
+                message: Multi-org mode enabled
+                multi_org_enabled: true
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Forbidden — caller is not a Super Admin
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: FORBIDDEN
+                message: Only Super Admins can enable multi-org mode
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /disableMultiOrg:
+    post:
+      tags:
+        - Multi-Tenant Organization Management
+      summary: Disable multi-org mode (Super Admin only)
+      description: |
+        Disables multi-org mode for the authenticated Super Admin.
+        **Blocked** if more than one active (non-deleted) org exists.
+        The user must delete extra orgs or transfer ownership before disabling.
+        Idempotent — safe to call if already disabled.
+      operationId: disableMultiOrg
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: Multi-org mode disabled (or was already disabled)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  message:
+                    type: string
+                  multi_org_enabled:
+                    type: boolean
+              example:
+                status: success
+                message: Multi-org mode disabled
+                multi_org_enabled: false
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Forbidden — caller is not a Super Admin
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Cleanup required — extra orgs must be deleted or transferred first
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  message:
+                    type: string
+                  extra_organizations:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                          format: uuid
+                        business_name:
+                          type: string
+              example:
+                error: CLEANUP_REQUIRED
+                message: You must delete or transfer ownership of extra organizations before disabling multi-org mode
+                extra_organizations:
+                  - id: 550e8400-e29b-41d4-a716-446655440001
+                    business_name: Acme Roofing
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
   /createOrganization:
     post:
       tags:
@@ -18858,7 +19120,8 @@ paths:
       description: |
         Transfers ownership of an organization to an existing member of that org.
         The old owner is added back into `organization_members` with their current profile role.
-        Typically used when the user wants to keep an org running under a different owner.
+        Typically used before calling `/disableMultiOrg` when the user wants to keep
+        an org running under a different owner.
       operationId: transferOrganizationOwnership
       security:
         - BearerAuth: []

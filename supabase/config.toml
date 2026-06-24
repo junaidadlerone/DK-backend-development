@@ -969,3 +969,19 @@ verify_jwt = false
 [functions.verifyAddresses]
 entrypoint = "./functions/verifyAddresses/index.ts"
 verify_jwt = false
+
+[functions.disableMultiOrg]
+entrypoint = "./functions/disableMultiOrg/index.ts"
+verify_jwt = false
+
+[functions.enableMultiOrg]
+entrypoint = "./functions/enableMultiOrg/index.ts"
+verify_jwt = false
+
+[functions.getAllCurrencies]
+entrypoint = "./functions/getAllCurrencies/index.ts"
+verify_jwt = false
+
+[functions.getAllTimeZones]
+entrypoint = "./functions/getAllTimeZones/index.ts"
+verify_jwt = false
