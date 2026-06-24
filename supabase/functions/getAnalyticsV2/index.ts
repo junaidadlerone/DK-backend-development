@@ -41,8 +41,12 @@ import { enrichCurrency } from "../_shared/currency.ts";
  * - campaign_leaderboard: top 5 campaigns ranked by total QR scans
  */
 
-// Standard PostGrid `status` values that mean the postcard is still in motion
-const IN_FLIGHT_STATUSES = ["ready", "printing", "processed_for_delivery"];
+// Standard PostGrid `status` values that mean the postcard has entered the
+// production/delivery pipeline and is physically in motion. `ready` is excluded
+// on purpose: a ready postcard is queued in PostGrid but not yet printed or
+// handed to the carrier, so it is reported as its own (queued) bucket rather
+// than counted as in-flight / in-transit.
+const IN_FLIGHT_STATUSES = ["printing", "processed_for_delivery"];
 
 // Price charged per postcard (USD). Used for waste_meter dollar calculations.
 const PRICE_PER_POSTCARD = 3.00;
@@ -622,7 +626,8 @@ function formatHour(hour: number): string {
  * Compute Dashboard Cards Analytics
  *
  * Metrics:
- * - in_flight_postcards: count of postcards with postgrid_status IN (ready, printing, processed_for_delivery)
+ * - in_flight_postcards: count of postcards with postgrid_status IN (printing, processed_for_delivery)
+ *                        (ready is queued, not yet in-flight — excluded)
  * - delivered:           count of postcards with postgrid_status = completed
  * - delivery_rate:       (delivered / total_sent) * 100
  * - spent_to_date:       sum of amount_paid from payment_history for this org
@@ -795,18 +800,20 @@ async function computeDashboardCards(
  *
  *   postgrid_status (standard lifecycle field — all orders):
  *     completed             → delivered
- *     processed_for_delivery┐
- *     printing              ┤ each reported individually AND aggregated into
- *     ready                 ┘ in_transit (IN_FLIGHT_STATUSES — still in pipeline)
+ *     ready                 → ready (queued — NOT counted as in_transit)
+ *     processed_for_delivery┐ each reported individually AND aggregated into
+ *     printing              ┘ in_transit (IN_FLIGHT_STATUSES — physically in motion)
  *     cancelled             → cancelled
  *
  *   imb_status (Intelligent-Mail Tracking — US only, nullable):
  *     returned_to_sender    → returned
  *
  * in_transit mirrors computePostcardOverview: it is the count of postcards whose
- * postgrid_status is still in flight (IN_FLIGHT_STATUSES = ready/printing/
- * processed_for_delivery). This avoids the previous double-counting where a
- * delivered postcard's stale imb_status (out_for_delivery) also counted as
+ * postgrid_status is still in flight (IN_FLIGHT_STATUSES = printing/
+ * processed_for_delivery). `ready` is excluded — it is a queued, not-yet-printed
+ * state reported in its own bucket, so in_transit no longer collapses to `ready`
+ * for a freshly launched campaign. This also avoids the previous double-counting
+ * where a delivered postcard's stale imb_status (out_for_delivery) counted as
  * in_transit. returned is tracked from imb_status, matching getAnalytics.
  *
  * Percentages are rounded to 2 decimal places. All return 0 when total is 0.
@@ -870,9 +877,11 @@ async function computeDeliveryFunnel(
     printing: bucket(printing),
     ready: bucket(ready),
     cancelled: bucket(cancelled),
-    // Aggregate of the in-flight postgrid_status buckets (ready/printing/
+    // Aggregate of the in-flight postgrid_status buckets (printing/
     // processed_for_delivery) — same definition as computePostcardOverview.
-    in_transit: bucket(processed + printing + ready),
+    // `ready` is intentionally excluded (queued, not yet in motion); it is
+    // surfaced above in its own `ready` bucket.
+    in_transit: bucket(processed + printing),
     // From imb_status
     returned: bucket(returned),
   };
@@ -1091,7 +1100,8 @@ function buildSimulatedAnalytics(analyticsType: string, filters: AnalyticsFilter
   const printing  = Math.round(  18 / 1254 * total);
   const cancelled = Math.round(  18 / 1254 * total);
   const ready     = total - completed - processed - printing - cancelled;
-  const inFlight  = processed + printing + ready;
+  // in-flight excludes `ready` (queued, not yet in motion) — matches IN_FLIGHT_STATUSES.
+  const inFlight  = processed + printing;
   const inTransit = Math.round(187 / 1254 * total);
   const returned  = Math.round(  7 / 1254 * total);
   const delayed   = Math.round(  4 / 1254 * total);
@@ -2510,7 +2520,7 @@ async function computeScanTrendByType(
  * For every campaign in the org, breaks down postcards into four buckets:
  *   delivered_and_scanned     — delivered (completed) AND QR was scanned (fraction of total sent)
  *   delivered_but_not_scanned — delivered (completed) but QR never scanned (fraction of total sent)
- *   in_transit                — still in the delivery pipeline (ready/printing/processed_for_delivery)
+ *   in_transit                — still in the delivery pipeline (printing/processed_for_delivery; ready excluded — queued)
  *   returned_cancelled        — returned to sender (imb_status) OR cancelled (postgrid_status)
  *
  * Percentages are 0.0–1.0 (4 decimal places), counts are integers.

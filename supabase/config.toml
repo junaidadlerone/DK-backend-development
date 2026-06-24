@@ -385,10 +385,6 @@ verify_jwt = false
 entrypoint = "./functions/getAllStates/index.ts"
 verify_jwt = false
 
-[functions.getAllCampaignStatus]
-entrypoint = "./functions/getAllCampaignStatus/index.ts"
-verify_jwt = false
-
 [functions.getAllConsents]
 entrypoint = "./functions/getAllConsents/index.ts"
 verify_jwt = false
@@ -439,10 +435,6 @@ verify_jwt = false
 
 [functions.createCampaign]
 entrypoint = "./functions/createCampaign/index.ts"
-verify_jwt = false
-
-[functions.getCampaignStep]
-entrypoint = "./functions/getCampaignStep/index.ts"
 verify_jwt = false
 
 [functions.getCampaignById]
@@ -562,14 +554,6 @@ verify_jwt = false
 entrypoint = "./functions/setMaintenanceEmailStatus/index.ts"
 verify_jwt = false
 
-[functions.enableMultiOrg]
-entrypoint = "./functions/enableMultiOrg/index.ts"
-verify_jwt = false
-
-[functions.disableMultiOrg]
-entrypoint = "./functions/disableMultiOrg/index.ts"
-verify_jwt = false
-
 [functions.importAddressList]
 entrypoint = "./functions/importAddressList/index.ts"
 verify_jwt = false
@@ -668,4 +652,336 @@ verify_jwt = false
 
 [functions.sendOrganizationDeletedEmail]
 entrypoint = "./functions/sendOrganizationDeletedEmail/index.ts"
+verify_jwt = false
+
+[functions.addPaymentMethod]
+entrypoint = "./functions/addPaymentMethod/index.ts"
+verify_jwt = false
+
+[functions.changeCampaignStatus]
+entrypoint = "./functions/changeCampaignStatus/index.ts"
+verify_jwt = false
+
+[functions.chargePaymentMethod]
+entrypoint = "./functions/chargePaymentMethod/index.ts"
+verify_jwt = false
+
+[functions.chat]
+entrypoint = "./functions/chat/index.ts"
+verify_jwt = false
+
+[functions.clearNotificationById]
+entrypoint = "./functions/clearNotificationById/index.ts"
+verify_jwt = false
+
+[functions.clearNotifications]
+entrypoint = "./functions/clearNotifications/index.ts"
+verify_jwt = false
+
+[functions.completeOnboarding]
+entrypoint = "./functions/completeOnboarding/index.ts"
+verify_jwt = false
+
+[functions.completeOnboardingV3]
+entrypoint = "./functions/completeOnboardingV3/index.ts"
+verify_jwt = false
+
+[functions.createNewTemplate]
+entrypoint = "./functions/createNewTemplate/index.ts"
+verify_jwt = false
+
+[functions.createNewTemplateBundleV3]
+entrypoint = "./functions/createNewTemplateBundleV3/index.ts"
+verify_jwt = false
+
+[functions.createOrganization]
+entrypoint = "./functions/createOrganization/index.ts"
+verify_jwt = false
+
+[functions.createPostCardFromTemplate]
+entrypoint = "./functions/createPostCardFromTemplate/index.ts"
+verify_jwt = false
+
+[functions.deleteAddressZone]
+entrypoint = "./functions/deleteAddressZone/index.ts"
+verify_jwt = false
+
+[functions.deleteOrganization]
+entrypoint = "./functions/deleteOrganization/index.ts"
+verify_jwt = false
+
+[functions.deletePaymentMethod]
+entrypoint = "./functions/deletePaymentMethod/index.ts"
+verify_jwt = false
+
+[functions.deleteSignatureById]
+entrypoint = "./functions/deleteSignatureById/index.ts"
+verify_jwt = false
+
+[functions.deleteTemplate]
+entrypoint = "./functions/deleteTemplate/index.ts"
+verify_jwt = false
+
+[functions.deleteUser]
+entrypoint = "./functions/deleteUser/index.ts"
+verify_jwt = false
+
+[functions.deleteUserV3]
+entrypoint = "./functions/deleteUserV3/index.ts"
+verify_jwt = false
+
+[functions.editCampaignV2]
+entrypoint = "./functions/editCampaignV2/index.ts"
+verify_jwt = false
+
+[functions.excludeAddress]
+entrypoint = "./functions/excludeAddress/index.ts"
+verify_jwt = false
+
+[functions.getAddressesFromZone]
+entrypoint = "./functions/getAddressesFromZone/index.ts"
+verify_jwt = false
+
+[functions.getAddressZoneById]
+entrypoint = "./functions/getAddressZoneById/index.ts"
+verify_jwt = false
+
+[functions.getAgencyAccountOrganizationMembers]
+entrypoint = "./functions/getAgencyAccountOrganizationMembers/index.ts"
+verify_jwt = false
+
+[functions.getAgencyOverview]
+entrypoint = "./functions/getAgencyOverview/index.ts"
+verify_jwt = false
+
+[functions.getAllAddressZones]
+entrypoint = "./functions/getAllAddressZones/index.ts"
+verify_jwt = false
+
+[functions.getAllCountries]
+entrypoint = "./functions/getAllCountries/index.ts"
+verify_jwt = false
+
+[functions.getAllFonts]
+entrypoint = "./functions/getAllFonts/index.ts"
+verify_jwt = false
+
+[functions.getAllStatesV2]
+entrypoint = "./functions/getAllStatesV2/index.ts"
+verify_jwt = false
+
+[functions.getAllTemplates]
+entrypoint = "./functions/getAllTemplates/index.ts"
+verify_jwt = false
+
+[functions.getAnalytics]
+entrypoint = "./functions/getAnalytics/index.ts"
+verify_jwt = false
+
+[functions.getAnalyticsPageData]
+entrypoint = "./functions/getAnalyticsPageData/index.ts"
+verify_jwt = false
+
+[functions.getAnalyticsV2]
+entrypoint = "./functions/getAnalyticsV2/index.ts"
+verify_jwt = false
+
+[functions.getBillingHistory]
+entrypoint = "./functions/getBillingHistory/index.ts"
+verify_jwt = false
+
+[functions.getCampaignLaunchData]
+entrypoint = "./functions/getCampaignLaunchData/index.ts"
+verify_jwt = false
+
+[functions.getCampaignStatuses]
+entrypoint = "./functions/getCampaignStatuses/index.ts"
+verify_jwt = false
+
+[functions.getChatHistory]
+entrypoint = "./functions/getChatHistory/index.ts"
+verify_jwt = false
+
+[functions.getChatSessions]
+entrypoint = "./functions/getChatSessions/index.ts"
+verify_jwt = false
+
+[functions.getCompanyLogo]
+entrypoint = "./functions/getCompanyLogo/index.ts"
+verify_jwt = false
+
+[functions.getMaintainenceStatus]
+entrypoint = "./functions/getMaintainenceStatus/index.ts"
+verify_jwt = false
+
+[functions.getMergeVariables]
+entrypoint = "./functions/getMergeVariables/index.ts"
+verify_jwt = false
+
+[functions.getNotifications]
+entrypoint = "./functions/getNotifications/index.ts"
+verify_jwt = false
+
+[functions.getNotificationStatus]
+entrypoint = "./functions/getNotificationStatus/index.ts"
+verify_jwt = false
+
+[functions.getOnboardingDetailsV3]
+entrypoint = "./functions/getOnboardingDetailsV3/index.ts"
+verify_jwt = false
+
+[functions.getOnboardingStep]
+entrypoint = "./functions/getOnboardingStep/index.ts"
+verify_jwt = false
+
+[functions.getOnboardingStepV3]
+entrypoint = "./functions/getOnboardingStepV3/index.ts"
+verify_jwt = false
+
+[functions.getPaymentHistoryForCampaign]
+entrypoint = "./functions/getPaymentHistoryForCampaign/index.ts"
+verify_jwt = false
+
+[functions.getPaymentMethods]
+entrypoint = "./functions/getPaymentMethods/index.ts"
+verify_jwt = false
+
+[functions.getPostCardById]
+entrypoint = "./functions/getPostCardById/index.ts"
+verify_jwt = false
+
+[functions.getSignatureById]
+entrypoint = "./functions/getSignatureById/index.ts"
+verify_jwt = false
+
+[functions.getTemplateById]
+entrypoint = "./functions/getTemplateById/index.ts"
+verify_jwt = false
+
+[functions.getTemplateHistory]
+entrypoint = "./functions/getTemplateHistory/index.ts"
+verify_jwt = false
+
+[functions.getUserOrganizations]
+entrypoint = "./functions/getUserOrganizations/index.ts"
+verify_jwt = false
+
+[functions.getUserV3]
+entrypoint = "./functions/getUserV3/index.ts"
+verify_jwt = false
+
+[functions.keepAlive]
+entrypoint = "./functions/keepAlive/index.ts"
+verify_jwt = false
+
+[functions.launchReadyCampaign]
+entrypoint = "./functions/launchReadyCampaign/index.ts"
+verify_jwt = false
+
+[functions.recoverOrganization]
+entrypoint = "./functions/recoverOrganization/index.ts"
+verify_jwt = false
+
+[functions.searchTemplateBundles]
+entrypoint = "./functions/searchTemplateBundles/index.ts"
+verify_jwt = false
+
+[functions.sendWelcomeEmail]
+entrypoint = "./functions/sendWelcomeEmail/index.ts"
+verify_jwt = false
+
+[functions.setDefaultPaymentMethod]
+entrypoint = "./functions/setDefaultPaymentMethod/index.ts"
+verify_jwt = false
+
+[functions.storePostcardSends]
+entrypoint = "./functions/storePostcardSends/index.ts"
+verify_jwt = false
+
+[functions.stripeWebhook]
+entrypoint = "./functions/stripeWebhook/index.ts"
+verify_jwt = false
+
+[functions.submitReview]
+entrypoint = "./functions/submitReview/index.ts"
+verify_jwt = false
+
+[functions.switchOrganization]
+entrypoint = "./functions/switchOrganization/index.ts"
+verify_jwt = false
+
+[functions.syncNotionKB]
+entrypoint = "./functions/syncNotionKB/index.ts"
+verify_jwt = false
+
+[functions.syncPostcardStatuses]
+entrypoint = "./functions/syncPostcardStatuses/index.ts"
+verify_jwt = false
+
+[functions.toggleNotificationStatus]
+entrypoint = "./functions/toggleNotificationStatus/index.ts"
+verify_jwt = false
+
+[functions.transferOrganizationOwnership]
+entrypoint = "./functions/transferOrganizationOwnership/index.ts"
+verify_jwt = false
+
+[functions.updateAddressZoneById]
+entrypoint = "./functions/updateAddressZoneById/index.ts"
+verify_jwt = false
+
+[functions.updateBrandingSettings]
+entrypoint = "./functions/updateBrandingSettings/index.ts"
+verify_jwt = false
+
+[functions.updateCompanyLogo]
+entrypoint = "./functions/updateCompanyLogo/index.ts"
+verify_jwt = false
+
+[functions.updatePassword]
+entrypoint = "./functions/updatePassword/index.ts"
+verify_jwt = false
+
+[functions.updatePaymentMethod]
+entrypoint = "./functions/updatePaymentMethod/index.ts"
+verify_jwt = false
+
+[functions.updatePostCardsSentCount]
+entrypoint = "./functions/updatePostCardsSentCount/index.ts"
+verify_jwt = false
+
+[functions.updateTemplate]
+entrypoint = "./functions/updateTemplate/index.ts"
+verify_jwt = false
+
+[functions.updateUser]
+entrypoint = "./functions/updateUser/index.ts"
+verify_jwt = false
+
+[functions.uploadSignature]
+entrypoint = "./functions/uploadSignature/index.ts"
+verify_jwt = false
+
+[functions.validateCouponCode]
+entrypoint = "./functions/validateCouponCode/index.ts"
+verify_jwt = false
+
+[functions.verifyAddresses]
+entrypoint = "./functions/verifyAddresses/index.ts"
+verify_jwt = false
+
+[functions.disableMultiOrg]
+entrypoint = "./functions/disableMultiOrg/index.ts"
+verify_jwt = false
+
+[functions.enableMultiOrg]
+entrypoint = "./functions/enableMultiOrg/index.ts"
+verify_jwt = false
+
+[functions.getAllCurrencies]
+entrypoint = "./functions/getAllCurrencies/index.ts"
+verify_jwt = false
+
+[functions.getAllTimeZones]
+entrypoint = "./functions/getAllTimeZones/index.ts"
 verify_jwt = false
