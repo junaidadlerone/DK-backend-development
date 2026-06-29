@@ -178,8 +178,7 @@ tags:
         "data": {
           "mode": "count",
           "count": 100,                                  // capped at MAX_ADDRESSES_PER_SEARCH (500)
-          "subcategory_ids": ["single_family", "condo"], // OR omit for "all"
-          "radius_hint": 5000                            // OPTIONAL meters; if absent, expand-until-count
+          "subcategory_ids": ["single_family", "condo"]  // OR omit for "all"
         },
         "headers": {
           "authorization": "Bearer <jwt>",
@@ -188,6 +187,13 @@ tags:
         "campaign_id": "<uuid>"                          // OPTIONAL; tags the saved zone
       }
       ```
+
+      > **Expansion behaviour (count & budget).** The search starts at a tight radius
+      > and expands outward with **no radius ceiling** until it has gathered `count`
+      > addresses (≤ `MAX_ADDRESSES_PER_SEARCH` = 500) **or** RentCast reports the area
+      > is exhausted (a larger radius returns no additional properties). A safety
+      > backstop of 15 expansion steps guarantees termination. The `count` addresses
+      > closest to the center are returned.
 
       **Budget mode** — `count = floor(budget_usd / 3)` since each postcard costs $3:
       ```jsonc
@@ -20373,8 +20379,13 @@ components:
               format: uuid
             name:
               type: string
-              enum: [Draft, Active, In Active]
-          description: Campaign status
+              enum: [Draft, Active, In Active, Processing]
+          description: >-
+            Campaign status. "Processing" is a derived display value returned by
+            getAllCampaigns for a launched ("Active") campaign whose postcards_sent
+            is still 0 (the sending socket has not yet written the final count); the
+            stored status row remains "Active", so status.id still points to the
+            "Active" campaign_status_types entry.
         current_step:
           type: integer
           minimum: 0

@@ -126,23 +126,6 @@ Deno.serve(async (req) => {
       ? 'address_verification'
       : 'postcard_sending';
 
-    // Address verification is no longer billable. Skip Stripe entirely and
-    // record nothing in payment_history so the user is never charged for it.
-    if (payment_type === 'address_verification') {
-      return successResponse({
-        status: "success",
-        message: "Address verification is free — no charge applied",
-        payment: {
-          id: null,
-          amount: 0,
-          currency: currency.toLowerCase(),
-          status: "succeeded",
-          description: description || "Address verification",
-          payment_type,
-        },
-      }, 200);
-    }
-
     // Validate payment_method_id
     if (!payment_method_id || typeof payment_method_id !== "string") {
       return errorResponse(

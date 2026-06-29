@@ -132,17 +132,29 @@ Deno.serve(async (req) => {
     }
 
     // Add image_url, computed total_spent, and timezone info to each campaign
-    const campaignsWithImages = (campaigns || []).map(campaign => ({
-      ...campaign,
-      is_editing: (campaign as any).campaign_csv_address_lists?.is_editing || false,
-      skip_verification: (campaign as any).campaign_csv_address_lists?.skip_address_verification === true || false,
-      total_spent: campaign.id in paymentTotals
-        ? paymentTotals[campaign.id]
-        : (campaign.postcards_sent || 0) * 3,
-      image_url: campaign.referral_id ? (imageUrlMap[campaign.referral_id] || "") : "",
-      created_at_tz: enrichTimestamp(campaign.created_at, preferences.timezone),
-      updated_at_tz: enrichTimestamp(campaign.updated_at, preferences.timezone)
-    }));
+    const campaignsWithImages = (campaigns || []).map(campaign => {
+      // A launched campaign is flipped to "Active" immediately, but its
+      // postcards_sent stays 0 until the sending socket writes the final count
+      // at the end of the run. Surface that interim window as "Processing" for
+      // the UI. Derived only — the stored status row is untouched, so status.id
+      // still points to the "Active" campaign_status_types entry (no migration).
+      const currentStatus = (campaign as any).status;
+      const isProcessing =
+        currentStatus?.name === "Active" && ((campaign as any).postcards_sent ?? 0) === 0;
+
+      return {
+        ...campaign,
+        status: isProcessing ? { ...currentStatus, name: "Processing" } : currentStatus,
+        is_editing: (campaign as any).campaign_csv_address_lists?.is_editing || false,
+        skip_verification: (campaign as any).campaign_csv_address_lists?.skip_address_verification === true || false,
+        total_spent: campaign.id in paymentTotals
+          ? paymentTotals[campaign.id]
+          : (campaign.postcards_sent || 0) * 3,
+        image_url: campaign.referral_id ? (imageUrlMap[campaign.referral_id] || "") : "",
+        created_at_tz: enrichTimestamp(campaign.created_at, preferences.timezone),
+        updated_at_tz: enrichTimestamp(campaign.updated_at, preferences.timezone)
+      };
+    });
 
     // Calculate pagination metadata
     const totalPages = Math.ceil((totalCount || 0) / limit);
