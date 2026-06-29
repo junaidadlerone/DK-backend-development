@@ -160,12 +160,21 @@ Deno.serve(async (req) => {
       }
     }
 
+    // A launched ("Active") campaign whose postcards_sent is still 0 hasn't
+    // finished dispatching yet — surface that interim window as "Processing",
+    // matching getAllCampaigns. Derived only: the stored status row is untouched,
+    // so status.id still points to the "Active" campaign_status_types entry.
+    const currentStatus = (campaign as any).status;
+    const isProcessing =
+      currentStatus?.name === "Active" && ((campaign as any).postcards_sent ?? 0) === 0;
+
     return successResponse(
       {
         status: "success",
         message: "Campaign fetched successfully",
         data: {
           ...campaign,
+          status: isProcessing ? { ...currentStatus, name: "Processing" } : currentStatus,
           is_editing: (campaign as any).campaign_csv_address_lists?.is_editing || false,
           skip_verification: (campaign as any).campaign_csv_address_lists?.skip_address_verification === true || false,
           cost_address_verification,

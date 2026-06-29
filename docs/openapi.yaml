@@ -20373,8 +20373,13 @@ components:
               format: uuid
             name:
               type: string
-              enum: [Draft, Active, In Active]
-          description: Campaign status
+              enum: [Draft, Active, In Active, Processing]
+          description: >-
+            Campaign status. "Processing" is a derived display value returned by
+            getAllCampaigns for a launched ("Active") campaign whose postcards_sent
+            is still 0 (the sending socket has not yet written the final count); the
+            stored status row remains "Active", so status.id still points to the
+            "Active" campaign_status_types entry.
         current_step:
           type: integer
           minimum: 0
