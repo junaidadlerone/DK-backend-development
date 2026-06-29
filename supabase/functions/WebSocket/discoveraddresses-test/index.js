@@ -381,30 +381,40 @@ async function fetchRentcastProperties(center, data, ws)
     ws.send(JSON.stringify({ type: 'progress', message: `Searching for ${count} nearby properties...` }));
 
     let radiusMiles = 0.1;
-    const MAX_RADIUS_MILES = 25;
+    // Per product decision: count/budget mode is NOT bounded by a fixed radius
+    // ceiling — it keeps expanding outward until it gathers `count` properties
+    // (already clamped to the 500 send-capacity cap) or the area is exhausted.
+    // Termination is driven by the target, a saturation check, and a hard
+    // expansion backstop — never by a mileage limit.
+    const MAX_EXPANSIONS = 15;   // runaway backstop: guarantees the loop ends
     let best = { properties: [], totalCount: null };
+    let prevTotalCount = null;
 
-    while (radiusMiles <= MAX_RADIUS_MILES)
+    for (let expansion = 0; expansion < MAX_EXPANSIONS; expansion++)
     {
         const { allProperties, totalCount } = await fetchPage(radiusMiles, count * 2);
         const filtered = annotateAndSort(applyFilter(allProperties));
         best = { properties: filtered, totalCount };
 
+        // Target reached — return the N closest.
         if (filtered.length >= count) break;
-        // Bail once we've tried the cap — otherwise Math.min(MAX, ...) keeps
-        // pinning radius at MAX and the loop hammers RentCast forever for
-        // remote areas with zero coverage (e.g. Alaska wilderness).
-        if (radiusMiles >= MAX_RADIUS_MILES) break;
+        // Saturation guard: a larger radius revealed no additional properties
+        // (RentCast's total — requested via includeTotalCount — is unchanged),
+        // so the area is exhausted. Also terminates remote / zero-coverage
+        // regions (e.g. Alaska wilderness) within a couple of iterations.
+        if (totalCount !== null && totalCount === prevTotalCount) break;
+        prevTotalCount = totalCount;
 
-        // Estimate the radius needed using observed density; enforce minimum 1.5× growth
+        // Estimate the radius needed using observed density; enforce minimum 1.5× growth.
+        // No upper clamp — the radius grows freely until one of the breaks above fires.
         if (filtered.length > 0)
         {
             const density = filtered.length / (Math.PI * radiusMiles * radiusMiles);
             const needed = Math.sqrt(count / (Math.PI * density)) * 1.1;
-            radiusMiles = Math.min(MAX_RADIUS_MILES, Math.max(radiusMiles * 1.5, needed));
+            radiusMiles = Math.max(radiusMiles * 1.5, needed);
         } else
         {
-            radiusMiles = Math.min(MAX_RADIUS_MILES, radiusMiles * 2);
+            radiusMiles *= 2;
         }
     }
 
@@ -743,8 +753,8 @@ async function runDiscoverySearch(ws, message)
     if (isRadiusMode && (!data.radius || data.radius < 1)) {
         throw new Error('Radius mode requires data.radius (meters)');
     }
-    if (data.radius && data.radius > 50000) {
-        throw new Error('Radius cannot exceed 50,000 meters');
+    if (data.radius && data.radius > 100 * METERS_PER_MILE) {
+        throw new Error(`Radius cannot exceed ${Math.round(100 * METERS_PER_MILE)} meters (100 miles)`);
     }
     if (data.count && data.count > MAX_ADDRESSES_PER_SEARCH) {
         ws.send(JSON.stringify({
