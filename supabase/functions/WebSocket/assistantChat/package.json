@@ -1,0 +1,20 @@
+{
+  "name": "dk-assistant-chat",
+  "version": "0.1.0",
+  "description": "DoorKnocker+ assistant service — /chat SSE (Flowise-driven, namiGateway spine) + durable Inngest Notion→Pinecone KB sync. Tier 1.",
+  "type": "module",
+  "main": "src/index.mjs",
+  "scripts": {
+    "start": "node src/index.mjs",
+    "sync:local": "node scripts/run-sync-local.mjs"
+  },
+  "engines": { "node": ">=22" },
+  "dependencies": {
+    "@pinecone-database/pinecone": "^8.0.0",
+    "@supabase/supabase-js": "^2.45.0",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "inngest": "^3.22.0",
+    "langfuse": "^3.38.20"
+  }
+}
