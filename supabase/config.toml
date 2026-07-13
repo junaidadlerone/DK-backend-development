@@ -806,6 +806,10 @@ verify_jwt = false
 entrypoint = "./functions/getChatSessions/index.ts"
 verify_jwt = false
 
+[functions.getChatMessages]
+entrypoint = "./functions/getChatMessages/index.ts"
+verify_jwt = false
+
 [functions.getCompanyLogo]
 entrypoint = "./functions/getCompanyLogo/index.ts"
 verify_jwt = false

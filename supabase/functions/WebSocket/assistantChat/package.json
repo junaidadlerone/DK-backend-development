@@ -14,7 +14,6 @@
     "@supabase/supabase-js": "^2.45.0",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
-    "inngest": "^3.22.0",
-    "langfuse": "^3.38.20"
+    "inngest": "^3.22.0"
   }
 }

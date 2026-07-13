@@ -252,4 +252,3 @@ debug.log
 # *.wav
 
 .vscode
-supabase/functions/WebSocket/assistantChat/.env.example
