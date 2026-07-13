@@ -6,7 +6,7 @@ DoorKnocker+ AI assistant service (Tier 1). One Cloud Run service, two jobs:
    `0 * * * *` + on-demand via event `kb/sync.requested` (`POST /admin/sync`). Ported from
    Kabuki Studio's production sync (chatKabuki) with fixes: `OPENAI_KEY` declared, DK+
    identifiers, and `last_edited_time` change detection (unchanged pages are not re-embedded).
-2. **`POST /chat`** — *coming next (runbook §4)*: Supabase-JWT verify → Flowise Prediction API
+2. **`POST /chat`** — built and E2E-verified (runbook §4): Supabase-JWT verify → Flowise Prediction API
    (Agentflow) → SSE `{delta}` / `{done, session_id}` / `{error}` → mirrors messages into
    `chat_sessions` / `chat_messages`.
 
@@ -48,4 +48,4 @@ npm run sync:local     # one-shot KB sync, no Inngest needed (first-time populat
 | `GET /health`, `GET /` | health JSON |
 | `POST /api/inngest` | Inngest serve (register this URL in Inngest Cloud) |
 | `POST /admin/sync` (header `x-admin-secret`) | queue a KB sync now → 202 |
-| `POST /chat` | (§4 — next) SSE chat |
+| `POST /chat` | SSE chat: JWT verify → Flowise Agentflow → {delta}/{done,session_id}/{error}; mirrors into chat_sessions/chat_messages |

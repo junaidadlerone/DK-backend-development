@@ -5,23 +5,36 @@
  *  GET  /health        — health check
  *  POST /api/inngest   — Inngest serve endpoint (hourly Notion→Pinecone KB sync + on-demand)
  *  POST /admin/sync    — queue a KB sync now (header x-admin-secret: $ADMIN_SYNC_SECRET)
- *  POST /chat          — [runbook §4 — added next] JWT verify → Flowise Prediction API →
+ *  POST /chat          — JWT verify → Flowise Prediction API (Agentflow) →
  *                        SSE {delta}/{done,session_id}/{error} → persist chat_sessions/messages
  *
  * Modeled on Kabuki's production services: the Express/Inngest scaffold follows
- * chatKabuki/index.js; the (upcoming) chat spine follows namiGateway/src/index.mjs.
+ * chatKabuki/index.js; the chat spine (src/chat.mjs) follows namiGateway/src/index.mjs.
  */
 
 import "dotenv/config";
 import express from "express";
 import { serve as inngestServe } from "inngest/express";
 import { inngest, syncNotionKb } from "./sync.mjs";
+import { chatHandler } from "./chat.mjs";
 
 const PORT = process.env.PORT || 8080;
 const ADMIN_SYNC_SECRET = process.env.ADMIN_SYNC_SECRET ?? "";
 
 const app = express();
-app.use(express.json());
+
+// CORS — the browser calls /chat cross-origin with Authorization + JSON, which
+// triggers a preflight. Mirrors namiGateway's permissive headers.
+app.use((req, res, next) => {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Headers", "authorization, content-type, apikey, x-client-info");
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  res.setHeader("Access-Control-Max-Age", "86400");
+  if (req.method === "OPTIONS") { res.status(204).end(); return; }
+  next();
+});
+
+app.use(express.json({ limit: "5mb" }));
 
 // ── Health ────────────────────────────────────────────────────────────────────
 
@@ -46,9 +59,9 @@ app.post("/admin/sync", async (req, res) => {
   }
 });
 
-// ── POST /chat — runbook §4 lands here ────────────────────────────────────────
-// (namiGateway spine: authenticate → ensureSession → Flowise prediction stream →
-//  token→{delta} translation → persistTurn → {done, session_id})
+// ── Chat (Tier-1 spine — see src/chat.mjs) ────────────────────────────────────
+
+app.post("/chat", chatHandler);
 
 // ── Startup ───────────────────────────────────────────────────────────────────
 
@@ -56,8 +69,12 @@ const requiredForSync = ["NOTION_TOKEN", "NOTION_DATABASE_ID", "OPENAI_KEY", "PI
 for (const name of requiredForSync) {
   if (!process.env[name]) console.warn(`[startup] WARNING: ${name} is not set — the KB sync will fail until it is`);
 }
+const requiredForChat = ["SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY", "FLOWISE_URL", "FLOWISE_FLOW_ID", "FLOWISE_API_KEY"];
+for (const name of requiredForChat) {
+  if (!process.env[name]) console.warn(`[startup] WARNING: ${name} is not set — POST /chat will return 503 until it is`);
+}
 
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`[dk-assistant-chat] listening on :${PORT}`);
-  console.log(`[dk-assistant-chat] config: notion=${!!process.env.NOTION_TOKEN} openai=${!!process.env.OPENAI_KEY} pinecone=${!!process.env.PINECONE_API_KEY} index=${process.env.PINECONE_INDEX_NAME ?? "doorknocker-kb"} inngest_signing=${!!process.env.INNGEST_SIGNING_KEY} inngest_event=${!!process.env.INNGEST_EVENT_KEY} admin_sync=${!!ADMIN_SYNC_SECRET}`);
+  console.log(`[dk-assistant-chat] config: notion=${!!process.env.NOTION_TOKEN} openai=${!!process.env.OPENAI_KEY} pinecone=${!!process.env.PINECONE_API_KEY} index=${process.env.PINECONE_INDEX_NAME ?? "doorknocker-kb"} inngest_signing=${!!process.env.INNGEST_SIGNING_KEY} inngest_event=${!!process.env.INNGEST_EVENT_KEY} admin_sync=${!!ADMIN_SYNC_SECRET} supabase=${!!process.env.SUPABASE_URL && !!process.env.SUPABASE_SERVICE_ROLE_KEY} flowise=${!!process.env.FLOWISE_URL && !!process.env.FLOWISE_FLOW_ID}`);
 });
