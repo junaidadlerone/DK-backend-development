@@ -1,22 +1,27 @@
 /**
- * POST /chat — DoorKnocker+ assistant, Tier 1.
+ * POST /chat — DoorKnocker+ assistant, Tiers 1–2.
  *
- * The stripped namiGateway spine (ai_audiobook_backend/.../namiGateway/src/index.mjs):
- * validate the user's Supabase JWT, call Flowise's streaming Prediction API, re-frame its
- * SSE events into the frontend contract, and mirror messages into chat_sessions /
- * chat_messages so the existing history sidebar keeps working.
+ * The namiGateway spine (ai_audiobook_backend/.../namiGateway/src/index.mjs): validate the
+ * user's Supabase JWT, call Flowise's streaming Prediction API, re-frame its SSE events into
+ * the frontend contract, and mirror messages into chat_sessions / chat_messages.
  *
- *   body     { message, session_id? }         (mode / context are accepted and IGNORED in
- *                                              Tier 1 — Tier 2 consumes context, Tier 3 mode)
+ *   body     { message, session_id?, context? }   (mode accepted and ignored until Tier 3)
  *   auth     Authorization: Bearer <user's Supabase JWT>
- *   stream   data: {delta}                     token text
- *            data: {error}                     one friendly line (raw detail stays in logs)
+ *   stream   data: {delta}                        token text (leak-filtered, de-dashed)
+ *            data: {type:"thinking", delta}       live tool-call steps (Tier 2)
+ *            data: {type:"ui", ...}               generative-UI surfaces from emit_ui (Tier 2)
+ *            data: {error}                        one friendly line (raw detail stays in logs)
  *            data: {done, session_id, awaiting_approval:false}
  *
- * Deliberately absent (Tier 3 machinery in namiGateway): HITL sentinels/human_input,
- * auto/manual modes, thinking labels, job frames, refresh accumulation, GenUI, MCP,
- * the live-state context preamble, and the tool-markup leak filters (no tools → no leaks).
- * Session-ownership check on resume is adopted from chatKabuki (namiGateway lacks it).
+ * Tier-2 branches (re-enabled from namiGateway): vars threading (userJwt + page ids →
+ * overrideConfig.vars → Flowise customMCP header), context preamble injection,
+ * calledTools→thinking, usedTools→ui_job_id→inlineJobEvents→{type:"ui"}, leak/redact filters.
+ * `context` accepts BOTH shapes: the legacy widget's {page:"Dashboard", path:"/dashboard",
+ * entity?} (page token derived from path — zero frontend changes needed) and the Stage-F
+ * {page:"dashboard", campaign_id?, template_id?, zone_id?, referral_id?}.
+ *
+ * Still absent (Tier 3): HITL sentinels/human_input, auto/manual modes, refresh frames,
+ * {type:"job"} announcements. Session-ownership check on resume is from chatKabuki.
  */
 
 import { randomUUID } from "node:crypto";
@@ -27,6 +32,7 @@ const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
 const FLOWISE_URL = process.env.FLOWISE_URL ?? "";
 const FLOWISE_FLOW_ID = process.env.FLOWISE_FLOW_ID ?? "";
 const FLOWISE_API_KEY = process.env.FLOWISE_API_KEY ?? "";
+const ASSISTANT_MCP_URL = (process.env.ASSISTANT_MCP_URL ?? "").replace(/\/+$/, "");
 
 // Lazy/conditional client so a sync-only deployment (no chat env vars yet) still boots.
 const chatConfigured = !!(SUPABASE_URL && SUPABASE_SERVICE_KEY && FLOWISE_URL && FLOWISE_FLOW_ID);
@@ -41,6 +47,156 @@ async function authenticate(req) {
   const { data, error } = await adminSupabase.auth.getUser(token);
   if (error || !data?.user) return null;
   return { userId: data.user.id, userJwt: token };
+}
+
+// ── context normalization (Tier 2) ────────────────────────────────────────────
+// Accepts both context shapes and produces { page, campaign_id?, template_id?,
+// zone_id?, referral_id? }. The legacy widget sends {page:"Dashboard", path:"/…",
+// entity?} — the page token + entity ids are derived from the path, so page
+// awareness works with the CURRENT frontend, no changes required.
+const ID_SEG = "([0-9a-fA-F-]{8,})";
+const PATH_RULES = [
+  [/^\/dashboard/, () => ({ page: "dashboard" })],
+  [new RegExp(`^/campaigns/create`), (m, q) => ({ page: "campaign_create", campaign_id: q.get("campaignId") ?? undefined })],
+  [new RegExp(`^/campaigns/${ID_SEG}`), (m) => ({ page: "campaign", campaign_id: m[1] })],
+  [/^\/campaigns/, () => ({ page: "campaigns" })],
+  [new RegExp(`^/referrals/create`), () => ({ page: "referral_create" })],
+  [new RegExp(`^/referrals/${ID_SEG}`), (m) => ({ page: "referral", referral_id: m[1] })],
+  [/^\/referrals/, () => ({ page: "referrals" })],
+  [new RegExp(`^/templates/editor(?:/${ID_SEG})?`), (m) => ({ page: "template_editor", template_id: m[1] ?? undefined })],
+  [new RegExp(`^/templates/${ID_SEG}`), (m) => ({ page: "template", template_id: m[1] })],
+  [/^\/templates/, () => ({ page: "templates" })],
+  [new RegExp(`^/targeting/zones/create`), () => ({ page: "zone_create" })],
+  [new RegExp(`^/targeting/zones/${ID_SEG}`), (m) => ({ page: "zone", zone_id: m[1] })],
+  [/^\/targeting\/zones/, () => ({ page: "zones" })],
+  [/^\/targeting\/addresses/, () => ({ page: "addresses" })],
+  [/^\/targeting\/exclusions/, () => ({ page: "exclusions" })],
+  [/^\/analytics/, () => ({ page: "analytics" })],
+  [/^\/agency/, () => ({ page: "agency" })],
+  [/^\/team/, () => ({ page: "team" })],
+  [/^\/settings/, () => ({ page: "settings" })],
+  [/^\/profile/, () => ({ page: "profile" })],
+];
+const ENTITY_ID_KEY = { campaign: "campaign_id", template: "template_id", templateBundle: "template_id", zone: "zone_id", referral: "referral_id" };
+
+export function normalizeContext(context) {
+  if (!context || typeof context !== "object") return null;
+  // Stage-F shape: already tokenized (lowercase page, snake_case ids).
+  if (context.campaign_id || context.template_id || context.zone_id || context.referral_id
+      || (typeof context.page === "string" && /^[a-z_]+$/.test(context.page) && !context.path)) {
+    const { page, campaign_id, template_id, zone_id, referral_id } = context;
+    return { page: page ?? "unknown", campaign_id, template_id, zone_id, referral_id };
+  }
+  // Legacy shape: derive from path (+ entity, + query string).
+  const rawPath = typeof context.path === "string" ? context.path : "";
+  const [pathname, search = ""] = rawPath.split("?");
+  const q = new URLSearchParams(search);
+  let out = null;
+  for (const [re, build] of PATH_RULES) {
+    const m = pathname.match(re);
+    if (m) { out = build(m, q); break; }
+  }
+  out ??= { page: pathname.replace(/^\//, "") || String(context.page ?? "unknown").toLowerCase() };
+  const ent = context.entity;
+  if (ent?.id && ENTITY_ID_KEY[ent.type]) out[ENTITY_ID_KEY[ent.type]] = ent.id;
+  return out;
+}
+
+// ── thinking labels (Tier 2) — one per MCP tool ───────────────────────────────
+const THINKING_LABELS = {
+  // Flowise reports the agent's Pinecone knowledge attachment as a tool call too.
+  doorknocker_product_docs: "Checking the product docs…",
+  get_live_context: "Reading your screen…",
+  list_campaigns: "Looking up your campaigns…",
+  get_campaign: "Fetching campaign details…",
+  search_campaigns: "Searching your campaigns…",
+  get_campaign_history: "Reviewing campaign history…",
+  get_campaign_statuses: "Loading status options…",
+  get_dashboard_analytics: "Crunching your analytics…",
+  get_summary_analytics: "Summarizing your performance…",
+  get_analytics_page: "Pulling analytics…",
+  list_referrals: "Looking up your referrals…",
+  get_referral: "Fetching referral details…",
+  search_referrals: "Searching your referrals…",
+  get_org_info: "Loading your organization…",
+  get_user_info: "Checking your profile…",
+  get_user_organizations: "Listing your organizations…",
+  get_notifications: "Checking your notifications…",
+  list_template_bundles: "Loading your postcard designs…",
+  get_template_bundle: "Fetching the design…",
+  list_templates: "Loading your templates…",
+  get_merge_variables: "Reading the postcard's business info…",
+  get_targeting_summary: "Summarizing your targeting…",
+  get_billing_history: "Reviewing your billing…",
+  get_payment_methods: "Checking your payment methods…",
+  get_campaign_payments: "Looking up campaign charges…",
+  get_agency_overview: "Rolling up your client accounts…",
+  get_agency_members: "Loading your agency team…",
+};
+const thinkingLabel = (tool) => THINKING_LABELS[tool] ?? `Running ${String(tool).replace(/_/g, " ")}…`;
+
+// ── leak filters + redaction (Tier 2) ─────────────────────────────────────────
+// Flowise synthesizes "Attempting to use tool…" text around tool pauses, and
+// deepseek can leak raw tool markup; strip both plus any literal emit_ui markup.
+const LEAK_MARKERS = ["Attempting to use tool", "｜DSML｜", "<emit_ui", "<emitui"];
+const KEEP_BACK = Math.max(...LEAK_MARKERS.map((m) => m.length)) - 1;
+const deDash = (s) => s.replace(/\s*—\s*/g, ", ").replace(/\s+–\s+/g, ", ");
+// Redact infra strings the model must never surface (tool names, service hosts, api paths).
+const redact = (s) => s
+  .replace(/https?:\/\/[^\s)\]]*run\.app[^\s)\]]*/gi, "our system")
+  .replace(/https?:\/\/[^\s)\]]*supabase\.co[^\s)\]]*/gi, "our system")
+  .replace(/\/api\/v\d[^\s)\]]*/gi, "our system")
+  .replace(/\b(?:get|list|search|emit)_[a-z][a-z_]+\b/g, "our system");
+const clean = (s) => redact(deDash(s));
+
+// GenUI frames are forwarded raw, so the same hygiene applies inside them —
+// deDash every string; redact only human-visible text fields (URLs/ids survive).
+const VISIBLE_TEXT_KEYS = new Set(["text", "title", "label", "caption", "subtitle", "proceedLabel"]);
+const deepClean = (val, key) => {
+  if (typeof val === "string") return VISIBLE_TEXT_KEYS.has(key) ? clean(val) : deDash(val);
+  if (Array.isArray(val)) return val.map((v) => deepClean(v, key));
+  if (val && typeof val === "object") {
+    const out = {};
+    for (const [k, v] of Object.entries(val)) out[k] = deepClean(v, k);
+    return out;
+  }
+  return val;
+};
+const cleanUiFrame = (frame) => deepClean(frame, null);
+
+// ── inline emit_ui frames (Tier 2) ────────────────────────────────────────────
+// emit_ui buffers its validated {type:"ui"} frame on the MCP's jobs side channel
+// and returns a tiny {ui_job_id} ack; we drain the buffer onto the chat SSE.
+// Dormant until emit_ui ships with the Stage-F catalog — a 404 here is a no-op.
+async function inlineJobEvents(jobId, userJwt, send) {
+  if (!ASSISTANT_MCP_URL) return;
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 2500);
+    const r = await fetch(`${ASSISTANT_MCP_URL}/jobs/${jobId}/events`, {
+      headers: { Authorization: `Bearer ${userJwt}` },
+      signal: ctrl.signal,
+    });
+    if (!r.ok || !r.body) { clearTimeout(timer); return; }
+    const rd = r.body.getReader();
+    const dec = new TextDecoder();
+    let jbuf = "";
+    while (true) {
+      const { done, value } = await rd.read().catch(() => ({ done: true }));
+      if (done) break;
+      jbuf += dec.decode(value, { stream: true });
+      const jlines = jbuf.split("\n");
+      jbuf = jlines.pop() ?? "";
+      for (const jl of jlines) {
+        const t = jl.trim();
+        if (!t.startsWith("data:")) continue;
+        let frame;
+        try { frame = JSON.parse(t.slice(5)); } catch { continue; }
+        if (frame.type === "ui") send(cleanUiFrame(frame));
+      }
+    }
+    clearTimeout(timer);
+  } catch { /* buffered-frame fetch is best-effort */ }
 }
 
 // ── chat persistence (keeps the existing history sidebar working) ─────────────
@@ -71,12 +227,13 @@ export async function chatHandler(req, res) {
   const auth = await authenticate(req);
   if (!auth) { res.status(401).json({ error: "Unauthorized" }); return; }
 
-  const { message, session_id } = req.body ?? {};
-  // `mode` and `context` may also arrive — accepted and ignored in Tier 1.
+  const { message, session_id, context } = req.body ?? {};
+  // `mode` may also arrive — accepted and ignored until Tier 3.
   if (typeof message !== "string" || !message.trim()) {
     res.status(400).json({ error: "message is required" });
     return;
   }
+  const ctx = normalizeContext(context);
 
   // Session: mint server-side on the first turn; on resume, verify OWNERSHIP
   // (chatKabuki's check — a session id that isn't this user's is a 404, G§4.6).
@@ -111,43 +268,70 @@ export async function chatHandler(req, res) {
   try {
     if (isNewSession) await createSession(sessionId, auth.userId, message);
 
+    // Context preamble — hands the model the page + ids so it can call
+    // get_live_context with them. Ids are for tools only, never for display.
+    let question = message;
+    if (ctx?.page) {
+      const bits = [`page=${ctx.page}`];
+      for (const k of ["campaign_id", "template_id", "zone_id", "referral_id"]) {
+        if (ctx[k]) bits.push(`${k}=${ctx[k]}`);
+      }
+      question = `[current screen: ${bits.join(", ")} — call get_live_context with these for on-screen data; never show IDs to the user]\n\n${message}`;
+    }
+
     const predictionBody = {
-      question: message,
+      question,
       streaming: true,
       chatId: sessionId,
-      overrideConfig: { sessionId },   // Flowise memory scope; Tier 2 adds vars.userJwt etc.
+      overrideConfig: {
+        sessionId,
+        // vars.userJwt feeds the Flowise customMCP header (Authorization: Bearer
+        // {{$vars.userJwt}}); page/ids are available to the system prompt too.
+        vars: {
+          userJwt: auth.userJwt,
+          page: ctx?.page ?? "",
+          campaignId: ctx?.campaign_id ?? "",
+          templateId: ctx?.template_id ?? "",
+          zoneId: ctx?.zone_id ?? "",
+          referralId: ctx?.referral_id ?? "",
+        },
+      },
     };
 
-    // ── Delta emitter ─────────────────────────────────────────────────────────
-    // Human-voice guarantee kept from namiGateway: strip em-dashes deterministically
-    // (the prompt bans them, the model sometimes ignores that). Em-dash always; a
-    // SPACED en-dash too; a bare en-dash survives so ranges like "1–3" aren't mangled.
-    // A small keep-back buffer, cut at whitespace, so a dash split across two token
-    // chunks is still caught. (namiGateway's LEAK_MARKERS are gone — no tools, no
-    // tool-markup leaks — which is all that emitter additionally handled.)
-    const deDash = (s) => s.replace(/\s*—\s*/g, ", ").replace(/\s+–\s+/g, ", ");
-    const KEEP_BACK = 4;
+    // ── Delta emitter (namiGateway pattern) ───────────────────────────────────
+    // Buffers with a keep-back margin so split LEAK_MARKERS are still caught, cuts
+    // only at whitespace (so redact() always sees complete URLs/identifiers), and
+    // applies clean() = redact(deDash(…)) to everything emitted. On a marker hit,
+    // everything from the marker on is suppressed for the rest of the turn.
     let pendingText = "";
     let assistantReply = "";
+    let suppressRest = false;
+    const earliestMarker = (s) => LEAK_MARKERS.map((m) => s.indexOf(m)).filter((i) => i !== -1).sort((a, b) => a - b)[0];
     const emitDelta = (chunk) => {
-      if (!chunk) return;                       // Flowise leads with empty token events
+      if (suppressRest || !chunk) return;       // Flowise leads with empty token events
       pendingText += chunk;
+      const hit = earliestMarker(pendingText);
+      if (hit !== undefined) {
+        const before = clean(pendingText.slice(0, hit).replace(/\s+$/, ""));
+        if (before) { assistantReply += before; send({ delta: before }); }
+        pendingText = ""; suppressRest = true; return;
+      }
       const safeEnd = pendingText.length - KEEP_BACK;
       if (safeEnd <= 0) return;
       const region = pendingText.slice(0, safeEnd);
       const cut = Math.max(region.lastIndexOf(" "), region.lastIndexOf("\n"), region.lastIndexOf("\t")) + 1;
       if (cut > 0) {
-        const out = deDash(pendingText.slice(0, cut));
+        const out = clean(pendingText.slice(0, cut));
         assistantReply += out;
         send({ delta: out });
         pendingText = pendingText.slice(cut);
       }
     };
     const flushDeltas = () => {
-      if (!pendingText) return;
-      const out = deDash(pendingText);
-      assistantReply += out;
-      send({ delta: out });
+      if (suppressRest || !pendingText) { pendingText = ""; return; }
+      const hit = earliestMarker(pendingText);
+      const out = clean(hit !== undefined ? pendingText.slice(0, hit).replace(/\s+$/, "") : pendingText);
+      if (out) { assistantReply += out; send({ delta: out }); }
       pendingText = "";
     };
 
@@ -158,10 +342,29 @@ export async function chatHandler(req, res) {
     };
     let turnError = null;
 
-    const handleEvent = (ev, data) => {
+    const seenJobIds = new Set();
+    const handleEvent = async (ev, data) => {
       switch (ev) {
         case "token": emitDelta(data); break;
         case "error": turnError = data; break;
+        // Tier 2: a tool has been CALLED but not yet returned → live thinking step.
+        case "calledTools":
+          for (const t of (Array.isArray(data) ? data : [])) {
+            if (t?.tool && !t?.toolOutput) send({ type: "thinking", delta: thinkingLabel(t.tool) });
+          }
+          break;
+        // Tier 2: a tool RETURNED — if it was emit_ui, drain its buffered {type:"ui"}
+        // frame from the MCP jobs side channel onto this stream.
+        case "usedTools":
+          for (const t of (Array.isArray(data) ? data : [])) {
+            const out = typeof t?.toolOutput === "string" ? t.toolOutput : JSON.stringify(t?.toolOutput ?? "");
+            const um = out.match(/\\?"ui_job_id\\?"\s*:\s*\\?"([0-9a-f-]{36})\\?"/i);
+            if (um && !seenJobIds.has(um[1])) {
+              seenJobIds.add(um[1]);
+              await inlineJobEvents(um[1], auth.userJwt, send);
+            }
+          }
+          break;
         // agentFlowEvent / nextAgentFlow / agentFlowExecutedData / metadata /
         // usageMetadata / end → internal; unknown events are ignored by design.
       }
@@ -205,7 +408,7 @@ export async function chatHandler(req, res) {
           if (!trimmed.startsWith("data:")) continue;
           let payload;
           try { payload = JSON.parse(trimmed.slice(5)); } catch { continue; }
-          handleEvent(payload.event, payload.data);
+          await handleEvent(payload.event, payload.data);
         }
       }
     };
@@ -216,6 +419,8 @@ export async function chatHandler(req, res) {
       console.warn("[/chat] recoverable turn error — retrying once");
       turnError = null;
       pendingText = "";
+      suppressRest = false;
+      seenJobIds.clear();
       await runAttempt();
     }
 
