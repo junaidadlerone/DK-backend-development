@@ -1,0 +1,90 @@
+// dk-assistant-mcp — MCP server exposing DK+ read (GET) endpoints to the Flowise agent.
+//   POST /mcp           Streamable HTTP MCP endpoint (stateless, per-request server)
+//   GET  /mcp           Idle SSE stream (Flowise's client opens this; a 405 breaks it)
+//   POST /live-context  Page-aware context blocks (same logic as the get_live_context tool)
+//   GET  /health        Health check
+// Auth: Authorization: Bearer <end user's Supabase JWT> (enforced at tools/call + /live-context).
+//
+// Phase 2 = 26 read tools (incl. get_live_context). Coming with Stage F: emit_ui
+// (+ /jobs/:id/events) once the frontend GenUI catalog schema exists.
+import "dotenv/config";
+import express from "express";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { PORT } from "./env.mjs";
+import { authenticate, requireAuth } from "./auth.mjs";
+import { registerReadTools } from "./tools-read.mjs";
+import { loadActiveContext, buildContextPrompt, buildLiveState } from "./context.mjs";
+
+const app = express();
+
+app.use((req, res, next) => {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Headers", "authorization, content-type, apikey, x-client-info");
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
+  res.setHeader("Access-Control-Max-Age", "86400");
+  if (req.method === "OPTIONS") { res.status(204).end(); return; }
+  next();
+});
+
+app.use(express.json({ limit: "10mb" }));
+
+app.get("/health", (_req, res) => res.json({ status: "healthy", service: "dk-assistant-mcp" }));
+
+// ── MCP endpoint — stateless: fresh server per request ────────────────────────
+// Auth is enforced strictly at tools/call (the only method that touches user
+// data). Handshake methods (initialize, tools/list, notifications) pass without a
+// valid token so an expired token stored in Flowise can't poison its toolkit
+// cache — each POST is its own request, so a tools/call is always re-authed.
+app.post("/mcp", async (req, res) => {
+  let auth = await authenticate(req);
+  if (!auth) {
+    if (req.body?.method === "tools/call") {
+      res.status(401).json({
+        jsonrpc: "2.0",
+        error: { code: -32001, message: "Unauthorized: valid user bearer token required" },
+        id: req.body?.id ?? null,
+      });
+      return;
+    }
+    auth = { userId: null, userJwt: null }; // handshake-only session
+  }
+  try {
+    const server = new McpServer({ name: "dk-assistant-mcp", version: "1.0.0" });
+    registerReadTools(server, auth);
+    const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+    res.on("close", () => { transport.close(); server.close(); });
+    await server.connect(transport);
+    await transport.handleRequest(req, res, req.body);
+  } catch (e) {
+    console.error("[/mcp] error:", e.message);
+    if (!res.headersSent) res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /mcp — valid idle SSE stream (Flowise treats a 405 here as a fatal error).
+app.get("/mcp", (req, res) => {
+  res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", "Connection": "keep-alive" });
+  res.write(": ok\n\n");
+  const keepalive = setInterval(() => { try { res.write(": keepalive\n\n"); } catch { /* closed */ } }, 25_000);
+  req.on("close", () => clearInterval(keepalive));
+});
+app.delete("/mcp", (_req, res) => res.status(200).json({ ok: true }));
+
+// ── LIVE STATE prefetch (optional gateway pre-step; same logic as the tool) ────
+app.post("/live-context", requireAuth(async (req, res) => {
+  try {
+    const { page, campaign_id, template_id, zone_id, referral_id } = req.body ?? {};
+    const ac = await loadActiveContext({ userJwt: req.auth.userJwt, page, campaign_id, template_id, zone_id, referral_id });
+    res.json({
+      userContextBlock: buildContextPrompt(ac),
+      liveStateBlock: buildLiveState(ac),
+      activeContext: ac,
+    });
+  } catch (e) {
+    console.error("[/live-context] error:", e.message);
+    res.status(500).json({ error: e.message });
+  }
+}));
+
+app.listen(PORT, () => console.log(`dk-assistant-mcp listening on :${PORT}`));

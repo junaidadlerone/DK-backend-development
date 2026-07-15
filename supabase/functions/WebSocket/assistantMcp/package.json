@@ -1,0 +1,17 @@
+{
+  "name": "dk-assistant-mcp",
+  "version": "0.1.0",
+  "description": "DoorKnocker+ assistant MCP server — exposes DK+ read (GET) endpoints as MCP tools for the Flowise agent, plus /live-context (page-aware context) and emit_ui generative-UI. Phase 2, GET-only (no mutations).",
+  "type": "module",
+  "main": "src/index.mjs",
+  "scripts": { "start": "node src/index.mjs" },
+  "engines": { "node": ">=20" },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "@supabase/supabase-js": "^2.45.0",
+    "ajv": "^8.20.0",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "zod": "^3.23.8"
+  }
+}
