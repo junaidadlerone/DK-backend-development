@@ -285,10 +285,14 @@ export async function chatHandler(req, res) {
       chatId: sessionId,
       overrideConfig: {
         sessionId,
-        // vars.userJwt feeds the Flowise customMCP header (Authorization: Bearer
-        // {{$vars.userJwt}}); page/ids are available to the system prompt too.
+        // The user token feeds the Flowise customMCP header. It is sent under BOTH
+        // names: the shared Flowise workspace has a static `userJwt` owned by the
+        // Nami flows, and duplicate variable names break {{$vars.…}} resolution —
+        // so the DK+ flow binds to the DK+-unique `userJwt2` (header:
+        // Bearer {{$vars.userJwt2}}). `userJwt` is kept for compatibility.
         vars: {
           userJwt: auth.userJwt,
+          userJwt2: auth.userJwt,
           page: ctx?.page ?? "",
           campaignId: ctx?.campaign_id ?? "",
           templateId: ctx?.template_id ?? "",
