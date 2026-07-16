@@ -20,6 +20,7 @@
 .env.production
 prod.env
 dev.env
+local.env
 
 # Supabase secrets
 supabase/.env
