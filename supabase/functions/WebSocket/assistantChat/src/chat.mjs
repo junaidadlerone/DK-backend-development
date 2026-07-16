@@ -107,6 +107,7 @@ const THINKING_LABELS = {
   // Flowise reports the agent's Pinecone knowledge attachment as a tool call too.
   doorknocker_product_docs: "Checking the product docs…",
   get_live_context: "Reading your screen…",
+  get_campaign_targeting: "Finding the campaign's targeting…",
   list_campaigns: "Looking up your campaigns…",
   get_campaign: "Fetching campaign details…",
   search_campaigns: "Searching your campaigns…",
@@ -199,6 +200,38 @@ async function inlineJobEvents(jobId, userJwt, send) {
   } catch { /* buffered-frame fetch is best-effort */ }
 }
 
+// ── live-context prefetch (Tier 2 latency) ────────────────────────────────────
+// Instead of instructing the model to CALL get_live_context (a full extra model
+// round-trip, ~10-20s), the gateway pulls the same blocks from the MCP's
+// /live-context endpoint (~0.5-1.5s of parallel edge calls) and injects them into
+// the question. Best-effort: any failure falls back to the old tool-call preamble.
+async function fetchLiveContext(ctx, userJwt) {
+  if (!ASSISTANT_MCP_URL) return null;
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 2500);
+    const r = await fetch(`${ASSISTANT_MCP_URL}/live-context`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${userJwt}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        page: ctx.page,
+        campaign_id: ctx.campaign_id,
+        template_id: ctx.template_id,
+        zone_id: ctx.zone_id,
+        referral_id: ctx.referral_id,
+      }),
+      signal: ctrl.signal,
+    });
+    clearTimeout(timer);
+    if (!r.ok) return null;
+    const data = await r.json();
+    if (!data?.userContextBlock || !data?.liveStateBlock) return null;
+    return data;
+  } catch {
+    return null; // prefetch is best-effort; the tool-call preamble covers the miss
+  }
+}
+
 // ── chat persistence (keeps the existing history sidebar working) ─────────────
 // Title = first user message, truncated with an ellipsis (chatKabuki's variant).
 function deriveTitle(message) {
@@ -268,15 +301,22 @@ export async function chatHandler(req, res) {
   try {
     if (isNewSession) await createSession(sessionId, auth.userId, message);
 
-    // Context preamble — hands the model the page + ids so it can call
-    // get_live_context with them. Ids are for tools only, never for display.
+    // Context injection — prefetch the live-context blocks and hand them to the
+    // model WITH the message, so most turns need no get_live_context round-trip.
+    // Prefetch failure falls back to the old tool-call preamble. Ids are for
+    // tools only, never for display.
     let question = message;
     if (ctx?.page) {
-      const bits = [`page=${ctx.page}`];
-      for (const k of ["campaign_id", "template_id", "zone_id", "referral_id"]) {
-        if (ctx[k]) bits.push(`${k}=${ctx[k]}`);
+      const live = await fetchLiveContext(ctx, auth.userJwt);
+      if (live) {
+        question = `${live.userContextBlock}\n${live.liveStateBlock}\n\n[The blocks above were fetched from the user's account THIS turn — treat them exactly like tool results: you may state their numbers and names directly without calling tools. Only call get_live_context if something on-screen is missing above. Never show IDs to the user.]\n\n${message}`;
+      } else {
+        const bits = [`page=${ctx.page}`];
+        for (const k of ["campaign_id", "template_id", "zone_id", "referral_id"]) {
+          if (ctx[k]) bits.push(`${k}=${ctx[k]}`);
+        }
+        question = `[current screen: ${bits.join(", ")} — call get_live_context with these for on-screen data; never show IDs to the user]\n\n${message}`;
       }
-      question = `[current screen: ${bits.join(", ")} — call get_live_context with these for on-screen data; never show IDs to the user]\n\n${message}`;
     }
 
     const predictionBody = {
