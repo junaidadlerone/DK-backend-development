@@ -245,6 +245,63 @@ export function registerReadTools(server, { userId, userJwt }) {
       return guard(res) ?? { scope: a.scope ?? "TARGETING_ZONES", data: payload(res) };
     });
 
+  t("get_campaign_targeting",
+    "The audience a specific campaign targets. Campaigns use either a location ZONE or an uploaded CSV address list; this resolves whichever the campaign has. Returns type:\"zone\" with zone_id + counts (show it visually with emit_ui ZoneMap{zoneId} — the app loads the addresses itself), or type:\"csv_list\" with up to 100 address rows (if rows carry lat/lng, show emit_ui ZoneMap with those points; otherwise a DataTable of the addresses), or type:\"none\" when no audience is attached yet. Use this whenever the user asks WHERE a campaign targets or which addresses it sends to.",
+    { campaign_id: z.string().describe("campaign UUID") },
+    async (a) => {
+      const campRes = await callApi("getCampaignById", "POST", null, userJwt, { id: a.campaign_id });
+      const g = guard(campRes); if (g) return g;
+      const camp = payload(campRes);
+      const listId = camp?.csv_address_list_id ?? null;
+
+      if (listId) {
+        const listRes = await callApi("getCSVAddressListById", "POST", null, userJwt, { csv_address_list_id: listId });
+        const lg = guard(listRes); if (lg) return lg;
+        const list = payload(listRes);
+        const rows = Array.isArray(list?.addresses) ? list.addresses : [];
+        const geocoded = Boolean(list?.center);
+        return {
+          type: "csv_list",
+          campaign: camp?.campaign_name ?? null,
+          list_id: listId,
+          address_count: rows.length,
+          geocoded,
+          center: list?.center ? { lat: list.center.lat, lng: list.center.long ?? list.center.lng } : null,
+          // Bounded projection (≤100) — enough for a ZoneMap/DataTable, never the full dump.
+          addresses: rows.slice(0, 100).map((r) => ({
+            address: r.address ?? r.full_address ?? ([r.line1, r.city, r.state].filter(Boolean).join(", ") || null),
+            lat: r.lat ?? null,
+            lng: r.long ?? r.lng ?? null,
+            kind: r.residential === false ? "business" : "home",
+            status: r.verification_details?.status === "undeliverable" ? "skipped" : "valid",
+          })),
+          truncated: rows.length > 100,
+        };
+      }
+
+      const zonesRes = await callApi("getAllAddressZones", "GET", null, userJwt);
+      const zg = guard(zonesRes); if (zg) return zg;
+      const zones = (payload(zonesRes) ?? []).filter((z2) => z2?.campaign_id === a.campaign_id);
+      if (!zones.length) return { type: "none", campaign: camp?.campaign_name ?? null, note: "No zone or address list is attached to this campaign yet." };
+      return {
+        type: "zone",
+        campaign: camp?.campaign_name ?? null,
+        zones: zones.map((z2) => {
+          const addrs = Array.isArray(z2.addresses) ? z2.addresses : [];
+          return {
+            zone_id: z2.id,
+            mode: z2.mode ?? null,
+            search_type: z2.search_type ?? null,
+            center: z2.center ? { lat: z2.center.lat, lng: z2.center.long ?? z2.center.lng, radius: z2.center.radius ?? null } : null,
+            address_count: addrs.length,
+            residential_count: addrs.filter((x) => x?.residential).length,
+            business_count: addrs.filter((x) => x && x.residential === false).length,
+            created_at: z2.created_at ?? null,
+          };
+        }),
+      };
+    });
+
   // ── Billing (ADMIN-only — 403 handled gracefully) ─────────────────────────────
   t("get_billing_history", "The organization's billing/charge history. Requires an admin role.",
     { limit: z.number().optional(), starting_after: z.string().optional() },
