@@ -59,6 +59,35 @@ const bundleRow = (b) => ({
   isAgencyTemplate: b.isAgencyTemplate ?? false,
 });
 
+// ── Agency-workspace guard ─────────────────────────────────────────────────────
+// When the active org is an agency it owns NO campaigns/referrals/analytics/billing of its
+// own (those live in the client sub-orgs), so org-scoped tools come back empty/zero. This note
+// steers the model to the agency rollup (get_agency_overview) or to having the user switch into
+// a client, instead of reporting a misleading "0". Backstop to the system-prompt guidance.
+const AGENCY_NOTE =
+  "This is your agency workspace — it holds no campaigns, referrals, analytics, or billing of its own; those live in your client organizations. Use the agency overview for portfolio totals, or switch into a specific client organization to see its detail.";
+
+const agencyCache = new Map(); // userJwt -> { isAgency, expiresAt }
+async function activeOrgIsAgency(userJwt) {
+  const hit = agencyCache.get(userJwt);
+  if (hit && hit.expiresAt > Date.now()) return hit.isAgency;
+  const res = await callApi("getOrganization", "GET", null, userJwt);
+  const o = res && !res.__error ? payload(res) : null;
+  const isAgency = !!(o?.isAgencyAccount ?? o?.is_agency);
+  agencyCache.set(userJwt, { isAgency, expiresAt: Date.now() + 60_000 });
+  if (agencyCache.size > 5000) agencyCache.clear();
+  return isAgency;
+}
+
+// Attach the agency note to a successful result when the active org is an agency. `check` gates
+// the (cached) lookup: pass `list.length === 0` for list/search tools so data-rich non-agency
+// turns skip it, or `true` for analytics tools (which return zeros, not empties).
+async function maybeAgencyNote(userJwt, result, check) {
+  if (!check) return result;
+  if (!(await activeOrgIsAgency(userJwt))) return result;
+  return { ...result, agency_workspace: true, agency_note: AGENCY_NOTE };
+}
+
 export function registerReadTools(server, { userId, userJwt }) {
   const R = { readOnlyHint: true };
   const t = (name, description, inputSchema, handler) =>
@@ -84,7 +113,9 @@ export function registerReadTools(server, { userId, userJwt }) {
     { page: z.number().optional(), limit: z.number().optional().describe("default 10, max 100") },
     async (a) => {
       const res = await callApi("getAllCampaigns", "GET", { page: a.page ?? 1, limit: a.limit ?? 10 }, userJwt);
-      return guard(res) ?? { campaigns: (payload(res) ?? []).map(campaignRow), pagination: res?.pagination ?? null };
+      const g = guard(res); if (g) return g;
+      const campaigns = (payload(res) ?? []).map(campaignRow);
+      return maybeAgencyNote(userJwt, { campaigns, pagination: res?.pagination ?? null }, campaigns.length === 0);
     });
 
   t("get_campaign", "Full detail for one campaign: status, cost breakdown (postcards + address verification), total spent, template bundle, start date.",
@@ -109,14 +140,18 @@ export function registerReadTools(server, { userId, userJwt }) {
     },
     async (a) => {
       const res = await callApi("searchCampaign", "POST", null, userJwt, { query: a.query, filters: a.filters, page: a.page ?? 1, limit: a.limit ?? 10 });
-      return guard(res) ?? { campaigns: (payload(res) ?? []).map(campaignRow), pagination: res?.pagination ?? null };
+      const g = guard(res); if (g) return g;
+      const campaigns = (payload(res) ?? []).map(campaignRow);
+      return maybeAgencyNote(userJwt, { campaigns, pagination: res?.pagination ?? null }, campaigns.length === 0);
     });
 
   t("get_campaign_history", "The activity log for one campaign (who changed what, when).",
     { id: z.string().describe("campaign UUID") },
     async (a) => {
       const res = await callApi("getCampaignHistory", "POST", null, userJwt, { id: a.id });
-      return guard(res) ?? { history: payload(res)?.history ?? payload(res) ?? [] };
+      const g = guard(res); if (g) return g;
+      const history = payload(res)?.history ?? payload(res) ?? [];
+      return maybeAgencyNote(userJwt, { history }, Array.isArray(history) && history.length === 0);
     });
 
   t("get_campaign_statuses", "The list of valid campaign status names/ids (for filtering). Small enum.",
@@ -132,7 +167,8 @@ export function registerReadTools(server, { userId, userJwt }) {
     { type: z.string(), campaign_ids: z.array(z.string()).optional(), last_24hours: z.boolean().optional(), last_week: z.boolean().optional(), last_month: z.boolean().optional() },
     async (a) => {
       const res = await callApi("getAnalyticsV2", "POST", null, userJwt, { type: a.type, campaign_ids: a.campaign_ids, last_24hours: a.last_24hours, last_week: a.last_week, last_month: a.last_month });
-      return guard(res) ?? { type: a.type, data: payload(res) };
+      const g = guard(res); if (g) return g;
+      return maybeAgencyNote(userJwt, { type: a.type, data: payload(res) }, true);
     });
 
   t("get_summary_analytics",
@@ -140,7 +176,8 @@ export function registerReadTools(server, { userId, userJwt }) {
     { type: z.string() },
     async (a) => {
       const res = await callApi("getAnalytics", "POST", null, userJwt, { type: a.type });
-      return guard(res) ?? { type: a.type, data: payload(res) };
+      const g = guard(res); if (g) return g;
+      return maybeAgencyNote(userJwt, { type: a.type, data: payload(res) }, true);
     });
 
   t("get_analytics_page",
@@ -148,7 +185,8 @@ export function registerReadTools(server, { userId, userJwt }) {
     { type: z.string(), selected_campaign_id: z.string().optional(), selected_start_date: z.string().optional(), selected_end_date: z.string().optional() },
     async (a) => {
       const res = await callApi("getAnalyticsPageData", "POST", null, userJwt, { type: a.type, selected_campaign_id: a.selected_campaign_id, selected_start_date: a.selected_start_date, selected_end_date: a.selected_end_date });
-      return guard(res) ?? { type: a.type, data: payload(res)?.analytics_data ?? payload(res) };
+      const g = guard(res); if (g) return g;
+      return maybeAgencyNote(userJwt, { type: a.type, data: payload(res)?.analytics_data ?? payload(res) }, true);
     });
 
   // ── Referrals ─────────────────────────────────────────────────────────────────
@@ -156,7 +194,9 @@ export function registerReadTools(server, { userId, userJwt }) {
     { page: z.number().optional(), limit: z.number().optional(), showOnlyActive: z.boolean().optional() },
     async (a) => {
       const res = await callApi("getAllReferrals", "POST", { page: a.page ?? 1, limit: a.limit ?? 10 }, userJwt, { showOnlyActive: a.showOnlyActive });
-      return guard(res) ?? { referrals: (payload(res) ?? []).map(referralRow), pagination: res?.pagination ?? null };
+      const g = guard(res); if (g) return g;
+      const referrals = (payload(res) ?? []).map(referralRow);
+      return maybeAgencyNote(userJwt, { referrals, pagination: res?.pagination ?? null }, referrals.length === 0);
     });
 
   t("get_referral", "Full detail for one referral (referrer, job site address, job details, status, linked campaign).",
@@ -170,7 +210,9 @@ export function registerReadTools(server, { userId, userJwt }) {
     { query: z.string().optional(), filters: z.object({ job_type: z.object({ id: z.number().optional(), name: z.string().optional() }).optional(), status: z.object({ id: z.number().optional(), name: z.string().optional() }).optional(), value: z.number().optional() }).optional(), page: z.number().optional(), limit: z.number().optional() },
     async (a) => {
       const res = await callApi("searchReferral", "POST", null, userJwt, { query: a.query, filters: a.filters, page: a.page ?? 1, limit: a.limit ?? 10 });
-      return guard(res) ?? { referrals: (payload(res) ?? []).map(referralRow), pagination: res?.pagination ?? null };
+      const g = guard(res); if (g) return g;
+      const referrals = (payload(res) ?? []).map(referralRow);
+      return maybeAgencyNote(userJwt, { referrals, pagination: res?.pagination ?? null }, referrals.length === 0);
     });
 
   // ── Org / user / notifications ─────────────────────────────────────────────────
@@ -242,7 +284,8 @@ export function registerReadTools(server, { userId, userJwt }) {
     { scope: z.enum(["TARGETING_ZONES", "ADDRESS_COLLECTION"]).optional() },
     async (a) => {
       const res = await callApi("getAnalytics", "POST", null, userJwt, { type: a.scope ?? "TARGETING_ZONES" });
-      return guard(res) ?? { scope: a.scope ?? "TARGETING_ZONES", data: payload(res) };
+      const g = guard(res); if (g) return g;
+      return maybeAgencyNote(userJwt, { scope: a.scope ?? "TARGETING_ZONES", data: payload(res) }, true);
     });
 
   t("get_campaign_targeting",
@@ -307,7 +350,9 @@ export function registerReadTools(server, { userId, userJwt }) {
     { limit: z.number().optional(), starting_after: z.string().optional() },
     async (a) => {
       const res = await callApi("getBillingHistory", "POST", null, userJwt, { limit: a.limit ?? 20, starting_after: a.starting_after });
-      return guard(res) ?? { transactions: payload(res)?.transactions ?? payload(res) ?? [], has_more: res?.has_more ?? false };
+      const g = guard(res); if (g) return g;
+      const transactions = payload(res)?.transactions ?? payload(res) ?? [];
+      return maybeAgencyNote(userJwt, { transactions, has_more: res?.has_more ?? false }, Array.isArray(transactions) && transactions.length === 0);
     });
 
   t("get_payment_methods", "Cards on file for the organization. Requires an admin role.",
@@ -321,7 +366,9 @@ export function registerReadTools(server, { userId, userJwt }) {
     { campaign_id: z.string() },
     async (a) => {
       const res = await callApi("getPaymentHistoryForCampaign", "POST", null, userJwt, { campaign_id: a.campaign_id });
-      return guard(res) ?? { payments: payload(res)?.payments ?? payload(res) ?? [], total: res?.total ?? null };
+      const g = guard(res); if (g) return g;
+      const payments = payload(res)?.payments ?? payload(res) ?? [];
+      return maybeAgencyNote(userJwt, { payments, total: res?.total ?? null }, Array.isArray(payments) && payments.length === 0);
     });
 
   // ── Agency (only meaningful for agency accounts; self-gated) ──────────────────
@@ -334,10 +381,30 @@ export function registerReadTools(server, { userId, userJwt }) {
       return { organizations: d?.organizations ?? [], summary: d?.summary ?? null, pagination: d?.pagination ?? null };
     });
 
-  t("get_agency_members", "For agency accounts: the members of the caller's agency organization.",
+  t("get_agency_members",
+    "For agency accounts: every team member across ALL organizations the caller manages (owns or admins) — the agency org plus its client organizations — each with their role and which organizations they belong to. This is the agency Team view.",
     {},
     async () => {
-      const res = await callApi("getAgencyAccountOrganizationMembers", "GET", null, userJwt);
-      return guard(res) ?? { members: payload(res)?.members ?? payload(res) ?? [] };
+      // getOrganizationV3 aggregates members across all managed orgs (the frontend agency Team
+      // page uses it); getAgencyAccountOrganizationMembers only returned one owned org's members.
+      const res = await callApi("getOrganizationV3", "GET", null, userJwt);
+      const g = guard(res); if (g) return g;
+      const d = payload(res);
+      const members = (d?.members ?? d ?? []).map((m) => ({
+        id: m.id, full_name: m.full_name ?? m.name ?? null, email: m.email ?? null,
+        role: m.role ?? m.member_role ?? null,
+        organizations: Array.isArray(m.organizations)
+          ? m.organizations.map((o) => ({ id: o.id, name: o.business_name ?? o.name ?? null, role: o.role ?? null }))
+          : undefined,
+      }));
+      return { members };
+    });
+
+  t("list_agency_template_bundles",
+    "For agency accounts: the agency's own postcard design bundles across its organizations (name, size, status) — the 'Custom'/agency designs on the agency Templates page. Excludes universal/library and shared-in designs (use list_template_bundles for those). Compact; use get_template_bundle for one bundle's full detail.",
+    { page: z.number().optional(), limit: z.number().optional(), postcardSize: z.enum(["4x6", "6x9", "6x11"]).optional(), sort: z.string().optional() },
+    async (a) => {
+      const res = await callApi("getAllTemplatesBundlesV3", "GET", { page: a.page ?? 1, limit: a.limit ?? 10, postcardSize: a.postcardSize, sort: a.sort }, userJwt);
+      return guard(res) ?? { bundles: (payload(res) ?? []).map(bundleRow), pagination: res?.pagination ?? null };
     });
 }
