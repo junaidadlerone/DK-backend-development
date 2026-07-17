@@ -72,6 +72,8 @@ const PATH_RULES = [
   [/^\/targeting\/addresses/, () => ({ page: "addresses" })],
   [/^\/targeting\/exclusions/, () => ({ page: "exclusions" })],
   [/^\/analytics/, () => ({ page: "analytics" })],
+  [/^\/agency\/team/, () => ({ page: "agency_team" })],
+  [/^\/agency\/templates/, () => ({ page: "agency_templates" })],
   [/^\/agency/, () => ({ page: "agency" })],
   [/^\/team/, () => ({ page: "team" })],
   [/^\/settings/, () => ({ page: "settings" })],
@@ -79,13 +81,31 @@ const PATH_RULES = [
 ];
 const ENTITY_ID_KEY = { campaign: "campaign_id", template: "template_id", templateBundle: "template_id", zone: "zone_id", referral: "referral_id" };
 
+// Carry the active-organization signal (+ a one-shot switch marker) through unchanged, in
+// whichever context shape arrived. Used to keep the agent scoped to the current org and to
+// have it acknowledge a mid-chat switch.
+function attachOrg(out, context) {
+  if (out && context.organization && typeof context.organization === "object") {
+    out.organization = {
+      id: context.organization.id ?? null,
+      name: context.organization.name ?? null,
+      isAgency: !!context.organization.isAgency,
+    };
+  }
+  if (out && context.orgSwitched) {
+    out.orgSwitched = true;
+    out.previousOrgName = context.previousOrgName ?? null;
+  }
+  return out;
+}
+
 export function normalizeContext(context) {
   if (!context || typeof context !== "object") return null;
   // Stage-F shape: already tokenized (lowercase page, snake_case ids).
   if (context.campaign_id || context.template_id || context.zone_id || context.referral_id
       || (typeof context.page === "string" && /^[a-z_]+$/.test(context.page) && !context.path)) {
     const { page, campaign_id, template_id, zone_id, referral_id } = context;
-    return { page: page ?? "unknown", campaign_id, template_id, zone_id, referral_id };
+    return attachOrg({ page: page ?? "unknown", campaign_id, template_id, zone_id, referral_id }, context);
   }
   // Legacy shape: derive from path (+ entity, + query string).
   const rawPath = typeof context.path === "string" ? context.path : "";
@@ -99,7 +119,7 @@ export function normalizeContext(context) {
   out ??= { page: pathname.replace(/^\//, "") || String(context.page ?? "unknown").toLowerCase() };
   const ent = context.entity;
   if (ent?.id && ENTITY_ID_KEY[ent.type]) out[ENTITY_ID_KEY[ent.type]] = ent.id;
-  return out;
+  return attachOrg(out, context);
 }
 
 // ── thinking labels (Tier 2) — one per MCP tool ───────────────────────────────
@@ -133,6 +153,7 @@ const THINKING_LABELS = {
   get_campaign_payments: "Looking up campaign charges…",
   get_agency_overview: "Rolling up your client accounts…",
   get_agency_members: "Loading your agency team…",
+  list_agency_template_bundles: "Loading your agency designs…",
 };
 const thinkingLabel = (tool) => THINKING_LABELS[tool] ?? `Running ${String(tool).replace(/_/g, " ")}…`;
 
@@ -317,6 +338,21 @@ export async function chatHandler(req, res) {
         }
         question = `[current screen: ${bits.join(", ")} — call get_live_context with these for on-screen data; never show IDs to the user]\n\n${message}`;
       }
+    }
+
+    // Org-awareness: tell the model which organization is active, and on a mid-chat switch have
+    // it acknowledge the change and re-scope. Everything the agent reads is already scoped to
+    // this org server-side; this keeps the model's framing correct (the chat is NOT reset).
+    if (ctx?.organization?.name || ctx?.orgSwitched) {
+      const orgName = ctx?.organization?.name ?? "the current organization";
+      let orgLine = ctx?.organization?.name
+        ? `[active organization: ${orgName}${ctx.organization.isAgency ? " (agency workspace)" : ""}]`
+        : "";
+      if (ctx?.orgSwitched) {
+        const from = ctx.previousOrgName ? `from ${ctx.previousOrgName} ` : "";
+        orgLine += `${orgLine ? "\n" : ""}[The user just switched organizations ${from}to ${orgName}. In your NEXT reply, briefly tell them you noticed the switch and are now answering about ${orgName}. Scope everything to ${orgName}; disregard other organizations' data from earlier in this chat. If they want another organization's data, tell them to switch to it.]`;
+      }
+      question = `${orgLine}\n\n${question}`;
     }
 
     const predictionBody = {

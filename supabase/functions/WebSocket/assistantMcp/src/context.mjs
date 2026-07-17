@@ -210,6 +210,9 @@ export async function loadActiveContext({ userJwt, page, campaign_id, template_i
       break;
 
     case "agency":
+    case "agency_team":
+    case "agency_templates":
+      // The client rollup is useful context on any agency page.
       tasks.push(
         callApi("getAgencyOverview", "GET", { page: 1 }, userJwt).then((res) => {
           const d = payload(ok(res));
@@ -224,6 +227,34 @@ export async function loadActiveContext({ userJwt, page, campaign_id, template_i
           }
         }),
       );
+      // On the team page, prefetch members across ALL managed orgs (getOrganizationV3).
+      if (pageBase === "agency_team") {
+        tasks.push(
+          callApi("getOrganizationV3", "GET", null, userJwt).then((res) => {
+            const members = payload(ok(res))?.members ?? payload(ok(res));
+            if (Array.isArray(members)) {
+              ac.agency_members = members.slice(0, 30).map((m) => ({
+                name: m.full_name ?? m.name ?? null, role: m.role ?? m.member_role ?? null,
+                orgs: Array.isArray(m.organizations) ? m.organizations.map((o) => o.business_name ?? o.name).filter(Boolean) : undefined,
+              }));
+            }
+          }),
+        );
+      }
+      // On the templates page, prefetch the agency's own designs (V3).
+      if (pageBase === "agency_templates") {
+        tasks.push(
+          callApi("getAllTemplatesBundlesV3", "GET", { page: 1, limit: 8 }, userJwt).then((res) => {
+            const list = payload(ok(res));
+            if (Array.isArray(list)) {
+              ac.agency_templates = list.slice(0, 8).map((b) => ({
+                bundle_id: b.id ?? b.bundle_id, name: b.name ?? b.bundle_name ?? null,
+                postcardSize: b.postcardSize ?? b.postcard_size ?? null,
+              }));
+            }
+          }),
+        );
+      }
       break;
 
     default:
@@ -314,6 +345,14 @@ export function buildContextPrompt(ac) {
       out.push(`- Client organizations (showing ${ac.agency.clients.length}):`);
       for (const c of ac.agency.clients) out.push(`  • ${c.name} — ${line([c.status, c.active_campaigns != null && `${c.active_campaigns} active campaigns`, c.total_spend != null && `spend ${c.total_spend}`])}`);
     }
+  }
+  if (ac.agency_members?.length) {
+    out.push(`- Agency team (members across your organizations, showing ${ac.agency_members.length}):`);
+    for (const m of ac.agency_members) out.push(`  • ${m.name ?? "Unknown"} — ${line([m.role, m.orgs?.length && `in ${m.orgs.join(", ")}`])}`);
+  }
+  if (ac.agency_templates?.length) {
+    out.push(`- Agency designs (showing ${ac.agency_templates.length}):`);
+    for (const b of ac.agency_templates) out.push(`  • ${b.name ?? "Untitled"}${b.postcardSize ? ` — ${b.postcardSize}` : ""}${ref("template_id", b.bundle_id)}`);
   }
 
   out.push(RULE);
