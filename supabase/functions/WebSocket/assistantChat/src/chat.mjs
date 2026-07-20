@@ -1,17 +1,18 @@
 /**
- * POST /chat — DoorKnocker+ assistant, Tiers 1–2.
+ * POST /chat — DoorKnocker+ assistant, Tiers 1–3 (3A).
  *
  * The namiGateway spine (ai_audiobook_backend/.../namiGateway/src/index.mjs): validate the
  * user's Supabase JWT, call Flowise's streaming Prediction API, re-frame its SSE events into
  * the frontend contract, and mirror messages into chat_sessions / chat_messages.
  *
- *   body     { message, session_id?, context? }   (mode accepted and ignored until Tier 3)
+ *   body     { message, session_id?, context? }   (mode accepted and ignored — manual-approval only)
+ *            message may be an HITL sentinel (__dk_hitl_proceed__/__dk_hitl_reject__) → resume
  *   auth     Authorization: Bearer <user's Supabase JWT>
  *   stream   data: {delta}                        token text (leak-filtered, de-dashed)
  *            data: {type:"thinking", delta}       live tool-call steps (Tier 2)
- *            data: {type:"ui", ...}               generative-UI surfaces from emit_ui (Tier 2)
+ *            data: {type:"ui", ...}               generative-UI surfaces from emit_ui + approval cards
  *            data: {error}                        one friendly line (raw detail stays in logs)
- *            data: {done, session_id, awaiting_approval:false}
+ *            data: {done, session_id, awaiting_approval}   awaiting_approval=true after a pause
  *
  * Tier-2 branches (re-enabled from namiGateway): vars threading (userJwt + page ids →
  * overrideConfig.vars → Flowise customMCP header), context preamble injection,
@@ -20,8 +21,12 @@
  * entity?} (page token derived from path — zero frontend changes needed) and the Stage-F
  * {page:"dashboard", campaign_id?, template_id?, zone_id?, referral_id?}.
  *
- * Still absent (Tier 3): HITL sentinels/human_input, auto/manual modes, refresh frames,
- * {type:"job"} announcements. Session-ownership check on resume is from chatKabuki.
+ * Tier-3 (3A): HITL pause/resume. The Flowise "write" customMCP entry (Require-Human-Input ON)
+ * pauses before any mutating tool and emits an `action` event; that becomes a perm_ approval card
+ * + awaiting_approval:true. The card's buttons send a sentinel, converted here to a Flowise
+ * humanInput {proceed|reject} resume against AGENT_NODE_ID. Reject suppresses model output for a
+ * deterministic cancel line. Still deferred: auto/manual modes, response-feedback, charge cards
+ * (3B), refresh frames, {type:"job"} announcements. Session-ownership check on resume is chatKabuki.
  */
 
 import { randomUUID } from "node:crypto";
@@ -157,6 +162,47 @@ const THINKING_LABELS = {
 };
 const thinkingLabel = (tool) => THINKING_LABELS[tool] ?? `Running ${String(tool).replace(/_/g, " ")}…`;
 
+// ── HITL (Tier 3) — pause/resume for mutating actions ─────────────────────────
+// The Flowise "write" customMCP entry has Require-Human-Input ON, so Flowise pauses before a
+// write tool runs and emits an `action` event (ending the stream). We turn that into an approval
+// card; the card's Approve/Reject buttons send these sentinels, which the NEXT /chat POST
+// converts to a Flowise `humanInput` resume against the agent node. Manual-approval only in this
+// build — no auto/manual mode; every write in the write entry pauses.
+const AGENT_NODE_ID = process.env.AGENT_NODE_ID ?? "agentAgentflow_0";
+const HITL_PROCEED = "__dk_hitl_proceed__";
+const HITL_REJECT = "__dk_hitl_reject__";
+const PERM_TITLES = {
+  create_referral: "Create a new referral",
+  update_referral: "Update this referral",
+  delete_referral: "Delete this referral",
+  delete_referral_image: "Delete this image",
+  mark_notification: "Update a notification",
+  clear_notification: "Clear a notification",
+  clear_notifications: "Clear notifications",
+  update_organization: "Update your organization details",
+  update_profile: "Update your profile",
+  set_default_payment_method: "Set your default payment method",
+};
+const permissionTitle = (tool) => PERM_TITLES[tool] ?? `Run: ${String(tool ?? "this action").replace(/_/g, " ")}`;
+// Plain Approve/Reject card for non-charging writes (charging actions get a cost+checkbox
+// variant in Phase 3B). Rendered through the same GenUI catalog the read tools use, so the
+// frontend's existing perm_-surface handling (retract on click, exclude from history) applies.
+const buildApprovalCard = (actionId, sessionId, tool) => cleanUiFrame({
+  type: "ui",
+  surface_id: `perm_${actionId ?? sessionId}`,
+  mode: "replace",
+  root: "perm-card",
+  components: [
+    { id: "perm-card", component: { Card: { title: "Approval needed", children: ["perm-title", "perm-cap", "perm-row"] } } },
+    { id: "perm-title", component: { Text: { text: permissionTitle(tool), variant: "subtitle" } } },
+    { id: "perm-cap", component: { Text: { text: "Approve to run it, or reject to cancel.", variant: "caption" } } },
+    { id: "perm-row", component: { Row: { children: ["perm-approve", "perm-reject"], gap: "sm" } } },
+    { id: "perm-approve", component: { Button: { label: "Approve", tone: "primary", action: { type: "send", display: "Approved", prompt: HITL_PROCEED } } } },
+    { id: "perm-reject", component: { Button: { label: "Reject", tone: "ghost", action: { type: "send", display: "Rejected", prompt: HITL_REJECT } } } },
+  ],
+  data_model: {},
+});
+
 // ── leak filters + redaction (Tier 2) ─────────────────────────────────────────
 // Flowise synthesizes "Attempting to use tool…" text around tool pauses, and
 // deepseek can leak raw tool markup; strip both plus any literal emit_ui markup.
@@ -281,13 +327,23 @@ export async function chatHandler(req, res) {
   const auth = await authenticate(req);
   if (!auth) { res.status(401).json({ error: "Unauthorized" }); return; }
 
-  const { message, session_id, context } = req.body ?? {};
-  // `mode` may also arrive — accepted and ignored until Tier 3.
-  if (typeof message !== "string" || !message.trim()) {
+  let { message } = req.body ?? {};
+  const { session_id, context } = req.body ?? {};
+  // HITL resume: the approval card's Approve/Reject buttons send a sentinel as the message.
+  // Convert it to a Flowise humanInput {proceed|reject} and drop the message so this turn resumes
+  // the paused write instead of starting a new one. (`mode` may also arrive — ignored; this build
+  // is manual-approval only.)
+  let human_input = null;
+  if (message === HITL_PROCEED) { human_input = { type: "proceed" }; message = undefined; }
+  else if (message === HITL_REJECT) { human_input = { type: "reject" }; message = undefined; }
+  const isResume = !!human_input;
+  const isReject = isResume && human_input.type === "reject";
+  if (!isResume && (typeof message !== "string" || !message.trim())) {
     res.status(400).json({ error: "message is required" });
     return;
   }
-  const ctx = normalizeContext(context);
+  // On resume there is no page/org context to inject — Flowise just continues the paused node.
+  const ctx = isResume ? null : normalizeContext(context);
 
   // Session: mint server-side on the first turn; on resume, verify OWNERSHIP
   // (chatKabuki's check — a session id that isn't this user's is a 404, G§4.6).
@@ -326,7 +382,9 @@ export async function chatHandler(req, res) {
     // model WITH the message, so most turns need no get_live_context round-trip.
     // Prefetch failure falls back to the old tool-call preamble. Ids are for
     // tools only, never for display.
-    let question = message;
+    // On resume, the "question" is just the proceed/reject signal; humanInput (below) carries the
+    // real intent. On a normal turn it's the user's message with context prepended.
+    let question = isResume ? (isReject ? "rejected" : "proceed") : message;
     if (ctx?.page) {
       const live = await fetchLiveContext(ctx, auth.userJwt);
       if (live) {
@@ -373,6 +431,12 @@ export async function chatHandler(req, res) {
         },
       },
     };
+    // HITL resume: tell Flowise to continue the paused agent node with the user's decision. The
+    // vars.userJwt above is the user's CURRENT token, so when Flowise resumes and finally runs the
+    // gated write tool, its customMCP Authorization header carries a fresh, valid bearer.
+    if (isResume) {
+      predictionBody.humanInput = { type: human_input.type, startNodeId: AGENT_NODE_ID };
+    }
 
     // ── Delta emitter (namiGateway pattern) ───────────────────────────────────
     // Buffers with a keep-back margin so split LEAK_MARKERS are still caught, cuts
@@ -417,17 +481,35 @@ export async function chatHandler(req, res) {
       return "Something went wrong on my end. Please try that again in a moment.";
     };
     let turnError = null;
+    // HITL: the tool Flowise is about to run (captured from calledTools) and whether this turn
+    // ended by pausing for approval (drives the done frame's awaiting_approval + composer lock).
+    let pendingAction = null;
+    let sawPermission = false;
 
     const seenJobIds = new Set();
     const handleEvent = async (ev, data) => {
       switch (ev) {
-        case "token": emitDelta(data); break;
+        // On a reject resume the model tends to emit unreliable filler; suppress it and let the
+        // deterministic "cancelled" line (below) stand in.
+        case "token": if (!isReject) emitDelta(data); break;
         case "error": turnError = data; break;
-        // Tier 2: a tool has been CALLED but not yet returned → live thinking step.
+        // Tier 2: a tool has been CALLED but not yet returned → live thinking step. Tier 3: also
+        // remember it as the pending action, so if Flowise pauses next we can title the card.
         case "calledTools":
+          if (isReject) break;
           for (const t of (Array.isArray(data) ? data : [])) {
-            if (t?.tool && !t?.toolOutput) send({ type: "thinking", delta: thinkingLabel(t.tool) });
+            if (t?.tool && !t?.toolOutput) {
+              send({ type: "thinking", delta: thinkingLabel(t.tool) });
+              pendingAction = { tool: t.tool, args: t.toolInput ?? {} };
+            }
           }
+          break;
+        // Tier 3: Flowise paused before running a write tool (the Require-Human-Input entry) and
+        // emitted `action`, ending the stream. Turn it into an approval card and mark the turn as
+        // awaiting approval; the user's Approve/Reject resumes it on the next POST.
+        case "action":
+          sawPermission = true;
+          send(buildApprovalCard(data?.id, sessionId, pendingAction?.tool));
           break;
         // Tier 2: a tool RETURNED — if it was emit_ui, drain its buffered {type:"ui"}
         // frame from the MCP jobs side channel onto this stream.
@@ -490,8 +572,9 @@ export async function chatHandler(req, res) {
     };
 
     await runAttempt();
-    // Retry once, but only if nothing user-visible streamed yet (namiGateway's rule).
-    if (turnError && !assistantReply && !upstreamAbort.signal.aborted) {
+    // Retry once, but only if nothing user-visible streamed yet (namiGateway's rule). Never retry
+    // a resume — re-sending humanInput could double-execute the approved action.
+    if (turnError && !assistantReply && !isResume && !upstreamAbort.signal.aborted) {
       console.warn("[/chat] recoverable turn error — retrying once");
       turnError = null;
       pendingText = "";
@@ -502,11 +585,18 @@ export async function chatHandler(req, res) {
 
     flushDeltas();
 
+    // Reject: the model's post-reject output is suppressed above, so stand in a deterministic line.
+    if (isReject && !assistantReply && !turnError) {
+      assistantReply = "Okay, I've cancelled that. What would you like to do instead?";
+      send({ delta: assistantReply });
+    }
+
     if (turnError) send({ error: friendlyError(turnError) });
-    // Persist the user's message always (their history should show what they asked),
-    // the assistant's reply only if something actually streamed.
-    await persistTurn(sessionId, message, assistantReply || null);
-    send({ done: true, session_id: sessionId, awaiting_approval: false });
+    // Persist the user's message (their history should show what they asked) and the assistant's
+    // reply if something streamed. On a resume `message` is undefined — no user row (the frontend
+    // already showed the "Approved"/"Rejected" bubble); persist only the outcome text.
+    await persistTurn(sessionId, message ?? null, assistantReply || null);
+    send({ done: true, session_id: sessionId, awaiting_approval: sawPermission });
     res.end();
   } catch (e) {
     console.error("[/chat] error:", e.message);
