@@ -16,6 +16,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { PORT } from "./env.mjs";
 import { authenticate, requireAuth } from "./auth.mjs";
 import { registerReadTools } from "./tools-read.mjs";
+import { registerWriteTools } from "./tools-write.mjs";
 import { registerGenUiTools } from "./tools-genui.mjs";
 import { jobEventsHandler } from "./jobs.mjs";
 import { loadActiveContext, buildContextPrompt, buildLiveState } from "./context.mjs";
@@ -56,6 +57,7 @@ app.post("/mcp", async (req, res) => {
   try {
     const server = new McpServer({ name: "dk-assistant-mcp", version: "1.0.0" });
     registerReadTools(server, auth);
+    registerWriteTools(server, auth);
     registerGenUiTools(server, auth);
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     res.on("close", () => { transport.close(); server.close(); });
