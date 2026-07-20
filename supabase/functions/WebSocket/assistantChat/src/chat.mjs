@@ -591,11 +591,19 @@ export async function chatHandler(req, res) {
       send({ delta: assistantReply });
     }
 
-    if (turnError) send({ error: friendlyError(turnError) });
+    // Surface a turn error as one friendly line. Skip when the client aborted (stop button /
+    // unmount): they stopped it deliberately, never saw an error, and send() would no-op anyway.
+    let errorLine = null;
+    if (turnError && !upstreamAbort.signal.aborted) {
+      errorLine = friendlyError(turnError);
+      send({ error: errorLine });
+    }
     // Persist the user's message (their history should show what they asked) and the assistant's
-    // reply if something streamed. On a resume `message` is undefined — no user row (the frontend
-    // already showed the "Approved"/"Rejected" bubble); persist only the outcome text.
-    await persistTurn(sessionId, message ?? null, assistantReply || null);
+    // OUTCOME: the streamed reply, or failing that the error line the user just saw. Without the
+    // error fallback a failed turn saved only the user row, so on reopen it showed as a question
+    // with no response (the "agent responses missing from history" bug). On a resume `message` is
+    // undefined — no user row (the frontend already showed the Approved/Rejected bubble).
+    await persistTurn(sessionId, message ?? null, assistantReply || errorLine || null);
     send({ done: true, session_id: sessionId, awaiting_approval: sawPermission });
     res.end();
   } catch (e) {
