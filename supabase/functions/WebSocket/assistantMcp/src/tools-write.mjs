@@ -56,6 +56,27 @@ const jobDetails = z.object({
   notes: z.string().optional(),
 }).optional();
 
+// Which finalize-required referral fields (per the frontend CreateReferral form) are still
+// missing, so the agent can prompt for exactly those. Consent + signature are NOT here — they are
+// the user's to complete in the app and the agent never fills them.
+function referralMissingToFinalize(hoi, jd) {
+  const addr = hoi?.address ?? {};
+  const miss = [];
+  if (!hoi?.name) miss.push("referrer_name");
+  if (!addr.country) miss.push("country");
+  if (!addr.street_address) miss.push("street_address");
+  if (!addr.city) miss.push("city");
+  if (!addr.state) miss.push("state");
+  if (!addr.zip) miss.push("zip");
+  if (!(jd?.job_type && (jd.job_type.id || jd.job_type.name))) miss.push("job_type");
+  if (!(typeof jd?.value === "number" && jd.value > 0)) miss.push("job_value");
+  return miss;
+}
+
+// A design side counts as having a QR element if its HTML references the QR image service or the
+// {{qr_url}} merge token (mirrors the frontend htmlParser QR detection). Used by the campaign QR gate.
+const QR_ELEMENT_RE = /qrserver\.com|\{\{\s*qr_url\s*\}\}/i;
+
 export function registerWriteTools(server, { userJwt }) {
   const W = { readOnlyHint: false, destructiveHint: false };
   const D = { readOnlyHint: false, destructiveHint: true };
@@ -64,7 +85,7 @@ export function registerWriteTools(server, { userJwt }) {
 
   // ── Referrals ──────────────────────────────────────────────────────────────
   t("create_referral",
-    "Create a new referral. Fill the referrer's details and job info from what the user gives you; NEVER fill owner consent or a signature — those are the user's to complete. The referral is created in DRAFT; after it's created, tell the user to open it and complete the consent section to finalize it.",
+    "Create a new referral. Gather the referrer's details and job info from the user; NEVER fill owner consent or a signature — those are the user's to complete in the app. The referral is created in DRAFT. Use the returned `missing_to_finalize` list to prompt the user for any still-missing required fields (name, full address, job type, job value), then tell them to complete the consent + signature section in the app to finalize it.",
     { home_owner_info: homeOwnerInfo, job_details: jobDetails },
     W,
     async (a) => {
@@ -74,11 +95,19 @@ export function registerWriteTools(server, { userJwt }) {
       const res = await callApi("createReferral", "POST", null, userJwt, body);
       const g = guard(res); if (g) return g;
       const r = payload(res);
-      return { id: r?.id, status: r?.status?.name ?? r?.status ?? "Draft", note: "Created as a draft. Ask the user to complete the consent section to finalize it." };
+      const missing = referralMissingToFinalize(a.home_owner_info, a.job_details);
+      return {
+        id: r?.id,
+        status: r?.status?.name ?? r?.status ?? "Draft",
+        missing_to_finalize: missing,
+        note: missing.length
+          ? `Created as a draft. Still needed to finalize: ${missing.join(", ")}. Ask the user for these. The consent + signature are completed by the user in the app.`
+          : "Created as a draft with all required details. Ask the user to complete the consent + signature section in the app to finalize it.",
+      };
     });
 
   t("update_referral",
-    "Edit an existing referral (referrer details, job info, notes, or status). Notes live in job_details.notes. NEVER set owner consent or a signature. Pass only the fields being changed.",
+    "Edit an existing referral (referrer details, job info, notes, or status). Notes live in job_details.notes. NEVER set owner consent or a signature. Pass only the fields being changed. The returned `missing_to_finalize` reflects the referral's CURRENT state after the edit — prompt the user for anything still missing.",
     { id: z.string().describe("referral UUID"), home_owner_info: homeOwnerInfo, job_details: jobDetails, status: z.string().optional().describe("e.g. Draft, Ready — only if the user explicitly asks to change status") },
     W,
     async (a) => {
@@ -87,7 +116,17 @@ export function registerWriteTools(server, { userJwt }) {
       if (a.job_details) body.job_details = a.job_details;
       if (a.status) body.status = a.status;
       const res = await callApi("updateReferralById", "PATCH", null, userJwt, body);
-      return guard(res) ?? { id: a.id, updated: true };
+      const g = guard(res); if (g) return g;
+      // Read back the full record so missing_to_finalize reflects the merged state, not just this
+      // turn's partial edit.
+      let missing;
+      const rb = await callApi("getReferralById", "POST", null, userJwt, { id: a.id });
+      if (!rb?.__error) { const rec = payload(rb); missing = referralMissingToFinalize(rec?.home_owner_info, rec?.job_details); }
+      return {
+        id: a.id, updated: true,
+        ...(missing ? { missing_to_finalize: missing } : {}),
+        note: missing?.length ? `Updated. Still needed to finalize: ${missing.join(", ")}.` : "Updated.",
+      };
     });
 
   t("delete_referral",
@@ -170,5 +209,152 @@ export function registerWriteTools(server, { userJwt }) {
     async (a) => {
       const res = await callApi("setDefaultPaymentMethod", "POST", null, userJwt, { payment_method_id: a.payment_method_id });
       return guard(res) ?? { default_payment_method_id: a.payment_method_id };
+    });
+
+  // ── Campaigns (referral + location-zone) ─────────────────────────────────────
+  // create_campaign runs the create as ONE tool call (= one approval): it validates the required
+  // fields, enforces the QR gate, then chains createCampaignV2 step1 (metadata) → step2 (design) →
+  // linkQRCodeToCampaign (if needed). It leaves the campaign a DRAFT with its design attached; the
+  // AUDIENCE (map targeting) is set separately via the interactive audience builder (a later
+  // sub-phase) or in the app, and consents + payment (launch) are done by the USER in the app —
+  // the agent never charges/sends.
+  t("create_campaign",
+    "Create a postcard campaign (referral or location-zone) with its design in one step. GATHER every required field from the user first — campaign name (<=20 chars), the target type, the referral (for a referral campaign), a postcard design (template_bundle_id), and a disclaimer (<=500 chars). If a required field is missing the tool returns `missing_required` — prompt the user for exactly those. If the chosen design has a QR code you MUST provide `qr_url` (an https:// link). This creates the campaign as a DRAFT with its design; the mailing AUDIENCE is set as a separate step (in the app / audience builder), and the user completes consents + payment to launch in the app. Do NOT claim it was launched or that the audience is set.",
+    // The "gather from the user" fields are OPTIONAL at the schema level so a partial call returns
+    // a friendly `missing_required` list (handled below) instead of a raw validation error — the
+    // agent should still collect them all first (see the description + prompt).
+    {
+      campaign_name: z.string().optional().describe("REQUIRED, <= 20 characters"),
+      target_type: z.enum(["referral", "location_zone"]).optional().describe("REQUIRED"),
+      referral_id: z.string().optional().describe("required when target_type is 'referral'"),
+      template_bundle_id: z.string().optional().describe("REQUIRED — the postcard design bundle (from list_template_bundles)"),
+      disclaimer_text: z.string().optional().describe("REQUIRED, <= 500 characters; for compliance"),
+      start_date: z.string().optional().describe("ISO date; defaults to today if omitted"),
+      qr_url: z.string().optional().describe("https:// landing page — required only if the design has a QR element"),
+    },
+    W,
+    async (a) => {
+      // 1. Required-field validation (backstop — the agent should have gathered these).
+      const missing = [];
+      if (!a.campaign_name?.trim()) missing.push("campaign_name");
+      if (!a.target_type) missing.push("target_type");
+      if (a.target_type === "referral" && !a.referral_id) missing.push("referral_id");
+      if (!a.template_bundle_id) missing.push("template_bundle_id");
+      if (!a.disclaimer_text?.trim()) missing.push("disclaimer_text");
+      if (missing.length) return { missing_required: missing, note: "Ask the user for these fields, then call create_campaign again." };
+      if (a.campaign_name.trim().length > 20) return { error: "Campaign name must be 20 characters or fewer." };
+      if (a.disclaimer_text.length > 500) return { error: "Disclaimer text must be 500 characters or fewer." };
+      if (a.qr_url && !/^https:\/\//i.test(a.qr_url)) return { error: "The QR landing-page URL must start with https://." };
+
+      // 2. QR gate — inspect the chosen design's HTML; block early (no partial campaign) if it has
+      //    a QR element but no qr_url was supplied.
+      const bundleRes = await callApi("getTemplateBundleById", "GET", { bundle_id: a.template_bundle_id }, userJwt);
+      const gb = guard(bundleRes); if (gb) return gb;
+      const b = payload(bundleRes);
+      const bundleHtml = `${b?.front_template?.html ?? ""}\n${b?.back_template?.html ?? ""}`;
+      const hasQr = QR_ELEMENT_RE.test(bundleHtml);
+      if (hasQr && !a.qr_url) return { missing_required: ["qr_url"], note: "The selected design has a QR code. Ask the user for the landing-page URL (must start with https://) and call create_campaign again with qr_url." };
+
+      // 3. step 1 — metadata (creates the Draft campaign).
+      const s1 = await callApi("createCampaignV2", "POST", null, userJwt, {
+        step: 1,
+        campaign_name: a.campaign_name.trim(),
+        target_type: a.target_type === "referral" ? "Referrals" : "Location Zone",
+        ...(a.target_type === "referral" ? { referral_id: a.referral_id } : {}),
+        disclaimer_text: a.disclaimer_text,
+        ...(a.start_date ? { start_date: a.start_date } : {}),
+      });
+      const g1 = guard(s1); if (g1) return g1;
+      const campaign_id = payload(s1)?.id;
+      if (!campaign_id) return { error: "Could not create the campaign (no id returned)." };
+
+      // 4. step 2 — attach the design.
+      const s2 = await callApi("createCampaignV2", "POST", null, userJwt, { step: 2, campaign_id, template_bundle_id: a.template_bundle_id });
+      const g2 = guard(s2); if (g2) return { ...g2, campaign_id, note: "The campaign was created but attaching the design failed. Use update_campaign to retry." };
+
+      // 5. link the QR URL if the design uses one.
+      if (hasQr && a.qr_url) {
+        const qr = await callApi("linkQRCodeToCampaign", "POST", null, userJwt, { campaign_id, qr_url: a.qr_url });
+        const gq = guard(qr); if (gq) return { ...gq, campaign_id, note: "Design attached but linking the QR URL failed." };
+      }
+
+      return {
+        campaign_id,
+        campaign_name: a.campaign_name.trim(),
+        status: "Draft",
+        note: "Campaign created as a draft with its design attached. NEXT: set the mailing audience (map targeting) for it, then the user completes consents + payment to launch in the app. The audience isn't set yet, and it hasn't been launched.",
+      };
+    });
+
+  t("update_campaign",
+    "Edit an existing campaign's metadata (name, linked referral, disclaimer, start date, target type). Pass only what changes. Set referral_id to null to unlink a referral. This tool never changes launch status and never charges — launching stays in the app. (Changing the mailing audience is a separate audience-builder step, not here.)",
+    {
+      id: z.string().describe("campaign UUID"),
+      campaign_name: z.string().optional().describe("<= 20 characters"),
+      referral_id: z.string().nullable().optional().describe("null unlinks the referral"),
+      disclaimer_text: z.string().optional().describe("<= 500 characters"),
+      start_date: z.string().optional(),
+      target_type: z.enum(["referral", "location_zone"]).optional(),
+    },
+    W,
+    async (a) => {
+      if (a.campaign_name && a.campaign_name.trim().length > 20) return { error: "Campaign name must be 20 characters or fewer." };
+      if (a.disclaimer_text && a.disclaimer_text.length > 500) return { error: "Disclaimer text must be 500 characters or fewer." };
+      const body = { campaign_id: a.id };
+      if (a.campaign_name !== undefined) body.campaign_name = a.campaign_name.trim();
+      if (a.referral_id !== undefined) body.referral_id = a.referral_id;
+      if (a.disclaimer_text !== undefined) body.disclaimer_text = a.disclaimer_text;
+      if (a.start_date !== undefined) body.start_date = a.start_date;
+      if (a.target_type !== undefined) body.campaign_target_type = a.target_type === "referral" ? "Referrals" : "Location Zone";
+      if (Object.keys(body).length === 1) return { error: "Nothing to update — pass at least one field to change." };
+      const res = await callApi("editCampaignV2", "POST", null, userJwt, body);
+      return guard(res) ?? { id: a.id, updated: true };
+    });
+
+  t("delete_campaign",
+    "Delete a campaign permanently. Irreversible — confirm the user really means this campaign.",
+    { id: z.string().describe("campaign UUID") },
+    D,
+    async (a) => {
+      const res = await callApi("deleteCampaign", "DELETE", null, userJwt, { id: a.id });
+      return guard(res) ?? { id: a.id, deleted: true };
+    });
+
+  // ── Templates (design bundles) ───────────────────────────────────────────────
+  // The agent does NOT author postcard HTML (that's the visual editor). It can duplicate an
+  // existing design and edit a bundle's name/size. Delete + agency (V3) template writes are a
+  // later phase.
+  t("duplicate_template_bundle",
+    "Duplicate an existing postcard design bundle into a new editable copy (same front/back artwork and size). Useful before making variations. Returns the new bundle id.",
+    { bundle_id: z.string().describe("the design bundle to copy"), new_name: z.string().optional().describe("name for the copy; defaults to '<name> (Copy)'") },
+    W,
+    async (a) => {
+      const src = await callApi("getTemplateBundleById", "GET", { bundle_id: a.bundle_id }, userJwt);
+      const gs = guard(src); if (gs) return gs;
+      const b = payload(src);
+      const html_front = b?.front_template?.html;
+      const html_back = b?.back_template?.html;
+      // getTemplateBundleById returns template fields in snake_case (postcard_size).
+      const postcardSize = b?.front_template?.postcard_size ?? b?.back_template?.postcard_size;
+      if (!html_front || !html_back || !postcardSize) return { error: "Couldn't read the source design's contents to duplicate it." };
+      const baseName = (b?.front_template?.description ?? "Design").replace(/\s+Front$/i, "");
+      const description = a.new_name?.trim() || `${baseName} (Copy)`;
+      const res = await callApi("createNewTemplateBundle", "POST", null, userJwt, { description, html_front, html_back, postcardSize });
+      const g = guard(res); if (g) return g;
+      const nb = payload(res);
+      return { id: nb?.bundle?.id ?? nb?.id, name: description, postcardSize };
+    });
+
+  t("update_template_settings",
+    "Update a design bundle's name and/or postcard size. (Editing the artwork/HTML itself is done in the visual editor, not chat.)",
+    { bundle_id: z.string(), name: z.string().optional().describe("new name/description"), postcard_size: z.enum(["4x6", "6x9", "6x11"]).optional() },
+    W,
+    async (a) => {
+      if (!a.name && !a.postcard_size) return { error: "Provide a new name and/or postcard size to update." };
+      const body = { template_bundle_id: a.bundle_id };
+      if (a.name) body.description = a.name;
+      if (a.postcard_size) body.postcardSize = a.postcard_size;
+      const res = await callApi("updateTemplateBundle", "POST", null, userJwt, body);
+      return guard(res) ?? { bundle_id: a.bundle_id, updated: true };
     });
 }

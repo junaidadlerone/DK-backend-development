@@ -637,6 +637,44 @@
         },
         "additionalProperties": false
       },
+      "AudienceBuilder": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "campaign_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "seed_address": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "campaign_id"
+        ],
+        "additionalProperties": false
+      },
+      "LaunchButton": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "campaign_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "campaign_name": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string",
+            "maxLength": 40
+          }
+        },
+        "required": [
+          "campaign_id"
+        ],
+        "additionalProperties": false
+      },
       "DataTable": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
