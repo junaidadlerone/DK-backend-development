@@ -408,6 +408,30 @@ export function registerReadTools(server, { userId, userJwt }) {
       return guard(res) ?? { bundles: (payload(res) ?? []).map(bundleRow), pagination: res?.pagination ?? null };
     });
 
+  t("get_branding_theme",
+    "The user's branding theme: the three brand colors (hex) and the heading/body font names. Use these when DESIGNING a postcard so it matches their brand.",
+    {},
+    async () => {
+      const res = await callApi("getAppContent", "GET", null, userJwt);
+      const g = guard(res); if (g) return g;
+      const theme = payload(res)?.theme ?? {};
+      return {
+        colors: theme.colors ?? { primary: "#E17019", secondary: "#4EC02B", accent: "#B85A14" },
+        fonts: { heading: theme.fonts?.primary?.name ?? "Poppins", body: theme.fonts?.body?.name ?? "Poppins" },
+      };
+    });
+
+  t("list_gallery_images",
+    "The organization's photo gallery (id + URL per image; pass referral_id for a referral's gallery). Use these URLs as image sources when designing a postcard.",
+    { referral_id: z.string().optional(), limit: z.number().optional() },
+    async (a) => {
+      const res = await callApi("getPhotoGallery", "POST", null, userJwt, a.referral_id ? { referral_id: a.referral_id } : {});
+      const g = guard(res); if (g) return g;
+      const gal = payload(res);
+      const images = (gal?.images ?? gal?.gallery?.images ?? []).slice(0, a.limit ?? 30).map((i) => ({ id: i.id, url: i.url, type: i.type ?? "none" }));
+      return { count: images.length, images };
+    });
+
   t("get_address_list",
     "The state of an ADDRESS-LIST campaign's uploaded CSV list: counts (total / included / excluded / verified), whether verification ran or is skipped, and the list id (needed by the curation tools). Compact — no address rows; the user reviews rows in the uploader card or the app.",
     { campaign_id: z.string() },
