@@ -611,4 +611,149 @@ export function registerWriteTools(server, { userJwt }) {
       const res = await callApi("deleteTemplateBundle", "POST", null, userJwt, { template_bundle_id: a.bundle_id, postgridApiKey: POSTGRID_POSTCARD_API_KEY });
       return guard(res) ?? { bundle_id: a.bundle_id, deleted: true };
     });
+
+  // ── Organizations (3C-4) ─────────────────────────────────────────────────────
+  // createOrganization inserts a BLANK org; the V1 completeOnboarding step-dispatch fn (accepts
+  // organization_id on every step — no org switch needed) fills it. Step 4 MUST always run (even
+  // with no invites) — it sets team_onboarding_completed, the only thing that marks the org
+  // complete; without it the org is a "Setup N of 4" artifact that traps users in the wizard.
+  // The logo is REQUIRED (mirrors the onboarding UI) and must be a URL (gallery/https) — the
+  // JSON path; never multipart (that branch has a latent backend bug). theme is deliberately
+  // NEVER sent: V1 step 3 would write it to the CALLER's user-level branding_settings.
+  const ZIP_RE = /^\d{5}(-\d{4})?$/;
+  const orgOnboardingFields = {
+    business_name: z.string().optional().describe("REQUIRED"),
+    industry: z.string().optional().describe("REQUIRED"),
+    country: z.string().optional().describe("REQUIRED (e.g. United States of America)"),
+    street_address: z.string().optional().describe("REQUIRED"),
+    city: z.string().optional().describe("REQUIRED"),
+    state: z.string().optional().describe("REQUIRED"),
+    zip: z.string().optional().describe("REQUIRED, ##### or #####-####"),
+    logo_url: z.string().optional().describe("REQUIRED — an https:// image URL (upload via the image card or pick from the gallery)"),
+    business_email: z.string().optional(),
+    phone: z.string().optional(),
+    website: z.string().optional(),
+    invite_emails: z.array(z.object({ email: z.string().email(), role: memberRole.optional() })).optional().describe("teammates to invite during setup (optional)"),
+  };
+  const onboardingStepCalls = {
+    1: (a, orgId) => callApi("completeOnboarding", "POST", null, userJwt, {
+      step: 1, organization_id: orgId, business_name: a.business_name, industry: a.industry,
+      ...(a.phone ? { business_phone_number: a.phone } : {}),
+      ...(a.business_email ? { business_email: a.business_email } : {}),
+      ...(a.website ? { website_url: a.website } : {}),
+    }),
+    2: (a, orgId) => callApi("completeOnboarding", "POST", null, userJwt, {
+      step: 2, organization_id: orgId, country: a.country, street_address: a.street_address, city: a.city, state: a.state, zip: a.zip,
+    }),
+    3: (a, orgId) => callApi("completeOnboarding", "POST", null, userJwt, { step: 3, organization_id: orgId, company_logo: a.logo_url }),
+    4: (a, orgId) => callApi("completeOnboarding", "POST", null, userJwt, { step: 4, organization_id: orgId, team_member_ids: [], invite_emails: a.invite_emails ?? [] }),
+  };
+  const STEP_REQUIREMENTS = { 1: ["business_name", "industry"], 2: ["country", "street_address", "city", "state", "zip"], 3: ["logo_url"], 4: [] };
+  const missingForSteps = (a, steps) => {
+    const miss = [];
+    for (const s of steps) for (const f of STEP_REQUIREMENTS[s]) if (!a[f]?.trim?.() && !a[f]) miss.push(f);
+    if (steps.includes(2) && a.zip && !ZIP_RE.test(a.zip)) miss.push("zip (format #####)");
+    if (steps.includes(3) && a.logo_url && !/^https?:\/\//i.test(a.logo_url)) miss.push("logo_url (must be an http(s) URL)");
+    return [...new Set(miss)];
+  };
+  const runOnboardingSteps = async (a, orgId, steps) => {
+    for (const s of steps) {
+      const res = await onboardingStepCalls[s](a, orgId);
+      const g = guard(res);
+      if (g) return { ...g, organization_id: orgId, failed_step: s, note: `The organization exists but onboarding stopped at step ${s}. Fix the issue and use complete_org_onboarding to finish it.` };
+    }
+    return null;
+  };
+
+  t("create_client_organization",
+    "Create a NEW client organization and complete its full setup in one step (agency owners/admins only). GATHER everything first: business name, industry, full address (country/street/city/state/zip), and a LOGO (an image URL — have the user upload one via the image card or pick a gallery image). Optional: business email, phone, website, and teammates to invite. Returns `missing_required` for anything absent. After success, offer to switch into the new organization. Do NOT claim the organization is ready until this returns success.",
+    orgOnboardingFields,
+    W,
+    async (a) => {
+      const missing = missingForSteps(a, [1, 2, 3, 4]);
+      if (missing.length) return { missing_required: missing, note: "Ask the user for these, then call create_client_organization again. The logo can come from the image-upload card or their gallery." };
+      const created = await callApi("createOrganization", "POST", null, userJwt, {});
+      const gc = guard(created);
+      if (gc) {
+        if (/MULTI_ORG_NOT_ENABLED|FORBIDDEN/i.test(created.body ?? "")) return { error: "Creating organizations needs an agency account. If they want multiple organizations, they can switch their account to an agency first." };
+        return gc;
+      }
+      const orgId = payload(created)?.organization_id ?? created?.organization_id;
+      if (!orgId) return { error: "Could not create the organization (no id returned)." };
+      const failed = await runOnboardingSteps(a, orgId, [1, 2, 3, 4]);
+      if (failed) return failed;
+      return {
+        organization_id: orgId,
+        business_name: a.business_name.trim(),
+        onboarding_complete: true,
+        invites_sent: (a.invite_emails ?? []).map((i) => i.email),
+        note: "The organization is fully set up (details, address, logo, team step). Offer the user a switch button to start working in it.",
+      };
+    });
+
+  t("complete_org_onboarding",
+    "Finish the setup of an organization that's stuck mid-onboarding ('Setup N of 4'). Pass the organization id plus whatever fields its REMAINING steps need — the tool checks what's missing, runs only the unfinished steps, and always completes the final team step. Use when the user's organization list shows an org that isn't fully set up.",
+    { organization_id: z.string(), ...orgOnboardingFields },
+    W,
+    async (a) => {
+      const stepRes = await callApi("getOnboardingStep", "GET", { organization_id: a.organization_id }, userJwt);
+      const gs = guard(stepRes); if (gs) return gs;
+      const sp = payload(stepRes);
+      const completed = sp?.completed_step ?? 0;
+      if (completed >= 4) return { organization_id: a.organization_id, onboarding_complete: true, note: "This organization's setup is already complete." };
+      const steps = [1, 2, 3, 4].filter((s) => s > completed);
+      const missing = missingForSteps(a, steps);
+      if (missing.length) return { missing_required: missing, note: `Setup is at step ${completed} of 4 — the remaining steps need these fields. Ask the user, then call again.` };
+      const failed = await runOnboardingSteps(a, a.organization_id, steps);
+      if (failed) return failed;
+      return { organization_id: a.organization_id, onboarding_complete: true, steps_run: steps, note: "Setup finished. Offer the user a switch button if they want to work in it now." };
+    });
+
+  t("switch_to_agency_account",
+    "Convert the user's account to an AGENCY account. IRREVERSIBLE (only support can undo it) and allowed once per account. What happens: a NEW agency organization is created, the user's current business becomes its first client (all its data and members untouched), and the user gains agency-wide admin powers. BEFORE calling this, you MUST have told the user, in plain words: it can't be undone, a new agency workspace is created, their business becomes its first client, and one account can only ever have one agency. Requires the agency's name and a logo (image URL). NEVER suggest this conversion yourself — only act on the user's explicit request.",
+    {
+      agency_name: z.string().optional().describe("REQUIRED, the new agency's name (<=120 chars)"),
+      logo_url: z.string().optional().describe("REQUIRED — an https:// image URL for the agency logo"),
+      agency_type: z.enum(["Marketing agency", "Lead-generation agency", "Print/mail agency", "Consulting", "Other"]).optional(),
+      website_url: z.string().optional(),
+      first_client_organization_id: z.string().optional().describe("which of their businesses becomes the first client (defaults to the active one)"),
+    },
+    D,
+    async (a) => {
+      const missing = [];
+      if (!a.agency_name?.trim()) missing.push("agency_name");
+      if (!a.logo_url) missing.push("logo_url");
+      if (missing.length) return { missing_required: missing, note: "Ask the user for these (the logo can come from the image-upload card), then call again." };
+      if (a.agency_name.trim().length > 120) return { error: "The agency name must be 120 characters or fewer." };
+      if (!/^https?:\/\//i.test(a.logo_url)) return { error: "The logo must be an http(s) image URL — upload one via the image card first." };
+      // Pre-check: already an agency → friendly early exit (matches the backend's ALREADY_AGENCY gate).
+      const orgsRes = await callApi("getUserOrganizations", "GET", null, userJwt);
+      if (!orgsRes?.__error) {
+        const orgs = payload(orgsRes);
+        const arr = Array.isArray(orgs) ? orgs : (orgs?.organizations ?? []);
+        if (arr.some((o) => (o.is_agency ?? o.isAgencyAccount) === true)) {
+          return { error: "This account already has an agency — an account can only ever have one." };
+        }
+      }
+      const res = await callApi("switchToAgencyAccount", "POST", null, userJwt, {
+        agency_name: a.agency_name.trim(),
+        agency_logo: a.logo_url,
+        ...(a.agency_type ? { agency_type: a.agency_type } : {}),
+        ...(a.website_url ? { website_url: a.website_url } : {}),
+        ...(a.first_client_organization_id ? { organization_id: a.first_client_organization_id } : {}),
+      });
+      const g = guard(res);
+      if (g) {
+        if (/ALREADY_AGENCY/i.test(res.body ?? "")) return { error: "This account already has an agency — an account can only ever have one." };
+        if (/NO_BUSINESS_ORG/i.test(res.body ?? "")) return { error: "There's no business organization on this account to convert." };
+        return g;
+      }
+      const r = payload(res);
+      return {
+        agency_organization_id: r?.agency?.organization_id,
+        agency_name: r?.agency?.agency_name ?? a.agency_name.trim(),
+        first_client: r?.first_client ? { organization_id: r.first_client.organization_id, business_name: r.first_client.business_name } : null,
+        note: "The account is now an agency. IMPORTANT: the app needs a refresh to see it — render an OrgSwitchButton with refresh_account=true and this agency_organization_id so the user can enter their new agency workspace. Their business is the agency's first client, untouched.",
+      };
+    });
 }
