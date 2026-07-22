@@ -159,8 +159,26 @@ const THINKING_LABELS = {
   get_agency_overview: "Rolling up your client accounts…",
   get_agency_members: "Loading your agency team…",
   list_agency_template_bundles: "Loading your agency designs…",
+  // Generative UI + Tier-3 write actions (friendly labels so the raw tool name never shows).
+  emit_ui: "Putting together a view…",
+  create_referral: "Creating the referral…",
+  update_referral: "Updating the referral…",
+  delete_referral: "Deleting the referral…",
+  delete_referral_image: "Removing the image…",
+  mark_notification: "Updating a notification…",
+  clear_notification: "Clearing a notification…",
+  clear_notifications: "Clearing notifications…",
+  update_organization: "Updating your organization…",
+  update_profile: "Updating your profile…",
+  set_default_payment_method: "Updating your default payment method…",
+  create_campaign: "Setting up the campaign…",
+  update_campaign: "Updating the campaign…",
+  delete_campaign: "Deleting the campaign…",
+  duplicate_template_bundle: "Duplicating the design…",
+  update_template_settings: "Updating the design…",
 };
-const thinkingLabel = (tool) => THINKING_LABELS[tool] ?? `Running ${String(tool).replace(/_/g, " ")}…`;
+// Fallback is deliberately generic — never expose a raw tool name for an unmapped/new tool.
+const thinkingLabel = (tool) => THINKING_LABELS[tool] ?? "Working on it…";
 
 // ── HITL (Tier 3) — pause/resume for mutating actions ─────────────────────────
 // The Flowise "write" customMCP entry has Require-Human-Input ON, so Flowise pauses before a
@@ -171,6 +189,12 @@ const thinkingLabel = (tool) => THINKING_LABELS[tool] ?? `Running ${String(tool)
 const AGENT_NODE_ID = process.env.AGENT_NODE_ID ?? "agentAgentflow_0";
 const HITL_PROCEED = "__dk_hitl_proceed__";
 const HITL_REJECT = "__dk_hitl_reject__";
+// Durable stand-in text persisted for a turn that produced a generative-UI surface but NO answer
+// text, so the turn still gets a chat_messages row and survives a reload (otherwise the response
+// would exist only in-memory / the browser's surface cache and vanish on the next full reload —
+// the "AI responses disappear from history" report). MUST match the frontend DoorKnockerChat
+// constant of the same value so the browser's cached surface re-attaches to this row on reload.
+const UI_SURFACE_NOTE = "Here's what I found:";
 const PERM_TITLES = {
   create_referral: "Create a new referral",
   update_referral: "Update this referral",
@@ -236,8 +260,11 @@ const cleanUiFrame = (frame) => deepClean(frame, null);
 // emit_ui buffers its validated {type:"ui"} frame on the MCP's jobs side channel
 // and returns a tiny {ui_job_id} ack; we drain the buffer onto the chat SSE.
 // Dormant until emit_ui ships with the Stage-F catalog — a 404 here is a no-op.
+// Returns the number of {type:"ui"} surfaces drained onto the stream (so the caller knows the turn
+// produced a generative-UI surface even if no answer text streamed — see the persist logic).
 async function inlineJobEvents(jobId, userJwt, send) {
-  if (!ASSISTANT_MCP_URL) return;
+  if (!ASSISTANT_MCP_URL) return 0;
+  let uiCount = 0;
   try {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 2500);
@@ -245,7 +272,7 @@ async function inlineJobEvents(jobId, userJwt, send) {
       headers: { Authorization: `Bearer ${userJwt}` },
       signal: ctrl.signal,
     });
-    if (!r.ok || !r.body) { clearTimeout(timer); return; }
+    if (!r.ok || !r.body) { clearTimeout(timer); return 0; }
     const rd = r.body.getReader();
     const dec = new TextDecoder();
     let jbuf = "";
@@ -260,11 +287,12 @@ async function inlineJobEvents(jobId, userJwt, send) {
         if (!t.startsWith("data:")) continue;
         let frame;
         try { frame = JSON.parse(t.slice(5)); } catch { continue; }
-        if (frame.type === "ui") send(cleanUiFrame(frame));
+        if (frame.type === "ui") { send(cleanUiFrame(frame)); uiCount++; }
       }
     }
     clearTimeout(timer);
   } catch { /* buffered-frame fetch is best-effort */ }
+  return uiCount;
 }
 
 // ── live-context prefetch (Tier 2 latency) ────────────────────────────────────
@@ -485,6 +513,9 @@ export async function chatHandler(req, res) {
     // ended by pausing for approval (drives the done frame's awaiting_approval + composer lock).
     let pendingAction = null;
     let sawPermission = false;
+    // Whether this turn rendered a generative-UI surface (drives durable persistence of an
+    // otherwise-textless card turn — see the persist logic below).
+    let sawUi = false;
 
     const seenJobIds = new Set();
     const handleEvent = async (ev, data) => {
@@ -519,7 +550,8 @@ export async function chatHandler(req, res) {
             const um = out.match(/\\?"ui_job_id\\?"\s*:\s*\\?"([0-9a-f-]{36})\\?"/i);
             if (um && !seenJobIds.has(um[1])) {
               seenJobIds.add(um[1]);
-              await inlineJobEvents(um[1], auth.userJwt, send);
+              const n = await inlineJobEvents(um[1], auth.userJwt, send);
+              if (n > 0) sawUi = true;
             }
           }
           break;
@@ -599,11 +631,14 @@ export async function chatHandler(req, res) {
       send({ error: errorLine });
     }
     // Persist the user's message (their history should show what they asked) and the assistant's
-    // OUTCOME: the streamed reply, or failing that the error line the user just saw. Without the
-    // error fallback a failed turn saved only the user row, so on reopen it showed as a question
-    // with no response (the "agent responses missing from history" bug). On a resume `message` is
-    // undefined — no user row (the frontend already showed the Approved/Rejected bubble).
-    await persistTurn(sessionId, message ?? null, assistantReply || errorLine || null);
+    // OUTCOME, so the turn survives a reload from history. Prefer the streamed reply; else the
+    // error line the user just saw; else — for a turn that produced only a generative-UI card with
+    // no text — a durable stand-in note (the browser re-attaches the cached surface to it). Without
+    // this a failed OR card-only turn saved only the user row, so on reopen it showed a question
+    // with no response (the "AI responses disappear from history after ~24h" report). On a resume
+    // `message` is undefined — no user row (the frontend already showed the Approved/Rejected bubble).
+    const assistantOutcome = assistantReply || errorLine || (sawUi ? UI_SURFACE_NOTE : null);
+    await persistTurn(sessionId, message ?? null, assistantOutcome);
     send({ done: true, session_id: sessionId, awaiting_approval: sawPermission });
     res.end();
   } catch (e) {
