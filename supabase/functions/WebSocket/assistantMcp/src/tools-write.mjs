@@ -357,4 +357,105 @@ export function registerWriteTools(server, { userJwt }) {
       const res = await callApi("updateTemplateBundle", "POST", null, userJwt, body);
       return guard(res) ?? { bundle_id: a.bundle_id, updated: true };
     });
+
+  // ── Address-list campaigns (3C-1) ────────────────────────────────────────────
+  // The CSV itself NEVER passes through the model/gateway: after this tool creates the Draft,
+  // the agent renders the AddressListUploader card and the USER attaches the CSV client-side
+  // (importAddressList runs in the browser with their session; only the list id + counts come
+  // back). Verification + launch are user-completed in the app's own modals via shortcuts.
+  t("create_address_list_campaign",
+    "Create an ADDRESS-LIST postcard campaign (the audience comes from a CSV the user uploads) with its design, in one step. GATHER the required fields first — campaign name (<=20 chars), a postcard design (template_bundle_id), and a disclaimer (<=500 chars). If a required field is missing the tool returns `missing_required`. If the chosen design has a QR code you MUST provide `qr_url` (https://). Leaves a DRAFT with its design attached; NEXT the user attaches their CSV address list via the uploader card you render — do NOT claim the audience is set or the campaign launched.",
+    {
+      campaign_name: z.string().optional().describe("REQUIRED, <= 20 characters"),
+      template_bundle_id: z.string().optional().describe("REQUIRED — the postcard design bundle"),
+      disclaimer_text: z.string().optional().describe("REQUIRED, <= 500 characters; for compliance"),
+      start_date: z.string().optional().describe("ISO date; defaults to today if omitted"),
+      qr_url: z.string().optional().describe("https:// landing page — required only if the design has a QR element"),
+    },
+    W,
+    async (a) => {
+      const missing = [];
+      if (!a.campaign_name?.trim()) missing.push("campaign_name");
+      if (!a.template_bundle_id) missing.push("template_bundle_id");
+      if (!a.disclaimer_text?.trim()) missing.push("disclaimer_text");
+      if (missing.length) return { missing_required: missing, note: "Ask the user for these fields, then call create_address_list_campaign again." };
+      if (a.campaign_name.trim().length > 20) return { error: "Campaign name must be 20 characters or fewer." };
+      if (a.disclaimer_text.length > 500) return { error: "Disclaimer text must be 500 characters or fewer." };
+      if (a.qr_url && !/^https:\/\//i.test(a.qr_url)) return { error: "The QR landing-page URL must start with https://." };
+
+      // QR gate — same as create_campaign: block BEFORE creating anything.
+      const bundleRes = await callApi("getTemplateBundleById", "GET", { bundle_id: a.template_bundle_id }, userJwt);
+      const gb = guard(bundleRes); if (gb) return gb;
+      const b = payload(bundleRes);
+      const hasQr = QR_ELEMENT_RE.test(`${b?.front_template?.html ?? ""}\n${b?.back_template?.html ?? ""}`);
+      if (hasQr && !a.qr_url) return { missing_required: ["qr_url"], note: "The selected design has a QR code. Ask the user for the landing-page URL (https://) and call the tool again with qr_url." };
+
+      const s1 = await callApi("createCampaignV2", "POST", null, userJwt, {
+        step: 1,
+        campaign_name: a.campaign_name.trim(),
+        target_type: "Address List",
+        disclaimer_text: a.disclaimer_text,
+        ...(a.start_date ? { start_date: a.start_date } : {}),
+      });
+      const g1 = guard(s1); if (g1) return g1;
+      const campaign_id = payload(s1)?.id;
+      if (!campaign_id) return { error: "Could not create the campaign (no id returned)." };
+
+      const s2 = await callApi("createCampaignV2", "POST", null, userJwt, { step: 2, campaign_id, template_bundle_id: a.template_bundle_id });
+      const g2 = guard(s2); if (g2) return { ...g2, campaign_id, note: "The campaign was created but attaching the design failed. Use update_campaign to retry." };
+
+      if (hasQr && a.qr_url) {
+        const qr = await callApi("linkQRCodeToCampaign", "POST", null, userJwt, { campaign_id, qr_url: a.qr_url });
+        const gq = guard(qr); if (gq) return { ...gq, campaign_id, note: "Design attached but linking the QR URL failed." };
+      }
+
+      return {
+        campaign_id,
+        campaign_name: a.campaign_name.trim(),
+        status: "Draft",
+        note: "Address-list campaign created as a draft with its design attached. NEXT: render the CSV uploader card for this campaign so the user can attach their address list. After that: optional address verification ($0.025/address, user-completed) or skip, then the user launches in the launch screen. Nothing is uploaded, verified, or launched yet.",
+      };
+    });
+
+  t("remove_invalid_addresses",
+    "Exclude every INVALID address (missing mandatory fields) from a campaign's uploaded address list, in bulk.",
+    { list_id: z.string().describe("the csv address list id") },
+    W,
+    async (a) => {
+      const res = await callApi("removeAllInvalidAddresses", "POST", null, userJwt, { list_id: a.list_id });
+      const g = guard(res); if (g) return g;
+      const r = payload(res);
+      return { list_id: a.list_id, excluded: r?.updated_count ?? 0 };
+    });
+
+  t("remove_duplicate_addresses",
+    "Exclude every DUPLICATE address from a campaign's uploaded address list, in bulk (the first occurrence of each address stays).",
+    { list_id: z.string().describe("the csv address list id") },
+    W,
+    async (a) => {
+      const res = await callApi("removeAllDuplicateAddresses", "POST", null, userJwt, { list_id: a.list_id });
+      const g = guard(res); if (g) return g;
+      const r = payload(res);
+      return { list_id: a.list_id, excluded: r?.excluded_count ?? 0 };
+    });
+
+  t("delete_addresses",
+    "Remove specific addresses from a campaign's uploaded address list (they won't receive postcards). Irreversible for this list.",
+    { list_id: z.string(), address_ids: z.array(z.string()).min(1).describe("ids of the addresses to remove") },
+    D,
+    async (a) => {
+      const res = await callApi("deleteCSVAddresses", "POST", null, userJwt, { list_id: a.list_id, address_ids: a.address_ids });
+      const g = guard(res); if (g) return g;
+      const r = payload(res);
+      return { list_id: a.list_id, removed: r?.updated_count ?? a.address_ids.length };
+    });
+
+  t("set_verification_skip",
+    "Set whether an address-list campaign SKIPS the optional paid address verification ($0.025/address). skip=true lets it launch unverified; skip=false re-enables the verification requirement. This toggles intent only — it never charges; actual verification is completed by the user in the app.",
+    { csv_address_list_id: z.string(), skip: z.boolean() },
+    W,
+    async (a) => {
+      const res = await callApi("updateCampaignVerification", "POST", null, userJwt, { csv_address_list_id: a.csv_address_list_id, skip_address_verification: a.skip });
+      return guard(res) ?? { csv_address_list_id: a.csv_address_list_id, skip_address_verification: a.skip };
+    });
 }
