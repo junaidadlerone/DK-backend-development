@@ -710,6 +710,28 @@
         ],
         "additionalProperties": false
       },
+      "ImageUploader": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "target": {
+            "type": "string",
+            "enum": [
+              "referral_gallery",
+              "org_gallery",
+              "company_logo",
+              "agency_logo"
+            ]
+          },
+          "referral_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "target"
+        ],
+        "additionalProperties": false
+      },
       "DataTable": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",

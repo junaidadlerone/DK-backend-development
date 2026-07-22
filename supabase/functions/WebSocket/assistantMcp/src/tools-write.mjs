@@ -458,4 +458,36 @@ export function registerWriteTools(server, { userJwt }) {
       const res = await callApi("updateCampaignVerification", "POST", null, userJwt, { csv_address_list_id: a.csv_address_list_id, skip_address_verification: a.skip });
       return guard(res) ?? { csv_address_list_id: a.csv_address_list_id, skip_address_verification: a.skip };
     });
+
+  // ── Branding (3C-2) ──────────────────────────────────────────────────────────
+  // Setting a logo requires a FILE and happens via the ImageUploader card (client-side);
+  // removing the company logo and updating the theme are plain JSON writes, so they're tools.
+  t("update_branding_theme",
+    "Update the user's branding theme: the three brand colors (hex) and the two font names. These become the defaults used across their postcard designs. All five values are required by the server, so carry over current values for anything the user isn't changing.",
+    {
+      primary_color: z.string().regex(/^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/, "hex color like #E17019"),
+      secondary_color: z.string().regex(/^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/, "hex color"),
+      accent_color: z.string().regex(/^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/, "hex color"),
+      heading_font: z.string().min(1).describe("font family name, e.g. Poppins"),
+      body_font: z.string().min(1).describe("font family name"),
+    },
+    W,
+    async (a) => {
+      const res = await callApi("updateBrandingSettings", "POST", null, userJwt, {
+        theme: {
+          colors: { primary: a.primary_color, secondary: a.secondary_color, accent: a.accent_color },
+          fonts: { primary: { name: a.heading_font }, body: { name: a.body_font } },
+        },
+      });
+      return guard(res) ?? { updated: true, colors: [a.primary_color, a.secondary_color, a.accent_color], fonts: [a.heading_font, a.body_font] };
+    });
+
+  t("remove_company_logo",
+    "Remove the organization's company logo. (SETTING a logo needs a file — that's done through the image-upload card, not this tool.)",
+    {},
+    D,
+    async () => {
+      const res = await callApi("updateCompanyLogo", "POST", null, userJwt, { company_logo: null });
+      return guard(res) ?? { removed: true };
+    });
 }
