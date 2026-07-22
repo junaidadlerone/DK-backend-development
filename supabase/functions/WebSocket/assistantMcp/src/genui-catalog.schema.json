@@ -1976,6 +1976,45 @@
               "elements"
             ],
             "additionalProperties": false
+          },
+          "campaign_id": {
+            "type": "string"
+          },
+          "variable_values": {
+            "type": "object",
+            "properties": {
+              "business_name": {
+                "type": "string"
+              },
+              "offer_headline": {
+                "type": "string"
+              },
+              "offer_description": {
+                "type": "string"
+              },
+              "start_date": {
+                "type": "string"
+              },
+              "end_date": {
+                "type": "string"
+              },
+              "cta_text": {
+                "type": "string"
+              },
+              "phone": {
+                "type": "string"
+              },
+              "website": {
+                "type": "string"
+              },
+              "disclaimer_text": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          },
+          "qr_url": {
+            "type": "string"
           }
         },
         "required": [
