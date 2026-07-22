@@ -12,6 +12,7 @@
 // tells the user to finish the consent section (enforced here by omission + in the prompt).
 import { z } from "zod";
 import { callApi } from "./helpers.mjs";
+import { POSTGRID_POSTCARD_API_KEY } from "./env.mjs";
 
 const asText = (obj) => ({ content: [{ type: "text", text: JSON.stringify(obj) }] });
 const asError = (err) => ({ isError: true, content: [{ type: "text", text: `Error: ${err.message ?? err}` }] });
@@ -489,5 +490,125 @@ export function registerWriteTools(server, { userJwt }) {
     async () => {
       const res = await callApi("updateCompanyLogo", "POST", null, userJwt, { company_logo: null });
       return guard(res) ?? { removed: true };
+    });
+
+  // ── Agency: team management (3C-3) ──────────────────────────────────────────
+  // All three V3 endpoints are agency-gated server-side (caller must be OWNER/ADMIN of an agency
+  // org AND of every target org) — 403s surface as friendly role messages via guard().
+  const memberRole = z.enum(["ADMIN", "MARKETER", "TECHNICIAN"]);
+  t("invite_user",
+    "Invite a NEW user by email and grant them access to one or more of the organizations you manage. Sends them a set-password invitation email. Requires the email, a role, and which organizations they get. grant_agency_access=true additionally gives them access to your agency workspace (for ADMINs you trust with the whole portfolio).",
+    {
+      email: z.string().email(),
+      role: memberRole,
+      organization_ids: z.array(z.string()).optional().describe("orgs to grant — required unless grant_agency_access is true"),
+      full_name: z.string().optional(),
+      grant_agency_access: z.boolean().optional(),
+    },
+    W,
+    async (a) => {
+      if (!a.grant_agency_access && !(a.organization_ids?.length)) {
+        return { missing_required: ["organization_ids"], note: "Ask which organization(s) the user should get access to (or whether to grant agency access)." };
+      }
+      const res = await callApi("createUserV3", "POST", null, userJwt, {
+        email: a.email,
+        role: a.role,
+        ...(a.organization_ids?.length ? { organization_ids: a.organization_ids } : {}),
+        ...(a.full_name ? { fullName: a.full_name } : {}),
+        ...(a.grant_agency_access !== undefined ? { grant_agency_access: a.grant_agency_access } : {}),
+      });
+      const g = guard(res); if (g) {
+        if (res.status === 409) return { error: "A user with that email already exists — use edit_user_access to change their organizations or role instead." };
+        if (/USER_INVITATION_FAILED/i.test(res.body ?? "")) return { error: "The invitation email couldn't be sent to that address — double-check the email and try again." };
+        return g;
+      }
+      const u = payload(res)?.user ?? payload(res);
+      return { user_id: u?.id, email: a.email, role: a.role, organizations_granted: u?.organization_ids ?? a.organization_ids ?? [], note: "Invitation email sent — they set their password from it." };
+    });
+
+  t("edit_user_access",
+    "Change an EXISTING team member's role and/or grant them access to more organizations. organization_ids is the list of orgs to grant/update; role is required when any of those is a NEW grant. Cannot change an organization OWNER's role, and you cannot edit yourself.",
+    {
+      user_id: z.string(),
+      organization_ids: z.array(z.string()).min(1),
+      role: memberRole.optional(),
+    },
+    W,
+    async (a) => {
+      const res = await callApi("editUserV3", "POST", null, userJwt, { user_id: a.user_id, organization_ids: a.organization_ids, ...(a.role ? { role: a.role } : {}) });
+      const g = guard(res); if (g) {
+        if (/ROLE_REQUIRED_FOR_NEW_GRANTS/i.test(res.body ?? "")) return { missing_required: ["role"], note: "One of those organizations is a new grant for this user — ask which role they should have there." };
+        return g;
+      }
+      const r = payload(res);
+      return { user_id: a.user_id, results: r?.results ?? [], organizations: r?.organization_ids ?? a.organization_ids };
+    });
+
+  t("revoke_user_access",
+    "Remove a team member's access to specific organizations. Their account survives (this is NOT a delete) — they just lose those organizations. Cannot revoke an organization's OWNER or yourself; agency-workspace access is not revocable this way.",
+    { user_id: z.string(), organization_ids: z.array(z.string()).min(1) },
+    D,
+    async (a) => {
+      const res = await callApi("revokeUserAccessV3", "POST", null, userJwt, { user_id: a.user_id, organization_ids: a.organization_ids });
+      const g = guard(res); if (g) {
+        if (/CANNOT_REVOKE_OWNER/i.test(res.body ?? "")) return { error: "That user OWNS one of those organizations — ownership can't be revoked, only transferred (which I can't do)." };
+        return g;
+      }
+      const r = payload(res);
+      return { user_id: a.user_id, results: r?.results ?? [], skipped_agency_orgs: r?.dropped_agency_organization_ids ?? [] };
+    });
+
+  // ── Agency: settings + template sharing (3C-3) ───────────────────────────────
+  t("update_agency_settings",
+    "Update the agency workspace's details: name, industry, and/or website. At least one field is required. (The agency LOGO needs a file — that's the image-upload card, not this tool.) Requires OWNER/ADMIN of the agency.",
+    {
+      agency_name: z.string().optional(),
+      industry: z.string().optional(),
+      website_url: z.string().optional(),
+    },
+    W,
+    async (a) => {
+      if (!a.agency_name && !a.industry && !a.website_url) return { error: "Provide at least one of: agency name, industry, website." };
+      const body = {};
+      if (a.agency_name !== undefined) body.agency_name = a.agency_name;
+      if (a.industry !== undefined) body.industry = a.industry;
+      if (a.website_url !== undefined) body.agency_website_url = a.website_url;
+      const res = await callApi("editAgencySettings", "POST", null, userJwt, body);
+      const g = guard(res); if (g) return g;
+      const ag = payload(res)?.agency ?? payload(res);
+      return { updated: true, agency_name: ag?.agency_name, industry: ag?.industry, website_url: ag?.agency_website_url };
+    });
+
+  t("share_agency_template",
+    "Share an agency-owned postcard design with one or more client organizations (they can then use it in their campaigns). ADDS to the existing share list. Requires OWNER/ADMIN of the agency and of every target organization.",
+    { bundle_id: z.string(), organization_ids: z.array(z.string()).min(1) },
+    W,
+    async (a) => {
+      const res = await callApi("shareTemplateBundleV3", "POST", null, userJwt, { template_bundle_id: a.bundle_id, organization_ids: a.organization_ids });
+      const g = guard(res); if (g) return g;
+      const r = payload(res);
+      return { bundle_id: a.bundle_id, shared_with: r?.shared_with_organization_ids ?? [] };
+    });
+
+  t("unshare_agency_template",
+    "Stop sharing an agency-owned postcard design with specific client organizations (removes them from the share list).",
+    { bundle_id: z.string(), organization_ids: z.array(z.string()).min(1) },
+    W,
+    async (a) => {
+      const res = await callApi("unshareTemplateBundleV3", "POST", null, userJwt, { template_bundle_id: a.bundle_id, organization_ids: a.organization_ids });
+      const g = guard(res); if (g) return g;
+      const r = payload(res);
+      return { bundle_id: a.bundle_id, shared_with: r?.shared_with_organization_ids ?? [] };
+    });
+
+  t("delete_template_bundle",
+    "Delete a postcard design bundle permanently (removes it from PostGrid too). Irreversible — confirm the user means this design. Requires OWNER/ADMIN of the design's owning organization.",
+    { bundle_id: z.string() },
+    D,
+    async (a) => {
+      // This edge fn uniquely requires the PostGrid key in the BODY (create/update use their own env).
+      if (!POSTGRID_POSTCARD_API_KEY) return { error: "Design deletion isn't available right now — it needs additional server configuration. The user can delete it from the Templates page." };
+      const res = await callApi("deleteTemplateBundle", "POST", null, userJwt, { template_bundle_id: a.bundle_id, postgridApiKey: POSTGRID_POSTCARD_API_KEY });
+      return guard(res) ?? { bundle_id: a.bundle_id, deleted: true };
     });
 }
