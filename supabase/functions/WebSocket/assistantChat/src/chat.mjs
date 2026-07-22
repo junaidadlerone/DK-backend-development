@@ -5,7 +5,8 @@
  * user's Supabase JWT, call Flowise's streaming Prediction API, re-frame its SSE events into
  * the frontend contract, and mirror messages into chat_sessions / chat_messages.
  *
- *   body     { message, session_id?, context? }   (mode accepted and ignored — manual-approval only)
+ *   body     { message, session_id?, context?, mode? }  mode:"auto" → non-destructive writes
+ *            auto-resume (3C-6); destructive/payment always card. Default manual.
  *            message may be an HITL sentinel (__dk_hitl_proceed__/__dk_hitl_reject__) → resume
  *   auth     Authorization: Bearer <user's Supabase JWT>
  *   stream   data: {delta}                        token text (leak-filtered, de-dashed)
@@ -25,7 +26,8 @@
  * pauses before any mutating tool and emits an `action` event; that becomes a perm_ approval card
  * + awaiting_approval:true. The card's buttons send a sentinel, converted here to a Flowise
  * humanInput {proceed|reject} resume against AGENT_NODE_ID. Reject suppresses model output for a
- * deterministic cancel line. Still deferred: auto/manual modes, response-feedback, charge cards
+ * deterministic cancel line. AUTO mode (3C-6): annotation-driven policy (destructiveHint from the
+ * MCP, fail-closed) + ALWAYS_CONFIRM; capped silent resume loop. Still deferred: response-feedback,
  * (3B), refresh frames, {type:"job"} announcements. Session-ownership check on resume is chatKabuki.
  */
 
@@ -185,10 +187,47 @@ const thinkingLabel = (tool) => THINKING_LABELS[tool] ?? "Working on it…";
 // write tool runs and emits an `action` event (ending the stream). We turn that into an approval
 // card; the card's Approve/Reject buttons send these sentinels, which the NEXT /chat POST
 // converts to a Flowise `humanInput` resume against the agent node. Manual-approval only in this
-// build — no auto/manual mode; every write in the write entry pauses.
+// build every write PAUSES in Flowise; AUTO mode resumes non-destructive ones gateway-side (3C-6).
 const AGENT_NODE_ID = process.env.AGENT_NODE_ID ?? "agentAgentflow_0";
 const HITL_PROCEED = "__dk_hitl_proceed__";
 const HITL_REJECT = "__dk_hitl_reject__";
+
+// ── Auto-approval policy (3C-6) ───────────────────────────────────────────────
+// In AUTO mode a paused write may resume without a card — but ONLY when the tool is provably
+// non-destructive. The policy is derived from the MCP's OWN tool annotations (destructiveHint),
+// fetched once and cached, so there is no drift-prone name list to maintain. On top of the
+// annotations, ALWAYS_CONFIRM adds payment-adjacent tools that carry no destructive hint. Any
+// uncertainty (fetch failure, unknown tool) FAILS CLOSED to the manual card.
+const ALWAYS_CONFIRM = new Set(["set_default_payment_method"]);
+const MAX_AUTO_RESUMES = 5; // per turn — runaway-loop backstop
+let toolSafetyCache = null; // Map<tool, "auto"|"confirm">
+let toolSafetyFetchedAt = 0;
+const TOOL_SAFETY_TTL_MS = 10 * 60_000;
+async function isAutoApprovable(tool) {
+  if (!tool || ALWAYS_CONFIRM.has(tool)) return false;
+  const stale = Date.now() - toolSafetyFetchedAt > TOOL_SAFETY_TTL_MS;
+  if ((!toolSafetyCache || stale) && ASSISTANT_MCP_URL) {
+    try {
+      const r = await fetch(`${ASSISTANT_MCP_URL}/mcp`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Accept": "application/json, text/event-stream" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),
+        signal: AbortSignal.timeout(5000),
+      });
+      const text = await r.text();
+      const m = text.match(/data: (.*)/);
+      const parsed = JSON.parse(m ? m[1] : text);
+      const map = new Map();
+      for (const t of parsed?.result?.tools ?? []) {
+        map.set(t.name, t?.annotations?.destructiveHint ? "confirm" : "auto");
+      }
+      if (map.size) { toolSafetyCache = map; toolSafetyFetchedAt = Date.now(); }
+    } catch (e) {
+      console.warn("[/chat] tool-safety fetch failed (failing closed to manual):", e.message);
+    }
+  }
+  return toolSafetyCache?.get(tool) === "auto"; // unknown/unfetched → false → card
+}
 // Durable stand-in text persisted for a turn that produced a generative-UI surface but NO answer
 // text, so the turn still gets a chat_messages row and survives a reload (otherwise the response
 // would exist only in-memory / the browser's surface cache and vanish on the next full reload —
@@ -357,10 +396,13 @@ export async function chatHandler(req, res) {
 
   let { message } = req.body ?? {};
   const { session_id, context } = req.body ?? {};
+  // Approval mode (3C-6): "auto" lets NON-DESTRUCTIVE writes resume without a card (surfaced as
+  // auto-approved thinking steps); destructive/payment/account-level actions ALWAYS card,
+  // regardless of mode. Anything other than the literal "auto" is manual (the default).
+  const approvalMode = req.body?.mode === "auto" ? "auto" : "manual";
   // HITL resume: the approval card's Approve/Reject buttons send a sentinel as the message.
   // Convert it to a Flowise humanInput {proceed|reject} and drop the message so this turn resumes
-  // the paused write instead of starting a new one. (`mode` may also arrive — ignored; this build
-  // is manual-approval only.)
+  // the paused write instead of starting a new one.
   let human_input = null;
   if (message === HITL_PROCEED) { human_input = { type: "proceed" }; message = undefined; }
   else if (message === HITL_REJECT) { human_input = { type: "reject" }; message = undefined; }
@@ -513,6 +555,10 @@ export async function chatHandler(req, res) {
     // ended by pausing for approval (drives the done frame's awaiting_approval + composer lock).
     let pendingAction = null;
     let sawPermission = false;
+    // AUTO mode (3C-6): a pause on a non-destructive write sets this instead of carding; the
+    // resume loop below re-POSTs with humanInput proceed. Capped per turn.
+    let pendingAutoResume = false;
+    let autoResumes = 0;
     // Whether this turn rendered a generative-UI surface (drives durable persistence of an
     // otherwise-textless card turn — see the persist logic below).
     let sawUi = false;
@@ -538,10 +584,20 @@ export async function chatHandler(req, res) {
         // Tier 3: Flowise paused before running a write tool (the Require-Human-Input entry) and
         // emitted `action`, ending the stream. Turn it into an approval card and mark the turn as
         // awaiting approval; the user's Approve/Reject resumes it on the next POST.
-        case "action":
-          sawPermission = true;
-          send(buildApprovalCard(data?.id, sessionId, pendingAction?.tool));
+        case "action": {
+          // AUTO mode: non-destructive writes resume without a card (visible as an auto-approved
+          // thinking step). Destructive/payment tools, unknown tools, a failed policy fetch, or
+          // the per-turn cap all FALL THROUGH to the manual card.
+          if (approvalMode === "auto" && autoResumes < MAX_AUTO_RESUMES && (await isAutoApprovable(pendingAction?.tool))) {
+            pendingAutoResume = true;
+            autoResumes += 1;
+            send({ type: "thinking", delta: `Auto-approved: ${thinkingLabel(pendingAction?.tool)}` });
+          } else {
+            sawPermission = true;
+            send(buildApprovalCard(data?.id, sessionId, pendingAction?.tool));
+          }
           break;
+        }
         // Tier 2: a tool RETURNED — if it was emit_ui, drain its buffered {type:"ui"}
         // frame from the MCP jobs side channel onto this stream.
         case "usedTools":
@@ -612,6 +668,16 @@ export async function chatHandler(req, res) {
       pendingText = "";
       suppressRest = false;
       seenJobIds.clear();
+      await runAttempt();
+    }
+
+    // AUTO mode (3C-6): silently resume each auto-approved pause on the SAME session — the
+    // resumed stream's tokens/ui/thinking keep flowing to the client. A pause that wasn't
+    // auto-approvable emitted a card and set sawPermission instead, so the loop ends. Errors in a
+    // resumed run are never retried (re-sending humanInput could double-execute).
+    while (pendingAutoResume && !turnError && !upstreamAbort.signal.aborted) {
+      pendingAutoResume = false;
+      predictionBody.humanInput = { type: "proceed", startNodeId: AGENT_NODE_ID };
       await runAttempt();
     }
 
