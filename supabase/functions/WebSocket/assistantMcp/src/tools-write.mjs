@@ -12,6 +12,7 @@
 // tells the user to finish the consent section (enforced here by omission + in the prompt).
 import { z } from "zod";
 import { callApi } from "./helpers.mjs";
+import { POSTGRID_POSTCARD_API_KEY } from "./env.mjs";
 
 const asText = (obj) => ({ content: [{ type: "text", text: JSON.stringify(obj) }] });
 const asError = (err) => ({ isError: true, content: [{ type: "text", text: `Error: ${err.message ?? err}` }] });
@@ -356,5 +357,403 @@ export function registerWriteTools(server, { userJwt }) {
       if (a.postcard_size) body.postcardSize = a.postcard_size;
       const res = await callApi("updateTemplateBundle", "POST", null, userJwt, body);
       return guard(res) ?? { bundle_id: a.bundle_id, updated: true };
+    });
+
+  // ── Address-list campaigns (3C-1) ────────────────────────────────────────────
+  // The CSV itself NEVER passes through the model/gateway: after this tool creates the Draft,
+  // the agent renders the AddressListUploader card and the USER attaches the CSV client-side
+  // (importAddressList runs in the browser with their session; only the list id + counts come
+  // back). Verification + launch are user-completed in the app's own modals via shortcuts.
+  t("create_address_list_campaign",
+    "Create an ADDRESS-LIST postcard campaign (the audience comes from a CSV the user uploads) with its design, in one step. GATHER the required fields first — campaign name (<=20 chars), a postcard design (template_bundle_id), and a disclaimer (<=500 chars). If a required field is missing the tool returns `missing_required`. If the chosen design has a QR code you MUST provide `qr_url` (https://). Leaves a DRAFT with its design attached; NEXT the user attaches their CSV address list via the uploader card you render — do NOT claim the audience is set or the campaign launched.",
+    {
+      campaign_name: z.string().optional().describe("REQUIRED, <= 20 characters"),
+      template_bundle_id: z.string().optional().describe("REQUIRED — the postcard design bundle"),
+      disclaimer_text: z.string().optional().describe("REQUIRED, <= 500 characters; for compliance"),
+      start_date: z.string().optional().describe("ISO date; defaults to today if omitted"),
+      qr_url: z.string().optional().describe("https:// landing page — required only if the design has a QR element"),
+    },
+    W,
+    async (a) => {
+      const missing = [];
+      if (!a.campaign_name?.trim()) missing.push("campaign_name");
+      if (!a.template_bundle_id) missing.push("template_bundle_id");
+      if (!a.disclaimer_text?.trim()) missing.push("disclaimer_text");
+      if (missing.length) return { missing_required: missing, note: "Ask the user for these fields, then call create_address_list_campaign again." };
+      if (a.campaign_name.trim().length > 20) return { error: "Campaign name must be 20 characters or fewer." };
+      if (a.disclaimer_text.length > 500) return { error: "Disclaimer text must be 500 characters or fewer." };
+      if (a.qr_url && !/^https:\/\//i.test(a.qr_url)) return { error: "The QR landing-page URL must start with https://." };
+
+      // QR gate — same as create_campaign: block BEFORE creating anything.
+      const bundleRes = await callApi("getTemplateBundleById", "GET", { bundle_id: a.template_bundle_id }, userJwt);
+      const gb = guard(bundleRes); if (gb) return gb;
+      const b = payload(bundleRes);
+      const hasQr = QR_ELEMENT_RE.test(`${b?.front_template?.html ?? ""}\n${b?.back_template?.html ?? ""}`);
+      if (hasQr && !a.qr_url) return { missing_required: ["qr_url"], note: "The selected design has a QR code. Ask the user for the landing-page URL (https://) and call the tool again with qr_url." };
+
+      const s1 = await callApi("createCampaignV2", "POST", null, userJwt, {
+        step: 1,
+        campaign_name: a.campaign_name.trim(),
+        target_type: "Address List",
+        disclaimer_text: a.disclaimer_text,
+        ...(a.start_date ? { start_date: a.start_date } : {}),
+      });
+      const g1 = guard(s1); if (g1) return g1;
+      const campaign_id = payload(s1)?.id;
+      if (!campaign_id) return { error: "Could not create the campaign (no id returned)." };
+
+      const s2 = await callApi("createCampaignV2", "POST", null, userJwt, { step: 2, campaign_id, template_bundle_id: a.template_bundle_id });
+      const g2 = guard(s2); if (g2) return { ...g2, campaign_id, note: "The campaign was created but attaching the design failed. Use update_campaign to retry." };
+
+      if (hasQr && a.qr_url) {
+        const qr = await callApi("linkQRCodeToCampaign", "POST", null, userJwt, { campaign_id, qr_url: a.qr_url });
+        const gq = guard(qr); if (gq) return { ...gq, campaign_id, note: "Design attached but linking the QR URL failed." };
+      }
+
+      return {
+        campaign_id,
+        campaign_name: a.campaign_name.trim(),
+        status: "Draft",
+        note: "Address-list campaign created as a draft with its design attached. NEXT: render the CSV uploader card for this campaign so the user can attach their address list. After that: optional address verification ($0.025/address, user-completed) or skip, then the user launches in the launch screen. Nothing is uploaded, verified, or launched yet.",
+      };
+    });
+
+  t("remove_invalid_addresses",
+    "Exclude every INVALID address (missing mandatory fields) from a campaign's uploaded address list, in bulk.",
+    { list_id: z.string().describe("the csv address list id") },
+    W,
+    async (a) => {
+      const res = await callApi("removeAllInvalidAddresses", "POST", null, userJwt, { list_id: a.list_id });
+      const g = guard(res); if (g) return g;
+      const r = payload(res);
+      return { list_id: a.list_id, excluded: r?.updated_count ?? 0 };
+    });
+
+  t("remove_duplicate_addresses",
+    "Exclude every DUPLICATE address from a campaign's uploaded address list, in bulk (the first occurrence of each address stays).",
+    { list_id: z.string().describe("the csv address list id") },
+    W,
+    async (a) => {
+      const res = await callApi("removeAllDuplicateAddresses", "POST", null, userJwt, { list_id: a.list_id });
+      const g = guard(res); if (g) return g;
+      const r = payload(res);
+      return { list_id: a.list_id, excluded: r?.excluded_count ?? 0 };
+    });
+
+  t("delete_addresses",
+    "Remove specific addresses from a campaign's uploaded address list (they won't receive postcards). Irreversible for this list.",
+    { list_id: z.string(), address_ids: z.array(z.string()).min(1).describe("ids of the addresses to remove") },
+    D,
+    async (a) => {
+      const res = await callApi("deleteCSVAddresses", "POST", null, userJwt, { list_id: a.list_id, address_ids: a.address_ids });
+      const g = guard(res); if (g) return g;
+      const r = payload(res);
+      return { list_id: a.list_id, removed: r?.updated_count ?? a.address_ids.length };
+    });
+
+  t("set_verification_skip",
+    "Set whether an address-list campaign SKIPS the optional paid address verification ($0.025/address). skip=true lets it launch unverified; skip=false re-enables the verification requirement. This toggles intent only — it never charges; actual verification is completed by the user in the app.",
+    { csv_address_list_id: z.string(), skip: z.boolean() },
+    W,
+    async (a) => {
+      const res = await callApi("updateCampaignVerification", "POST", null, userJwt, { csv_address_list_id: a.csv_address_list_id, skip_address_verification: a.skip });
+      return guard(res) ?? { csv_address_list_id: a.csv_address_list_id, skip_address_verification: a.skip };
+    });
+
+  // ── Branding (3C-2) ──────────────────────────────────────────────────────────
+  // Setting a logo requires a FILE and happens via the ImageUploader card (client-side);
+  // removing the company logo and updating the theme are plain JSON writes, so they're tools.
+  t("update_branding_theme",
+    "Update the user's branding theme: the three brand colors (hex) and the two font names. These become the defaults used across their postcard designs. All five values are required by the server, so carry over current values for anything the user isn't changing.",
+    {
+      primary_color: z.string().regex(/^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/, "hex color like #E17019"),
+      secondary_color: z.string().regex(/^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/, "hex color"),
+      accent_color: z.string().regex(/^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/, "hex color"),
+      heading_font: z.string().min(1).describe("font family name, e.g. Poppins"),
+      body_font: z.string().min(1).describe("font family name"),
+    },
+    W,
+    async (a) => {
+      const res = await callApi("updateBrandingSettings", "POST", null, userJwt, {
+        theme: {
+          colors: { primary: a.primary_color, secondary: a.secondary_color, accent: a.accent_color },
+          fonts: { primary: { name: a.heading_font }, body: { name: a.body_font } },
+        },
+      });
+      return guard(res) ?? { updated: true, colors: [a.primary_color, a.secondary_color, a.accent_color], fonts: [a.heading_font, a.body_font] };
+    });
+
+  t("remove_company_logo",
+    "Remove the organization's company logo. (SETTING a logo needs a file — that's done through the image-upload card, not this tool.)",
+    {},
+    D,
+    async () => {
+      const res = await callApi("updateCompanyLogo", "POST", null, userJwt, { company_logo: null });
+      return guard(res) ?? { removed: true };
+    });
+
+  // ── Agency: team management (3C-3) ──────────────────────────────────────────
+  // All three V3 endpoints are agency-gated server-side (caller must be OWNER/ADMIN of an agency
+  // org AND of every target org) — 403s surface as friendly role messages via guard().
+  const memberRole = z.enum(["ADMIN", "MARKETER", "TECHNICIAN"]);
+  t("invite_user",
+    "Invite a NEW user by email and grant them access to one or more of the organizations you manage. Sends them a set-password invitation email. Requires the email, a role, and which organizations they get. grant_agency_access=true additionally gives them access to your agency workspace (for ADMINs you trust with the whole portfolio).",
+    {
+      email: z.string().email(),
+      role: memberRole,
+      organization_ids: z.array(z.string()).optional().describe("orgs to grant — required unless grant_agency_access is true"),
+      full_name: z.string().optional(),
+      grant_agency_access: z.boolean().optional(),
+    },
+    W,
+    async (a) => {
+      if (!a.grant_agency_access && !(a.organization_ids?.length)) {
+        return { missing_required: ["organization_ids"], note: "Ask which organization(s) the user should get access to (or whether to grant agency access)." };
+      }
+      const res = await callApi("createUserV3", "POST", null, userJwt, {
+        email: a.email,
+        role: a.role,
+        ...(a.organization_ids?.length ? { organization_ids: a.organization_ids } : {}),
+        ...(a.full_name ? { fullName: a.full_name } : {}),
+        ...(a.grant_agency_access !== undefined ? { grant_agency_access: a.grant_agency_access } : {}),
+      });
+      const g = guard(res); if (g) {
+        if (res.status === 409) return { error: "A user with that email already exists — use edit_user_access to change their organizations or role instead." };
+        if (/USER_INVITATION_FAILED/i.test(res.body ?? "")) return { error: "The invitation email couldn't be sent to that address — double-check the email and try again." };
+        return g;
+      }
+      const u = payload(res)?.user ?? payload(res);
+      return { user_id: u?.id, email: a.email, role: a.role, organizations_granted: u?.organization_ids ?? a.organization_ids ?? [], note: "Invitation email sent — they set their password from it." };
+    });
+
+  t("edit_user_access",
+    "Change an EXISTING team member's role and/or grant them access to more organizations. organization_ids is the list of orgs to grant/update; role is required when any of those is a NEW grant. Cannot change an organization OWNER's role, and you cannot edit yourself.",
+    {
+      user_id: z.string(),
+      organization_ids: z.array(z.string()).min(1),
+      role: memberRole.optional(),
+    },
+    W,
+    async (a) => {
+      const res = await callApi("editUserV3", "POST", null, userJwt, { user_id: a.user_id, organization_ids: a.organization_ids, ...(a.role ? { role: a.role } : {}) });
+      const g = guard(res); if (g) {
+        if (/ROLE_REQUIRED_FOR_NEW_GRANTS/i.test(res.body ?? "")) return { missing_required: ["role"], note: "One of those organizations is a new grant for this user — ask which role they should have there." };
+        return g;
+      }
+      const r = payload(res);
+      return { user_id: a.user_id, results: r?.results ?? [], organizations: r?.organization_ids ?? a.organization_ids };
+    });
+
+  t("revoke_user_access",
+    "Remove a team member's access to specific organizations. Their account survives (this is NOT a delete) — they just lose those organizations. Cannot revoke an organization's OWNER or yourself; agency-workspace access is not revocable this way.",
+    { user_id: z.string(), organization_ids: z.array(z.string()).min(1) },
+    D,
+    async (a) => {
+      const res = await callApi("revokeUserAccessV3", "POST", null, userJwt, { user_id: a.user_id, organization_ids: a.organization_ids });
+      const g = guard(res); if (g) {
+        if (/CANNOT_REVOKE_OWNER/i.test(res.body ?? "")) return { error: "That user OWNS one of those organizations — ownership can't be revoked, only transferred (which I can't do)." };
+        return g;
+      }
+      const r = payload(res);
+      return { user_id: a.user_id, results: r?.results ?? [], skipped_agency_orgs: r?.dropped_agency_organization_ids ?? [] };
+    });
+
+  // ── Agency: settings + template sharing (3C-3) ───────────────────────────────
+  t("update_agency_settings",
+    "Update the agency workspace's details: name, industry, and/or website. At least one field is required. (The agency LOGO needs a file — that's the image-upload card, not this tool.) Requires OWNER/ADMIN of the agency.",
+    {
+      agency_name: z.string().optional(),
+      industry: z.string().optional(),
+      website_url: z.string().optional(),
+    },
+    W,
+    async (a) => {
+      if (!a.agency_name && !a.industry && !a.website_url) return { error: "Provide at least one of: agency name, industry, website." };
+      const body = {};
+      if (a.agency_name !== undefined) body.agency_name = a.agency_name;
+      if (a.industry !== undefined) body.industry = a.industry;
+      if (a.website_url !== undefined) body.agency_website_url = a.website_url;
+      const res = await callApi("editAgencySettings", "POST", null, userJwt, body);
+      const g = guard(res); if (g) return g;
+      const ag = payload(res)?.agency ?? payload(res);
+      return { updated: true, agency_name: ag?.agency_name, industry: ag?.industry, website_url: ag?.agency_website_url };
+    });
+
+  t("share_agency_template",
+    "Share an agency-owned postcard design with one or more client organizations (they can then use it in their campaigns). ADDS to the existing share list. Requires OWNER/ADMIN of the agency and of every target organization.",
+    { bundle_id: z.string(), organization_ids: z.array(z.string()).min(1) },
+    W,
+    async (a) => {
+      const res = await callApi("shareTemplateBundleV3", "POST", null, userJwt, { template_bundle_id: a.bundle_id, organization_ids: a.organization_ids });
+      const g = guard(res); if (g) return g;
+      const r = payload(res);
+      return { bundle_id: a.bundle_id, shared_with: r?.shared_with_organization_ids ?? [] };
+    });
+
+  t("unshare_agency_template",
+    "Stop sharing an agency-owned postcard design with specific client organizations (removes them from the share list).",
+    { bundle_id: z.string(), organization_ids: z.array(z.string()).min(1) },
+    W,
+    async (a) => {
+      const res = await callApi("unshareTemplateBundleV3", "POST", null, userJwt, { template_bundle_id: a.bundle_id, organization_ids: a.organization_ids });
+      const g = guard(res); if (g) return g;
+      const r = payload(res);
+      return { bundle_id: a.bundle_id, shared_with: r?.shared_with_organization_ids ?? [] };
+    });
+
+  t("delete_template_bundle",
+    "Delete a postcard design bundle permanently (removes it from PostGrid too). Irreversible — confirm the user means this design. Requires OWNER/ADMIN of the design's owning organization.",
+    { bundle_id: z.string() },
+    D,
+    async (a) => {
+      // This edge fn uniquely requires the PostGrid key in the BODY (create/update use their own env).
+      if (!POSTGRID_POSTCARD_API_KEY) return { error: "Design deletion isn't available right now — it needs additional server configuration. The user can delete it from the Templates page." };
+      const res = await callApi("deleteTemplateBundle", "POST", null, userJwt, { template_bundle_id: a.bundle_id, postgridApiKey: POSTGRID_POSTCARD_API_KEY });
+      return guard(res) ?? { bundle_id: a.bundle_id, deleted: true };
+    });
+
+  // ── Organizations (3C-4) ─────────────────────────────────────────────────────
+  // createOrganization inserts a BLANK org; the V1 completeOnboarding step-dispatch fn (accepts
+  // organization_id on every step — no org switch needed) fills it. Step 4 MUST always run (even
+  // with no invites) — it sets team_onboarding_completed, the only thing that marks the org
+  // complete; without it the org is a "Setup N of 4" artifact that traps users in the wizard.
+  // The logo is REQUIRED (mirrors the onboarding UI) and must be a URL (gallery/https) — the
+  // JSON path; never multipart (that branch has a latent backend bug). theme is deliberately
+  // NEVER sent: V1 step 3 would write it to the CALLER's user-level branding_settings.
+  const ZIP_RE = /^\d{5}(-\d{4})?$/;
+  const orgOnboardingFields = {
+    business_name: z.string().optional().describe("REQUIRED"),
+    industry: z.string().optional().describe("REQUIRED"),
+    country: z.string().optional().describe("REQUIRED (e.g. United States of America)"),
+    street_address: z.string().optional().describe("REQUIRED"),
+    city: z.string().optional().describe("REQUIRED"),
+    state: z.string().optional().describe("REQUIRED"),
+    zip: z.string().optional().describe("REQUIRED, ##### or #####-####"),
+    logo_url: z.string().optional().describe("REQUIRED — an https:// image URL (upload via the image card or pick from the gallery)"),
+    business_email: z.string().optional(),
+    phone: z.string().optional(),
+    website: z.string().optional(),
+    invite_emails: z.array(z.object({ email: z.string().email(), role: memberRole.optional() })).optional().describe("teammates to invite during setup (optional)"),
+  };
+  const onboardingStepCalls = {
+    1: (a, orgId) => callApi("completeOnboarding", "POST", null, userJwt, {
+      step: 1, organization_id: orgId, business_name: a.business_name, industry: a.industry,
+      ...(a.phone ? { business_phone_number: a.phone } : {}),
+      ...(a.business_email ? { business_email: a.business_email } : {}),
+      ...(a.website ? { website_url: a.website } : {}),
+    }),
+    2: (a, orgId) => callApi("completeOnboarding", "POST", null, userJwt, {
+      step: 2, organization_id: orgId, country: a.country, street_address: a.street_address, city: a.city, state: a.state, zip: a.zip,
+    }),
+    3: (a, orgId) => callApi("completeOnboarding", "POST", null, userJwt, { step: 3, organization_id: orgId, company_logo: a.logo_url }),
+    4: (a, orgId) => callApi("completeOnboarding", "POST", null, userJwt, { step: 4, organization_id: orgId, team_member_ids: [], invite_emails: a.invite_emails ?? [] }),
+  };
+  const STEP_REQUIREMENTS = { 1: ["business_name", "industry"], 2: ["country", "street_address", "city", "state", "zip"], 3: ["logo_url"], 4: [] };
+  const missingForSteps = (a, steps) => {
+    const miss = [];
+    for (const s of steps) for (const f of STEP_REQUIREMENTS[s]) if (!a[f]?.trim?.() && !a[f]) miss.push(f);
+    if (steps.includes(2) && a.zip && !ZIP_RE.test(a.zip)) miss.push("zip (format #####)");
+    if (steps.includes(3) && a.logo_url && !/^https?:\/\//i.test(a.logo_url)) miss.push("logo_url (must be an http(s) URL)");
+    return [...new Set(miss)];
+  };
+  const runOnboardingSteps = async (a, orgId, steps) => {
+    for (const s of steps) {
+      const res = await onboardingStepCalls[s](a, orgId);
+      const g = guard(res);
+      if (g) return { ...g, organization_id: orgId, failed_step: s, note: `The organization exists but onboarding stopped at step ${s}. Fix the issue and use complete_org_onboarding to finish it.` };
+    }
+    return null;
+  };
+
+  t("create_client_organization",
+    "Create a NEW client organization and complete its full setup in one step (agency owners/admins only). GATHER everything first: business name, industry, full address (country/street/city/state/zip), and a LOGO (an image URL — have the user upload one via the image card or pick a gallery image). Optional: business email, phone, website, and teammates to invite. Returns `missing_required` for anything absent. After success, offer to switch into the new organization. Do NOT claim the organization is ready until this returns success.",
+    orgOnboardingFields,
+    W,
+    async (a) => {
+      const missing = missingForSteps(a, [1, 2, 3, 4]);
+      if (missing.length) return { missing_required: missing, note: "Ask the user for these, then call create_client_organization again. The logo can come from the image-upload card or their gallery." };
+      const created = await callApi("createOrganization", "POST", null, userJwt, {});
+      const gc = guard(created);
+      if (gc) {
+        if (/MULTI_ORG_NOT_ENABLED|FORBIDDEN/i.test(created.body ?? "")) return { error: "Creating organizations needs an agency account. If they want multiple organizations, they can switch their account to an agency first." };
+        return gc;
+      }
+      const orgId = payload(created)?.organization_id ?? created?.organization_id;
+      if (!orgId) return { error: "Could not create the organization (no id returned)." };
+      const failed = await runOnboardingSteps(a, orgId, [1, 2, 3, 4]);
+      if (failed) return failed;
+      return {
+        organization_id: orgId,
+        business_name: a.business_name.trim(),
+        onboarding_complete: true,
+        invites_sent: (a.invite_emails ?? []).map((i) => i.email),
+        note: "The organization is fully set up (details, address, logo, team step). Offer the user a switch button to start working in it.",
+      };
+    });
+
+  t("complete_org_onboarding",
+    "Finish the setup of an organization that's stuck mid-onboarding ('Setup N of 4'). Pass the organization id plus whatever fields its REMAINING steps need — the tool checks what's missing, runs only the unfinished steps, and always completes the final team step. Use when the user's organization list shows an org that isn't fully set up.",
+    { organization_id: z.string(), ...orgOnboardingFields },
+    W,
+    async (a) => {
+      const stepRes = await callApi("getOnboardingStep", "GET", { organization_id: a.organization_id }, userJwt);
+      const gs = guard(stepRes); if (gs) return gs;
+      const sp = payload(stepRes);
+      const completed = sp?.completed_step ?? 0;
+      if (completed >= 4) return { organization_id: a.organization_id, onboarding_complete: true, note: "This organization's setup is already complete." };
+      const steps = [1, 2, 3, 4].filter((s) => s > completed);
+      const missing = missingForSteps(a, steps);
+      if (missing.length) return { missing_required: missing, note: `Setup is at step ${completed} of 4 — the remaining steps need these fields. Ask the user, then call again.` };
+      const failed = await runOnboardingSteps(a, a.organization_id, steps);
+      if (failed) return failed;
+      return { organization_id: a.organization_id, onboarding_complete: true, steps_run: steps, note: "Setup finished. Offer the user a switch button if they want to work in it now." };
+    });
+
+  t("switch_to_agency_account",
+    "Convert the user's account to an AGENCY account. IRREVERSIBLE (only support can undo it) and allowed once per account. What happens: a NEW agency organization is created, the user's current business becomes its first client (all its data and members untouched), and the user gains agency-wide admin powers. BEFORE calling this, you MUST have told the user, in plain words: it can't be undone, a new agency workspace is created, their business becomes its first client, and one account can only ever have one agency. Requires the agency's name and a logo (image URL). NEVER suggest this conversion yourself — only act on the user's explicit request.",
+    {
+      agency_name: z.string().optional().describe("REQUIRED, the new agency's name (<=120 chars)"),
+      logo_url: z.string().optional().describe("REQUIRED — an https:// image URL for the agency logo"),
+      agency_type: z.enum(["Marketing agency", "Lead-generation agency", "Print/mail agency", "Consulting", "Other"]).optional(),
+      website_url: z.string().optional(),
+      first_client_organization_id: z.string().optional().describe("which of their businesses becomes the first client (defaults to the active one)"),
+    },
+    D,
+    async (a) => {
+      const missing = [];
+      if (!a.agency_name?.trim()) missing.push("agency_name");
+      if (!a.logo_url) missing.push("logo_url");
+      if (missing.length) return { missing_required: missing, note: "Ask the user for these (the logo can come from the image-upload card), then call again." };
+      if (a.agency_name.trim().length > 120) return { error: "The agency name must be 120 characters or fewer." };
+      if (!/^https?:\/\//i.test(a.logo_url)) return { error: "The logo must be an http(s) image URL — upload one via the image card first." };
+      // Pre-check: already an agency → friendly early exit (matches the backend's ALREADY_AGENCY gate).
+      const orgsRes = await callApi("getUserOrganizations", "GET", null, userJwt);
+      if (!orgsRes?.__error) {
+        const orgs = payload(orgsRes);
+        const arr = Array.isArray(orgs) ? orgs : (orgs?.organizations ?? []);
+        if (arr.some((o) => (o.is_agency ?? o.isAgencyAccount) === true)) {
+          return { error: "This account already has an agency — an account can only ever have one." };
+        }
+      }
+      const res = await callApi("switchToAgencyAccount", "POST", null, userJwt, {
+        agency_name: a.agency_name.trim(),
+        agency_logo: a.logo_url,
+        ...(a.agency_type ? { agency_type: a.agency_type } : {}),
+        ...(a.website_url ? { website_url: a.website_url } : {}),
+        ...(a.first_client_organization_id ? { organization_id: a.first_client_organization_id } : {}),
+      });
+      const g = guard(res);
+      if (g) {
+        if (/ALREADY_AGENCY/i.test(res.body ?? "")) return { error: "This account already has an agency — an account can only ever have one." };
+        if (/NO_BUSINESS_ORG/i.test(res.body ?? "")) return { error: "There's no business organization on this account to convert." };
+        return g;
+      }
+      const r = payload(res);
+      return {
+        agency_organization_id: r?.agency?.organization_id,
+        agency_name: r?.agency?.agency_name ?? a.agency_name.trim(),
+        first_client: r?.first_client ? { organization_id: r.first_client.organization_id, business_name: r.first_client.business_name } : null,
+        note: "The account is now an agency. IMPORTANT: the app needs a refresh to see it — render an OrgSwitchButton with refresh_account=true and this agency_organization_id so the user can enter their new agency workspace. Their business is the agency's first client, untouched.",
+      };
     });
 }

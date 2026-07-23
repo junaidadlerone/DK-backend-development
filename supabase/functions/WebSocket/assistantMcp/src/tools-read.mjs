@@ -407,4 +407,49 @@ export function registerReadTools(server, { userId, userJwt }) {
       const res = await callApi("getAllTemplatesBundlesV3", "GET", { page: a.page ?? 1, limit: a.limit ?? 10, postcardSize: a.postcardSize, sort: a.sort }, userJwt);
       return guard(res) ?? { bundles: (payload(res) ?? []).map(bundleRow), pagination: res?.pagination ?? null };
     });
+
+  t("get_branding_theme",
+    "The user's branding theme: the three brand colors (hex) and the heading/body font names. Use these when DESIGNING a postcard so it matches their brand.",
+    {},
+    async () => {
+      const res = await callApi("getAppContent", "GET", null, userJwt);
+      const g = guard(res); if (g) return g;
+      const theme = payload(res)?.theme ?? {};
+      return {
+        colors: theme.colors ?? { primary: "#E17019", secondary: "#4EC02B", accent: "#B85A14" },
+        fonts: { heading: theme.fonts?.primary?.name ?? "Poppins", body: theme.fonts?.body?.name ?? "Poppins" },
+      };
+    });
+
+  t("list_gallery_images",
+    "The organization's photo gallery (id + URL per image; pass referral_id for a referral's gallery). Use these URLs as image sources when designing a postcard.",
+    { referral_id: z.string().optional(), limit: z.number().optional() },
+    async (a) => {
+      const res = await callApi("getPhotoGallery", "POST", null, userJwt, a.referral_id ? { referral_id: a.referral_id } : {});
+      const g = guard(res); if (g) return g;
+      const gal = payload(res);
+      const images = (gal?.images ?? gal?.gallery?.images ?? []).slice(0, a.limit ?? 30).map((i) => ({ id: i.id, url: i.url, type: i.type ?? "none" }));
+      return { count: images.length, images };
+    });
+
+  t("get_address_list",
+    "The state of an ADDRESS-LIST campaign's uploaded CSV list: counts (total / included / excluded / verified), whether verification ran or is skipped, and the list id (needed by the curation tools). Compact — no address rows; the user reviews rows in the uploader card or the app.",
+    { campaign_id: z.string() },
+    async (a) => {
+      const res = await callApi("getCSVAddressListDetails", "POST", null, userJwt, { campaign_id: a.campaign_id });
+      if (res?.__error && res.status === 404) return { error: "This campaign has no uploaded address list yet — the user attaches the CSV via the uploader card." };
+      const g = guard(res); if (g) return g;
+      const d = payload(res);
+      if (!d?.id) return { error: "This campaign has no uploaded address list yet — the user attaches the CSV via the uploader card." };
+      return {
+        list_id: d.id,
+        list_name: d.list_name ?? null,
+        total: d.total_count ?? 0,
+        included: d.included_count ?? 0,
+        excluded: d.excluded_count ?? 0,
+        verified: d.verified_address_count ?? 0,
+        verification_performed: !!d.verification_performed,
+        skip_address_verification: !!d.skip_address_verification,
+      };
+    });
 }
