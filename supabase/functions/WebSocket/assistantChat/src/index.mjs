@@ -16,7 +16,7 @@ import "dotenv/config";
 import express from "express";
 import { serve as inngestServe } from "inngest/express";
 import { inngest, syncNotionKb } from "./sync.mjs";
-import { chatHandler } from "./chat.mjs";
+import { chatHandler, feedbackHandler } from "./chat.mjs";
 
 const PORT = process.env.PORT || 8080;
 const ADMIN_SYNC_SECRET = process.env.ADMIN_SYNC_SECRET ?? "";
@@ -62,6 +62,10 @@ app.post("/admin/sync", async (req, res) => {
 // ── Chat (Tier-1 spine — see src/chat.mjs) ────────────────────────────────────
 
 app.post("/chat", chatHandler);
+
+// ── Per-message feedback (Tier 3.5 — thumbs on an assistant reply) ────────────
+
+app.post("/feedback", feedbackHandler);
 
 // ── Startup ───────────────────────────────────────────────────────────────────
 

@@ -33,6 +33,7 @@
 
 import { randomUUID } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
+import { authenticateToken } from "./auth.mjs";
 
 const SUPABASE_URL = process.env.SUPABASE_URL ?? "";
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
@@ -45,15 +46,16 @@ const ASSISTANT_MCP_URL = (process.env.ASSISTANT_MCP_URL ?? "").replace(/\/+$/, 
 const chatConfigured = !!(SUPABASE_URL && SUPABASE_SERVICE_KEY && FLOWISE_URL && FLOWISE_FLOW_ID);
 const adminSupabase = SUPABASE_URL && SUPABASE_SERVICE_KEY ? createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY) : null;
 
-// ── auth (namiGateway verbatim) ───────────────────────────────────────────────
+// ── auth — local JWKS verification (auth.mjs), getUser only as key-set-outage fallback ─
 async function authenticate(req) {
   const header = req.headers.authorization ?? "";
   if (!header.startsWith("Bearer ")) return null;
   const token = header.slice(7).trim();
   if (!token) return null;
-  const { data, error } = await adminSupabase.auth.getUser(token);
-  if (error || !data?.user) return null;
-  return { userId: data.user.id, userJwt: token };
+  return authenticateToken(token, async (t) => {
+    const { data, error } = await adminSupabase.auth.getUser(t);
+    return error || !data?.user ? null : data.user.id;
+  });
 }
 
 // ── context normalization (Tier 2) ────────────────────────────────────────────
@@ -178,6 +180,29 @@ const THINKING_LABELS = {
   delete_campaign: "Deleting the campaign…",
   duplicate_template_bundle: "Duplicating the design…",
   update_template_settings: "Updating the design…",
+  // 3C reads
+  get_address_list: "Checking the address list…",
+  get_branding_theme: "Loading your branding…",
+  list_gallery_images: "Browsing your gallery…",
+  get_org_onboarding: "Checking the organization's setup…",
+  // 3C writes
+  create_address_list_campaign: "Setting up the campaign…",
+  remove_invalid_addresses: "Excluding invalid addresses…",
+  remove_duplicate_addresses: "Excluding duplicate addresses…",
+  delete_addresses: "Removing those addresses…",
+  set_verification_skip: "Updating the verification preference…",
+  update_branding_theme: "Updating your branding…",
+  remove_company_logo: "Removing the logo…",
+  invite_user: "Sending the invitation…",
+  edit_user_access: "Updating their access…",
+  revoke_user_access: "Removing their access…",
+  update_agency_settings: "Updating your agency…",
+  share_agency_template: "Sharing the design…",
+  unshare_agency_template: "Unsharing the design…",
+  delete_template_bundle: "Deleting the design…",
+  create_client_organization: "Setting up the new organization…",
+  complete_org_onboarding: "Finishing the organization's setup…",
+  switch_to_agency_account: "Converting to an agency account…",
 };
 // Fallback is deliberately generic — never expose a raw tool name for an unmapped/new tool.
 const thinkingLabel = (tool) => THINKING_LABELS[tool] ?? "Working on it…";
@@ -192,39 +217,50 @@ const AGENT_NODE_ID = process.env.AGENT_NODE_ID ?? "agentAgentflow_0";
 const HITL_PROCEED = "__dk_hitl_proceed__";
 const HITL_REJECT = "__dk_hitl_reject__";
 
-// ── Auto-approval policy (3C-6) ───────────────────────────────────────────────
+// ── Auto-approval policy (3C-6, hardened 3.5) ─────────────────────────────────
 // In AUTO mode a paused write may resume without a card — but ONLY when the tool is provably
-// non-destructive. The policy is derived from the MCP's OWN tool annotations (destructiveHint),
-// fetched once and cached, so there is no drift-prone name list to maintain. On top of the
-// annotations, ALWAYS_CONFIRM adds payment-adjacent tools that carry no destructive hint. Any
-// uncertainty (fetch failure, unknown tool) FAILS CLOSED to the manual card.
-const ALWAYS_CONFIRM = new Set(["set_default_payment_method"]);
+// a non-destructive WRITE. The policy is derived from the MCP's OWN tool annotations, fetched
+// once and cached, so there is no drift-prone name list to maintain. "auto" now requires the
+// EXPLICIT write signature (readOnlyHint === false AND destructiveHint === false): read tools
+// (readOnlyHint true) and anything without explicit annotations map to "confirm", so a
+// misattributed pending tool (see pendingAction) can never silently resume a write it wasn't.
+// On top of the annotations, ALWAYS_CONFIRM lists tools whose side effects leave the account
+// (payments; outbound invitation emails; privilege grants) — those card even in auto mode.
+// Any uncertainty (fetch failure, unknown tool) FAILS CLOSED to the manual card.
+const ALWAYS_CONFIRM = new Set(["set_default_payment_method", "invite_user", "edit_user_access"]);
 const MAX_AUTO_RESUMES = 5; // per turn — runaway-loop backstop
 let toolSafetyCache = null; // Map<tool, "auto"|"confirm">
 let toolSafetyFetchedAt = 0;
+let toolSafetyInFlight = null; // concurrent cold-start turns share one fetch
 const TOOL_SAFETY_TTL_MS = 10 * 60_000;
+async function refreshToolSafety() {
+  try {
+    const r = await fetch(`${ASSISTANT_MCP_URL}/mcp`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Accept": "application/json, text/event-stream" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),
+      signal: AbortSignal.timeout(5000),
+    });
+    const text = await r.text();
+    const m = text.match(/data: (.*)/);
+    const parsed = JSON.parse(m ? m[1] : text);
+    const map = new Map();
+    for (const t of parsed?.result?.tools ?? []) {
+      const ann = t?.annotations ?? {};
+      map.set(t.name, ann.readOnlyHint === false && ann.destructiveHint === false ? "auto" : "confirm");
+    }
+    if (map.size) { toolSafetyCache = map; toolSafetyFetchedAt = Date.now(); }
+    else console.warn("[/chat] tool-safety fetch returned no tools (failing closed to manual)");
+  } catch (e) {
+    console.warn("[/chat] tool-safety fetch failed (failing closed to manual):", e.message);
+  }
+}
 async function isAutoApprovable(tool) {
   if (!tool || ALWAYS_CONFIRM.has(tool)) return false;
   const stale = Date.now() - toolSafetyFetchedAt > TOOL_SAFETY_TTL_MS;
   if ((!toolSafetyCache || stale) && ASSISTANT_MCP_URL) {
-    try {
-      const r = await fetch(`${ASSISTANT_MCP_URL}/mcp`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "Accept": "application/json, text/event-stream" },
-        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),
-        signal: AbortSignal.timeout(5000),
-      });
-      const text = await r.text();
-      const m = text.match(/data: (.*)/);
-      const parsed = JSON.parse(m ? m[1] : text);
-      const map = new Map();
-      for (const t of parsed?.result?.tools ?? []) {
-        map.set(t.name, t?.annotations?.destructiveHint ? "confirm" : "auto");
-      }
-      if (map.size) { toolSafetyCache = map; toolSafetyFetchedAt = Date.now(); }
-    } catch (e) {
-      console.warn("[/chat] tool-safety fetch failed (failing closed to manual):", e.message);
-    }
+    toolSafetyInFlight ??= refreshToolSafety().finally(() => { toolSafetyInFlight = null; });
+    await toolSafetyInFlight;
   }
   return toolSafetyCache?.get(tool) === "auto"; // unknown/unfetched → false → card
 }
@@ -234,6 +270,11 @@ async function isAutoApprovable(tool) {
 // the "AI responses disappear from history" report). MUST match the frontend DoorKnockerChat
 // constant of the same value so the browser's cached surface re-attaches to this row on reload.
 const UI_SURFACE_NOTE = "Here's what I found:";
+// Stand-in for a turn that ended by PAUSING for approval (no reply text, no emit_ui card —
+// the approval card is gateway-built). Without it the turn persisted only the user row, so a
+// reload showed a question with no response. The persisted perm_ surface (WS2) carries the
+// card itself; this line keeps the text history coherent next to it.
+const APPROVAL_NOTE = "Waiting for your approval on that action.";
 const PERM_TITLES = {
   create_referral: "Create a new referral",
   update_referral: "Update this referral",
@@ -245,6 +286,28 @@ const PERM_TITLES = {
   update_organization: "Update your organization details",
   update_profile: "Update your profile",
   set_default_payment_method: "Set your default payment method",
+  create_campaign: "Create this campaign",
+  update_campaign: "Update this campaign",
+  delete_campaign: "Delete this campaign",
+  duplicate_template_bundle: "Duplicate this design",
+  update_template_settings: "Update this design's settings",
+  create_address_list_campaign: "Create this campaign",
+  remove_invalid_addresses: "Exclude all invalid addresses",
+  remove_duplicate_addresses: "Exclude all duplicate addresses",
+  delete_addresses: "Remove these addresses",
+  set_verification_skip: "Change the address-verification preference",
+  update_branding_theme: "Update your branding theme",
+  remove_company_logo: "Remove your company logo",
+  invite_user: "Send this team invitation",
+  edit_user_access: "Change this member's access",
+  revoke_user_access: "Remove this member's access",
+  update_agency_settings: "Update your agency settings",
+  share_agency_template: "Share this design with clients",
+  unshare_agency_template: "Stop sharing this design",
+  delete_template_bundle: "Delete this design",
+  create_client_organization: "Create the new organization",
+  complete_org_onboarding: "Finish this organization's setup",
+  switch_to_agency_account: "Convert your account to an agency",
 };
 const permissionTitle = (tool) => PERM_TITLES[tool] ?? `Run: ${String(tool ?? "this action").replace(/_/g, " ")}`;
 // Plain Approve/Reject card for non-charging writes (charging actions get a cost+checkbox
@@ -271,20 +334,33 @@ const buildApprovalCard = (actionId, sessionId, tool) => cleanUiFrame({
 // deepseek can leak raw tool markup; strip both plus any literal emit_ui markup.
 const LEAK_MARKERS = ["Attempting to use tool", "｜DSML｜", "<emit_ui", "<emitui"];
 const KEEP_BACK = Math.max(...LEAK_MARKERS.map((m) => m.length)) - 1;
-const deDash = (s) => s.replace(/\s*—\s*/g, ", ").replace(/\s+–\s+/g, ", ");
-// Redact infra strings the model must never surface (tool names, service hosts, api paths).
+// De-dash prose without mangling data: numeric ranges keep a plain hyphen ("$5—10" → "$5-10");
+// only prose em/en-dashes become ", ".
+const deDash = (s) => s
+  .replace(/(\d)\s*[—–]\s*(\d)/g, "$1-$2")
+  .replace(/\s*—\s*/g, ", ")
+  .replace(/\s+–\s+/g, ", ");
+// Redact infra strings the model must never surface: service hosts, api paths, EVERY tool-name
+// shape (read + write + agency prefixes — not just reads), and bare UUIDs (record ids are for
+// tools only; prompt discipline is the first line, this is the backstop).
+const TOOL_NAME_RE = /\b(?:get|list|search|emit|create|update|delete|remove|clear|mark|duplicate|share|unshare|invite|edit|revoke|switch|complete|set)_[a-z][a-z_]+\b/g;
+const UUID_RE = /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi;
 const redact = (s) => s
   .replace(/https?:\/\/[^\s)\]]*run\.app[^\s)\]]*/gi, "our system")
   .replace(/https?:\/\/[^\s)\]]*supabase\.co[^\s)\]]*/gi, "our system")
   .replace(/\/api\/v\d[^\s)\]]*/gi, "our system")
-  .replace(/\b(?:get|list|search|emit)_[a-z][a-z_]+\b/g, "our system");
+  .replace(TOOL_NAME_RE, "our system")
+  .replace(UUID_RE, "")
+  .replace(/[ \t]{2,}/g, " ");
 const clean = (s) => redact(deDash(s));
 
-// GenUI frames are forwarded raw, so the same hygiene applies inside them —
-// deDash every string; redact only human-visible text fields (URLs/ids survive).
-const VISIBLE_TEXT_KEYS = new Set(["text", "title", "label", "caption", "subtitle", "proceedLabel"]);
+// GenUI frames are forwarded raw, so the same hygiene applies inside them — but ONLY to
+// human-visible text fields. Non-visible fields (ids, urls, and especially Button `prompt`
+// payloads, which are echoed back verbatim as the next turn's message) pass through UNTOUCHED —
+// rewriting them would change what a click sends.
+const VISIBLE_TEXT_KEYS = new Set(["text", "title", "label", "caption", "subtitle", "proceedLabel", "display"]);
 const deepClean = (val, key) => {
-  if (typeof val === "string") return VISIBLE_TEXT_KEYS.has(key) ? clean(val) : deDash(val);
+  if (typeof val === "string") return VISIBLE_TEXT_KEYS.has(key) ? clean(val) : val;
   if (Array.isArray(val)) return val.map((v) => deepClean(v, key));
   if (val && typeof val === "object") {
     const out = {};
@@ -301,7 +377,9 @@ const cleanUiFrame = (frame) => deepClean(frame, null);
 // Dormant until emit_ui ships with the Stage-F catalog — a 404 here is a no-op.
 // Returns the number of {type:"ui"} surfaces drained onto the stream (so the caller knows the turn
 // produced a generative-UI surface even if no answer text streamed — see the persist logic).
-async function inlineJobEvents(jobId, userJwt, send) {
+// `emitUi` is the handler's emitSurface — it cleans, streams, AND records the frame for
+// persistence (WS2), so every drained card lands in chat_surfaces too.
+async function inlineJobEvents(jobId, userJwt, emitUi) {
   if (!ASSISTANT_MCP_URL) return 0;
   let uiCount = 0;
   try {
@@ -326,7 +404,7 @@ async function inlineJobEvents(jobId, userJwt, send) {
         if (!t.startsWith("data:")) continue;
         let frame;
         try { frame = JSON.parse(t.slice(5)); } catch { continue; }
-        if (frame.type === "ui") { send(cleanUiFrame(frame)); uiCount++; }
+        if (frame.type === "ui") { emitUi(frame); uiCount++; }
       }
     }
     clearTimeout(timer);
@@ -377,11 +455,72 @@ async function createSession(sessionId, userId, firstMessage) {
     id: sessionId, user_id: userId, title: deriveTitle(firstMessage),
   });
 }
-async function persistTurn(sessionId, userMessage, assistantReply) {
-  const rows = [];
-  if (userMessage) rows.push({ session_id: sessionId, role: "user", content: userMessage });
-  if (assistantReply) rows.push({ session_id: sessionId, role: "assistant", content: assistantReply });
-  if (rows.length) await adminSupabase.from("chat_messages").insert(rows);
+
+// The composer appends "[attachment held in browser: name (kind, NNKB) — …]" marker lines to
+// the outgoing prompt (the file itself never leaves the browser). Strip them from the PERSISTED
+// user text (so reloaded history shows what the user typed, not the plumbing) and keep the
+// metadata for chat_messages.attachment so the chips re-render on reload.
+const ATTACHMENT_MARKER_RE = /\n?\[attachment held in browser: (.+?) \((image|csv), (\d+)KB\)[^\]]*\]/g;
+function splitAttachmentMarkers(text) {
+  if (!text) return { text: text ?? null, attachment: null };
+  const attachment = [];
+  const stripped = text
+    .replace(ATTACHMENT_MARKER_RE, (_, name, kind, kb) => {
+      attachment.push({ name, kind, size: Number(kb) * 1024 });
+      return "";
+    })
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+  if (!attachment.length) return { text, attachment: null };
+  return { text: stripped || text, attachment };
+}
+
+// WS2 (Tier 3.5): persist the FULL turn — user row (+ attachment metadata), assistant row
+// (+ ordered thinking labels), and every GenUI surface (upsert by (session_id, surface_id), so
+// a re-emit replaces in place; interaction reset to null on re-emit, resolved later by the
+// click-time UPDATE in the handler). A reloaded conversation now renders from the DB alone —
+// the browser's localStorage surface cache is retired. Returns the assistant row's id (streamed
+// in the done frame so the frontend can attach per-message feedback immediately).
+// The extras inserts retry WITHOUT the new columns if they fail (e.g. gateway deployed ahead of
+// the migration) — a schema gap must never cost the text history.
+async function persistTurn(sessionId, userMessage, assistantReply, extras = {}) {
+  const { thinking = [], surfaces = [], attachment = null } = extras;
+  let assistantId = null;
+  if (userMessage) {
+    const base = { session_id: sessionId, role: "user", content: userMessage };
+    const { error } = await adminSupabase.from("chat_messages")
+      .insert(attachment?.length ? { ...base, attachment } : base);
+    if (error && attachment?.length) {
+      console.error("[/chat] user-row insert with attachment failed (retrying plain):", error.message);
+      await adminSupabase.from("chat_messages").insert(base);
+    }
+  }
+  if (assistantReply) {
+    const base = { session_id: sessionId, role: "assistant", content: assistantReply };
+    let { data, error } = await adminSupabase.from("chat_messages")
+      .insert(thinking.length ? { ...base, thinking } : base)
+      .select("id").single();
+    if (error && thinking.length) {
+      console.error("[/chat] assistant-row insert with thinking failed (retrying plain):", error.message);
+      ({ data } = await adminSupabase.from("chat_messages").insert(base).select("id").single());
+    }
+    assistantId = data?.id ?? null;
+  }
+  if (surfaces.length) {
+    const now = new Date().toISOString();
+    const rows = surfaces.map((s) => ({
+      session_id: sessionId,
+      message_id: assistantId, // null on a pause-only turn — the frontend interleaves orphans by created_at
+      surface_id: s.surface_id,
+      frame: s.frame,
+      seq: s.seq,
+      interaction: null,
+      updated_at: now,
+    }));
+    const { error } = await adminSupabase.from("chat_surfaces").upsert(rows, { onConflict: "session_id,surface_id" });
+    if (error) console.error("[/chat] surface persist failed:", error.message);
+  }
+  return assistantId;
 }
 
 // ── the handler ───────────────────────────────────────────────────────────────
@@ -428,6 +567,28 @@ export async function chatHandler(req, res) {
   } else {
     sessionId = randomUUID();
     isNewSession = true;
+  }
+
+  // WS2: a GenUI card click carries its surface_id (+ optional {button_id, action, display}) —
+  // mark that surface RESOLVED before streaming, so a reload from here on shows the card locked
+  // with what the user chose instead of a fresh actionable card. HITL sentinels infer
+  // approve/reject when the frontend didn't spell it out. Fire-and-forget (session-scoped, so a
+  // caller can only resolve their own surfaces — ownership was just checked above).
+  const clickedSurfaceId = typeof req.body?.surface_id === "string" && req.body.surface_id ? req.body.surface_id : null;
+  if (clickedSurfaceId && !isNewSession) {
+    const given = (req.body?.interaction && typeof req.body.interaction === "object") ? req.body.interaction : {};
+    const interaction = {
+      resolved: true,
+      ...(typeof given.button_id === "string" ? { button_id: given.button_id.slice(0, 80) } : {}),
+      action: typeof given.action === "string" ? given.action.slice(0, 40) : (isResume ? (isReject ? "reject" : "approve") : "send"),
+      ...(typeof given.display === "string" ? { display: given.display.slice(0, 200) }
+        : isResume ? { display: isReject ? "Rejected" : "Approved" } : {}),
+      resolved_at: new Date().toISOString(),
+    };
+    adminSupabase.from("chat_surfaces")
+      .update({ interaction, updated_at: new Date().toISOString() })
+      .eq("session_id", sessionId).eq("surface_id", clickedSurfaceId)
+      .then(({ error }) => { if (error) console.error("[/chat] surface interaction update failed:", error.message); });
   }
 
   // SSE response — same headers/framing as namiGateway
@@ -563,6 +724,31 @@ export async function chatHandler(req, res) {
     // otherwise-textless card turn — see the persist logic below).
     let sawUi = false;
 
+    // WS2 capture: everything persistTurn stores alongside the text.
+    // thinkingLabels — ordered progress labels (consecutive-duplicate collapsed, matching the
+    // frontend's display dedupe). emittedSurfaces — every streamed {type:"ui"} frame INCLUDING
+    // the perm_ approval card, size-capped so one pathological frame can't bloat the table.
+    const thinkingLabels = [];
+    const noteThinking = (label) => {
+      if (label && label !== thinkingLabels[thinkingLabels.length - 1]) thinkingLabels.push(label);
+    };
+    const emittedSurfaces = [];
+    let surfaceSeq = 0;
+    const MAX_SURFACE_BYTES = 64 * 1024;
+    const emitSurface = (frame) => {
+      const cleanFrame = cleanUiFrame(frame);
+      send(cleanFrame);
+      if (typeof cleanFrame?.surface_id === "string" && cleanFrame.surface_id) {
+        let size = 0;
+        try { size = JSON.stringify(cleanFrame).length; } catch { size = MAX_SURFACE_BYTES + 1; }
+        if (size <= MAX_SURFACE_BYTES) {
+          emittedSurfaces.push({ surface_id: cleanFrame.surface_id, frame: cleanFrame, seq: surfaceSeq++ });
+        } else {
+          console.warn(`[/chat] surface ${cleanFrame.surface_id} over persist cap (${size}B) — streamed, not persisted`);
+        }
+      }
+    };
+
     const seenJobIds = new Set();
     const handleEvent = async (ev, data) => {
       switch (ev) {
@@ -576,7 +762,9 @@ export async function chatHandler(req, res) {
           if (isReject) break;
           for (const t of (Array.isArray(data) ? data : [])) {
             if (t?.tool && !t?.toolOutput) {
-              send({ type: "thinking", delta: thinkingLabel(t.tool) });
+              const label = thinkingLabel(t.tool);
+              send({ type: "thinking", delta: label });
+              noteThinking(label);
               pendingAction = { tool: t.tool, args: t.toolInput ?? {} };
             }
           }
@@ -591,10 +779,12 @@ export async function chatHandler(req, res) {
           if (approvalMode === "auto" && autoResumes < MAX_AUTO_RESUMES && (await isAutoApprovable(pendingAction?.tool))) {
             pendingAutoResume = true;
             autoResumes += 1;
-            send({ type: "thinking", delta: `Auto-approved: ${thinkingLabel(pendingAction?.tool)}` });
+            const label = `Auto-approved: ${thinkingLabel(pendingAction?.tool)}`;
+            send({ type: "thinking", delta: label });
+            noteThinking(label);
           } else {
             sawPermission = true;
-            send(buildApprovalCard(data?.id, sessionId, pendingAction?.tool));
+            emitSurface(buildApprovalCard(data?.id, sessionId, pendingAction?.tool));
           }
           break;
         }
@@ -602,11 +792,15 @@ export async function chatHandler(req, res) {
         // frame from the MCP jobs side channel onto this stream.
         case "usedTools":
           for (const t of (Array.isArray(data) ? data : [])) {
+            // This tool RETURNED — it can no longer be the one Flowise is about to pause on.
+            // Without this, a stale pendingAction (e.g. a read) could be the tool the
+            // auto-approve policy judges when the NEXT pause arrives (B3).
+            if (t?.tool && t?.toolOutput && pendingAction?.tool === t.tool) pendingAction = null;
             const out = typeof t?.toolOutput === "string" ? t.toolOutput : JSON.stringify(t?.toolOutput ?? "");
             const um = out.match(/\\?"ui_job_id\\?"\s*:\s*\\?"([0-9a-f-]{36})\\?"/i);
             if (um && !seenJobIds.has(um[1])) {
               seenJobIds.add(um[1]);
-              const n = await inlineJobEvents(um[1], auth.userJwt, send);
+              const n = await inlineJobEvents(um[1], auth.userJwt, emitSurface);
               if (n > 0) sawUi = true;
             }
           }
@@ -661,22 +855,27 @@ export async function chatHandler(req, res) {
 
     await runAttempt();
     // Retry once, but only if nothing user-visible streamed yet (namiGateway's rule). Never retry
-    // a resume — re-sending humanInput could double-execute the approved action.
+    // a resume — re-sending humanInput could double-execute the approved action. seenJobIds is
+    // deliberately KEPT: a retried run mints fresh job ids for its own emit_ui calls, and keeping
+    // the old entries prevents re-draining (= re-streaming) a card the first attempt already sent.
     if (turnError && !assistantReply && !isResume && !upstreamAbort.signal.aborted) {
       console.warn("[/chat] recoverable turn error — retrying once");
       turnError = null;
       pendingText = "";
       suppressRest = false;
-      seenJobIds.clear();
       await runAttempt();
     }
 
     // AUTO mode (3C-6): silently resume each auto-approved pause on the SAME session — the
     // resumed stream's tokens/ui/thinking keep flowing to the client. A pause that wasn't
     // auto-approvable emitted a card and set sawPermission instead, so the loop ends. Errors in a
-    // resumed run are never retried (re-sending humanInput could double-execute).
+    // resumed run are never retried (re-sending humanInput could double-execute). suppressRest/
+    // pendingText reset like the retry path — a leak-marker trip suppresses THAT attempt's tail
+    // only, never the resumed run's actual answer.
     while (pendingAutoResume && !turnError && !upstreamAbort.signal.aborted) {
       pendingAutoResume = false;
+      suppressRest = false;
+      pendingText = "";
       predictionBody.humanInput = { type: "proceed", startNodeId: AGENT_NODE_ID };
       await runAttempt();
     }
@@ -696,16 +895,29 @@ export async function chatHandler(req, res) {
       errorLine = friendlyError(turnError);
       send({ error: errorLine });
     }
-    // Persist the user's message (their history should show what they asked) and the assistant's
-    // OUTCOME, so the turn survives a reload from history. Prefer the streamed reply; else the
-    // error line the user just saw; else — for a turn that produced only a generative-UI card with
-    // no text — a durable stand-in note (the browser re-attaches the cached surface to it). Without
-    // this a failed OR card-only turn saved only the user row, so on reopen it showed a question
-    // with no response (the "AI responses disappear from history after ~24h" report). On a resume
-    // `message` is undefined — no user row (the frontend already showed the Approved/Rejected bubble).
-    const assistantOutcome = assistantReply || errorLine || (sawUi ? UI_SURFACE_NOTE : null);
-    await persistTurn(sessionId, message ?? null, assistantOutcome);
-    send({ done: true, session_id: sessionId, awaiting_approval: sawPermission });
+    // Persist the user's message (their history should show what they asked — attachment
+    // markers stripped into metadata) and the assistant's OUTCOME, so the turn survives a
+    // reload from history. Prefer the streamed reply; else the error line the user just saw;
+    // else the card-only stand-in; else — for a turn that PAUSED for approval with no text —
+    // the approval stand-in (previously such turns persisted a question with no response). On
+    // a resume `message` is undefined — no user row (the frontend already showed the
+    // Approved/Rejected bubble). Thinking + surfaces persist alongside (WS2), and the assistant
+    // row's id rides the done frame so the frontend can offer per-message feedback immediately.
+    const assistantOutcome = assistantReply || errorLine
+      || (sawUi ? UI_SURFACE_NOTE : null)
+      || (sawPermission ? APPROVAL_NOTE : null);
+    const { text: userText, attachment } = splitAttachmentMarkers(message ?? null);
+    const assistantMessageId = await persistTurn(sessionId, userText, assistantOutcome, {
+      thinking: thinkingLabels,
+      surfaces: emittedSurfaces,
+      attachment,
+    });
+    send({
+      done: true,
+      session_id: sessionId,
+      awaiting_approval: sawPermission,
+      ...(assistantMessageId ? { message_id: assistantMessageId } : {}),
+    });
     res.end();
   } catch (e) {
     console.error("[/chat] error:", e.message);
@@ -713,5 +925,59 @@ export async function chatHandler(req, res) {
       send({ error: "Something went wrong on my end. Please try that again." });
       res.end();
     } catch { /* client gone */ }
+  }
+}
+
+// ── POST /feedback — per-message response feedback (WS1, Tier 3.5) ─────────────
+// body { message_id, rating: "up" | "down" | null, comment? }
+// Thumbs on an ASSISTANT reply. One row per (message, user): re-rating upserts, rating:null
+// deletes (toggle off). Ownership is enforced by walking message → session → user before any
+// write. Replaces the per-session ReviewPrompt in the chat (the reviews table stays for
+// non-chat use).
+export async function feedbackHandler(req, res) {
+  if (!adminSupabase) { res.status(503).json({ error: "Feedback is not configured on this deployment" }); return; }
+  const auth = await authenticate(req);
+  if (!auth) { res.status(401).json({ error: "Unauthorized" }); return; }
+
+  const { message_id, rating, comment } = req.body ?? {};
+  if (typeof message_id !== "string" || !message_id) { res.status(400).json({ error: "message_id is required" }); return; }
+  if (rating !== null && rating !== "up" && rating !== "down") {
+    res.status(400).json({ error: "rating must be 'up', 'down', or null" });
+    return;
+  }
+
+  try {
+    const { data: msg } = await adminSupabase
+      .from("chat_messages").select("id, role, session_id")
+      .eq("id", message_id).maybeSingle();
+    if (!msg || msg.role !== "assistant") { res.status(404).json({ error: "Message not found" }); return; }
+    const { data: owned } = await adminSupabase
+      .from("chat_sessions").select("id")
+      .eq("id", msg.session_id).eq("user_id", auth.userId)
+      .maybeSingle();
+    if (!owned) { res.status(404).json({ error: "Message not found" }); return; }
+
+    if (rating === null) {
+      const { error } = await adminSupabase
+        .from("chat_message_feedback").delete()
+        .eq("message_id", message_id).eq("user_id", auth.userId);
+      if (error) throw error;
+      res.json({ ok: true, message_id, rating: null });
+      return;
+    }
+
+    const { error } = await adminSupabase.from("chat_message_feedback").upsert({
+      message_id,
+      session_id: msg.session_id,
+      user_id: auth.userId,
+      rating,
+      comment: typeof comment === "string" && comment.trim() ? comment.trim().slice(0, 2000) : null,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: "message_id,user_id" });
+    if (error) throw error;
+    res.json({ ok: true, message_id, rating });
+  } catch (e) {
+    console.error("[/feedback] error:", e.message);
+    res.status(500).json({ error: "Couldn't save that feedback right now" });
   }
 }

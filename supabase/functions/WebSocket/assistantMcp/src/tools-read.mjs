@@ -7,30 +7,12 @@
 // a friendly "requires an admin role" instead of erroring.
 import { z } from "zod";
 import { callApi } from "./helpers.mjs";
+import { makeGuard, payload, wrap as wrapShared } from "./tool-helpers.mjs";
 import { loadActiveContext, buildContextPrompt, buildLiveState } from "./context.mjs";
 
-const asText = (obj) => ({ content: [{ type: "text", text: JSON.stringify(obj) }] });
-const asError = (err) => ({ isError: true, content: [{ type: "text", text: `Error: ${err.message ?? err}` }] });
-const wrap = (fn) => async (args) => { try { return asText(await fn(args)); } catch (e) { console.error("tool error:", e.message); return asError(e); } };
-
-// Translate a callApi failure envelope into a graceful, model-friendly object.
-// 403s are disambiguated from the response body: DK+ uses 403 both for role
-// gates ("Only ADMIN users…") and for org-membership problems (NO_ORGANIZATION).
-function guard(res) {
-  if (res && res.__error) {
-    const body = String(res.body ?? "");
-    if (res.status === 403) {
-      if (/ADMIN/i.test(body)) return { error: "This requires an admin role on your account." };
-      if (/NO_ORGANIZATION/i.test(body)) return { error: "This account isn't associated with an organization yet." };
-      return { error: "You don't have access to this data with your current role." };
-    }
-    if (res.status === 404) return { error: "Not found." };
-    return { error: "That data is unavailable right now." };
-  }
-  return null;
-}
-// Edge functions wrap payloads as { status, message, data, ... } or { success, data }.
-const payload = (res) => res?.data ?? res;
+// Shared plumbing (tool-helpers.mjs) with the read-flavored guard tone.
+const wrap = (fn) => wrapShared(fn, "read tool");
+const guard = makeGuard("read");
 
 // ── compact projections ───────────────────────────────────────────────────────
 const campaignRow = (c) => ({
@@ -239,6 +221,62 @@ export function registerReadTools(server, { userId, userJwt }) {
     async () => {
       const res = await callApi("getUserOrganizations", "GET", null, userJwt);
       return guard(res) ?? { organizations: payload(res)?.organizations ?? payload(res) ?? [] };
+    });
+
+  // WS3 (Tier 3.5): setup-progress read. Before this existed the agent could only learn an
+  // org's onboarding state as a side effect of calling complete_org_onboarding (a write, so it
+  // carded for approval just to LOOK). The step numbers here mirror the wizard: 1 business,
+  // 2 address, 3 logo, 4 team (team_onboarding_completed is what marks the org done).
+  t("get_org_onboarding",
+    "An organization's setup/onboarding progress: which of the 4 setup steps are done, what's already filled in (business details, address, logo), and exactly which required fields are still needed. Use when an organization shows as 'Setup N of 4' or before offering complete_org_onboarding — recap what's already saved and ask the user ONLY for what's missing.",
+    { organization_id: z.string().optional().describe("defaults to the user's active organization") },
+    async (a) => {
+      const q = a.organization_id ? { organization_id: a.organization_id } : null;
+      const [stepRes, detailRes] = await Promise.all([
+        callApi("getOnboardingStep", "GET", q, userJwt),
+        callApi("getOnboardingDetails", "GET", q, userJwt),
+      ]);
+      const gs = guard(stepRes); if (gs) return gs;
+      const completed = payload(stepRes)?.completed_step ?? 0;
+      // Details are best-effort: a just-created org may have no onboarding row yet.
+      const d = detailRes?.__error ? {} : (payload(detailRes) ?? {});
+      const filled = {
+        business_name: d.business_name ?? null,
+        industry: d.industry ?? null,
+        business_email: d.business_email ?? null,
+        phone: d.business_phone_number ?? null,
+        website: d.website_url ?? null,
+        address: {
+          country: d.country ?? null,
+          street_address: d.street_address ?? null,
+          city: d.city ?? null,
+          state: d.state ?? null,
+          zip: d.zip ?? null,
+        },
+        logo_set: !!d.company_logo,
+      };
+      if (completed >= 4) {
+        return { completed_step: 4, onboarding_complete: true, filled, note: "This organization's setup is fully complete." };
+      }
+      // Required fields for the steps that haven't run yet (mirrors complete_org_onboarding).
+      const STEP_FIELDS = {
+        1: [["business_name", filled.business_name], ["industry", filled.industry]],
+        2: [["country", filled.address.country], ["street_address", filled.address.street_address], ["city", filled.address.city], ["state", filled.address.state], ["zip", filled.address.zip]],
+        3: [["logo_url", filled.logo_set ? "set" : null]],
+        4: [],
+      };
+      const remaining_steps = [1, 2, 3, 4].filter((s) => s > completed);
+      const still_needed = remaining_steps.flatMap((s) => STEP_FIELDS[s].filter(([, v]) => !v).map(([f]) => f));
+      return {
+        completed_step: completed,
+        onboarding_complete: false,
+        remaining_steps,
+        filled,
+        still_needed,
+        note: still_needed.length
+          ? `Setup is at step ${completed} of 4. Everything in \`filled\` is already saved — ask the user only for: ${still_needed.join(", ")}. Then use complete_org_onboarding.`
+          : `Setup is at step ${completed} of 4 but every required field is already saved — complete_org_onboarding can finish it (it always runs the final team step).`,
+      };
     });
 
   t("get_notifications", "The user's in-app notifications (title, message, read state, timestamp).",
