@@ -41,6 +41,15 @@ function isKeySetOutage(err) {
   return /fetch failed|jwks|failed to fetch|network|ENOTFOUND|ECONNRESET|timed out/i.test(err?.message ?? "");
 }
 
+// Best-effort read of a JWT's exp claim (UNVERIFIED — used only to bound the cache window,
+// never to grant access; verification happened before anything is cached).
+function tokenExpMs(token) {
+  try {
+    const claims = JSON.parse(Buffer.from(token.split(".")[1], "base64url").toString("utf8"));
+    return typeof claims.exp === "number" ? claims.exp * 1000 : null;
+  } catch { return null; }
+}
+
 export async function authenticate(req) {
   const header = req.headers.authorization ?? "";
   if (!header.startsWith("Bearer ")) return null;
@@ -69,7 +78,11 @@ export async function authenticate(req) {
   }
 
   if (!userId) return null;
-  cache.set(token, { userId, expiresAt: Date.now() + CACHE_TTL_MS });
+  // Cache until the TTL or the token's own expiry, whichever comes first — a fixed TTL alone
+  // would keep accepting a token for up to a minute past its exp.
+  const exp = tokenExpMs(token);
+  const expiresAt = exp ? Math.min(exp, Date.now() + CACHE_TTL_MS) : Date.now() + CACHE_TTL_MS;
+  if (expiresAt > Date.now()) cache.set(token, { userId, expiresAt });
   if (cache.size > 5000) cache.clear(); // crude bound; tokens rotate anyway
   return { userId, userJwt: token };
 }

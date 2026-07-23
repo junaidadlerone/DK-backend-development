@@ -30,7 +30,21 @@ export async function callApi(endpoint, method, queryParams, accessToken, bodyDa
       // admin role" instead of a generic error.
       return { __error: true, status: res.status, body: txt.slice(0, 300) };
     }
-    return res.json();
+    let parsed;
+    try { parsed = await res.json(); }
+    catch { return { __error: true, status: res.status, body: "unreadable response" }; }
+    // Some edge functions report failure INSIDE a 2xx body ({ success:false, message } or
+    // { status:"error", … }) instead of a real HTTP error. Without this check, guard() would
+    // treat them as success and a write tool would claim "done" for a mutation that failed.
+    // Strictly-matched (an explicit false / literal "error") so data payloads never trip it.
+    if (parsed && typeof parsed === "object" &&
+        (parsed.success === false || (typeof parsed.status === "string" && parsed.status.toLowerCase() === "error"))) {
+      const msg = typeof parsed.message === "string" ? parsed.message
+        : (typeof parsed.error === "string" ? parsed.error : "");
+      console.error(`callApi ${endpoint} → ${res.status} with error envelope:`, JSON.stringify(parsed).slice(0, 200));
+      return { __error: true, __envelope: true, status: res.status, body: (msg || JSON.stringify(parsed)).slice(0, 300) };
+    }
+    return parsed;
   } catch (err) {
     console.error(`callApi ${endpoint} threw:`, err.message);
     return { __error: true, status: 0, body: err.message };

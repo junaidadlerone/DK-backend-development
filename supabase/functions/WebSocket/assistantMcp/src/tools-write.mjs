@@ -12,28 +12,13 @@
 // tells the user to finish the consent section (enforced here by omission + in the prompt).
 import { z } from "zod";
 import { callApi } from "./helpers.mjs";
+import { makeGuard, payload, wrap as wrapShared } from "./tool-helpers.mjs";
 import { POSTGRID_POSTCARD_API_KEY } from "./env.mjs";
 
-const asText = (obj) => ({ content: [{ type: "text", text: JSON.stringify(obj) }] });
-const asError = (err) => ({ isError: true, content: [{ type: "text", text: `Error: ${err.message ?? err}` }] });
-const wrap = (fn) => async (args) => { try { return asText(await fn(args)); } catch (e) { console.error("write tool error:", e.message); return asError(e); } };
-
-// Same body-aware 403 mapping as the read tools, so a role/membership failure reads as guidance.
-function guard(res) {
-  if (res && res.__error) {
-    const body = String(res.body ?? "");
-    if (res.status === 403) {
-      if (/ADMIN/i.test(body)) return { error: "This requires an admin role on your account." };
-      if (/NO_ORGANIZATION/i.test(body)) return { error: "This account isn't associated with an organization yet." };
-      return { error: "You don't have permission to do this with your current role." };
-    }
-    if (res.status === 404) return { error: "Not found." };
-    if (res.status === 400 || res.status === 422) return { error: `That didn't pass validation: ${body || "check the details and try again"}.` };
-    return { error: "That action couldn't be completed right now." };
-  }
-  return null;
-}
-const payload = (res) => res?.data ?? res;
+// Shared plumbing (tool-helpers.mjs) with the write-flavored guard tone. The 400/422 branch
+// sanitizes the upstream body before surfacing it (never raw — it can carry internal codes/ids).
+const wrap = (fn) => wrapShared(fn, "write tool");
+const guard = makeGuard("write");
 
 // Referral sub-shapes — mirror createReferral/updateReferralById exactly. Consent/signature are
 // intentionally NOT accepted here (left to the user).
@@ -232,6 +217,7 @@ export function registerWriteTools(server, { userJwt }) {
       disclaimer_text: z.string().optional().describe("REQUIRED, <= 500 characters; for compliance"),
       start_date: z.string().optional().describe("ISO date; defaults to today if omitted"),
       qr_url: z.string().optional().describe("https:// landing page — required only if the design has a QR element"),
+      campaign_id: z.string().optional().describe("ONLY to resume a draft this tool already created whose design/QR step failed — skips re-creating and retries attaching (both retry steps are safe to re-run)"),
     },
     W,
     async (a) => {
@@ -256,27 +242,32 @@ export function registerWriteTools(server, { userJwt }) {
       const hasQr = QR_ELEMENT_RE.test(bundleHtml);
       if (hasQr && !a.qr_url) return { missing_required: ["qr_url"], note: "The selected design has a QR code. Ask the user for the landing-page URL (must start with https://) and call create_campaign again with qr_url." };
 
-      // 3. step 1 — metadata (creates the Draft campaign).
-      const s1 = await callApi("createCampaignV2", "POST", null, userJwt, {
-        step: 1,
-        campaign_name: a.campaign_name.trim(),
-        target_type: a.target_type === "referral" ? "Referrals" : "Location Zone",
-        ...(a.target_type === "referral" ? { referral_id: a.referral_id } : {}),
-        disclaimer_text: a.disclaimer_text,
-        ...(a.start_date ? { start_date: a.start_date } : {}),
-      });
-      const g1 = guard(s1); if (g1) return g1;
-      const campaign_id = payload(s1)?.id;
-      if (!campaign_id) return { error: "Could not create the campaign (no id returned)." };
+      // 3. step 1 — metadata (creates the Draft campaign). Skipped on a RESUME (a.campaign_id
+      //    set): the draft already exists, we only retry the failed attach/link steps — both
+      //    idempotent (step 2 re-sets the same design; the QR link re-writes the same URL).
+      let campaign_id = a.campaign_id;
+      if (!campaign_id) {
+        const s1 = await callApi("createCampaignV2", "POST", null, userJwt, {
+          step: 1,
+          campaign_name: a.campaign_name.trim(),
+          target_type: a.target_type === "referral" ? "Referrals" : "Location Zone",
+          ...(a.target_type === "referral" ? { referral_id: a.referral_id } : {}),
+          disclaimer_text: a.disclaimer_text,
+          ...(a.start_date ? { start_date: a.start_date } : {}),
+        });
+        const g1 = guard(s1); if (g1) return g1;
+        campaign_id = payload(s1)?.id;
+        if (!campaign_id) return { error: "Could not create the campaign (no id returned)." };
+      }
 
       // 4. step 2 — attach the design.
       const s2 = await callApi("createCampaignV2", "POST", null, userJwt, { step: 2, campaign_id, template_bundle_id: a.template_bundle_id });
-      const g2 = guard(s2); if (g2) return { ...g2, campaign_id, note: "The campaign was created but attaching the design failed. Use update_campaign to retry." };
+      const g2 = guard(s2); if (g2) return { ...g2, campaign_id, note: "The campaign draft exists but attaching the design failed. Retry by calling create_campaign again with the SAME fields plus this campaign_id — it resumes instead of creating a duplicate." };
 
       // 5. link the QR URL if the design uses one.
       if (hasQr && a.qr_url) {
         const qr = await callApi("linkQRCodeToCampaign", "POST", null, userJwt, { campaign_id, qr_url: a.qr_url });
-        const gq = guard(qr); if (gq) return { ...gq, campaign_id, note: "Design attached but linking the QR URL failed." };
+        const gq = guard(qr); if (gq) return { ...gq, campaign_id, note: "Design attached but linking the QR URL failed. Retry by calling create_campaign again with the SAME fields plus this campaign_id — it resumes instead of creating a duplicate." };
       }
 
       return {
@@ -335,8 +326,10 @@ export function registerWriteTools(server, { userJwt }) {
       const b = payload(src);
       const html_front = b?.front_template?.html;
       const html_back = b?.back_template?.html;
-      // getTemplateBundleById returns template fields in snake_case (postcard_size).
-      const postcardSize = b?.front_template?.postcard_size ?? b?.back_template?.postcard_size;
+      // getTemplateBundleById returns template fields in snake_case (postcard_size) — hedge
+      // camelCase too, like the read-side bundleRow, in case the shape ever normalizes.
+      const postcardSize = b?.front_template?.postcard_size ?? b?.front_template?.postcardSize
+        ?? b?.back_template?.postcard_size ?? b?.back_template?.postcardSize;
       if (!html_front || !html_back || !postcardSize) return { error: "Couldn't read the source design's contents to duplicate it." };
       const baseName = (b?.front_template?.description ?? "Design").replace(/\s+Front$/i, "");
       const description = a.new_name?.trim() || `${baseName} (Copy)`;
@@ -372,6 +365,7 @@ export function registerWriteTools(server, { userJwt }) {
       disclaimer_text: z.string().optional().describe("REQUIRED, <= 500 characters; for compliance"),
       start_date: z.string().optional().describe("ISO date; defaults to today if omitted"),
       qr_url: z.string().optional().describe("https:// landing page — required only if the design has a QR element"),
+      campaign_id: z.string().optional().describe("ONLY to resume a draft this tool already created whose design/QR step failed — skips re-creating and retries attaching (both retry steps are safe to re-run)"),
     },
     W,
     async (a) => {
@@ -391,23 +385,27 @@ export function registerWriteTools(server, { userJwt }) {
       const hasQr = QR_ELEMENT_RE.test(`${b?.front_template?.html ?? ""}\n${b?.back_template?.html ?? ""}`);
       if (hasQr && !a.qr_url) return { missing_required: ["qr_url"], note: "The selected design has a QR code. Ask the user for the landing-page URL (https://) and call the tool again with qr_url." };
 
-      const s1 = await callApi("createCampaignV2", "POST", null, userJwt, {
-        step: 1,
-        campaign_name: a.campaign_name.trim(),
-        target_type: "Address List",
-        disclaimer_text: a.disclaimer_text,
-        ...(a.start_date ? { start_date: a.start_date } : {}),
-      });
-      const g1 = guard(s1); if (g1) return g1;
-      const campaign_id = payload(s1)?.id;
-      if (!campaign_id) return { error: "Could not create the campaign (no id returned)." };
+      // Step 1 is skipped on a RESUME (a.campaign_id set) — same semantics as create_campaign.
+      let campaign_id = a.campaign_id;
+      if (!campaign_id) {
+        const s1 = await callApi("createCampaignV2", "POST", null, userJwt, {
+          step: 1,
+          campaign_name: a.campaign_name.trim(),
+          target_type: "Address List",
+          disclaimer_text: a.disclaimer_text,
+          ...(a.start_date ? { start_date: a.start_date } : {}),
+        });
+        const g1 = guard(s1); if (g1) return g1;
+        campaign_id = payload(s1)?.id;
+        if (!campaign_id) return { error: "Could not create the campaign (no id returned)." };
+      }
 
       const s2 = await callApi("createCampaignV2", "POST", null, userJwt, { step: 2, campaign_id, template_bundle_id: a.template_bundle_id });
-      const g2 = guard(s2); if (g2) return { ...g2, campaign_id, note: "The campaign was created but attaching the design failed. Use update_campaign to retry." };
+      const g2 = guard(s2); if (g2) return { ...g2, campaign_id, note: "The campaign draft exists but attaching the design failed. Retry by calling create_address_list_campaign again with the SAME fields plus this campaign_id — it resumes instead of creating a duplicate." };
 
       if (hasQr && a.qr_url) {
         const qr = await callApi("linkQRCodeToCampaign", "POST", null, userJwt, { campaign_id, qr_url: a.qr_url });
-        const gq = guard(qr); if (gq) return { ...gq, campaign_id, note: "Design attached but linking the QR URL failed." };
+        const gq = guard(qr); if (gq) return { ...gq, campaign_id, note: "Design attached but linking the QR URL failed. Retry by calling create_address_list_campaign again with the SAME fields plus this campaign_id — it resumes instead of creating a duplicate." };
       }
 
       return {
@@ -425,8 +423,11 @@ export function registerWriteTools(server, { userJwt }) {
     async (a) => {
       const res = await callApi("removeAllInvalidAddresses", "POST", null, userJwt, { list_id: a.list_id });
       const g = guard(res); if (g) return g;
-      const r = payload(res);
-      return { list_id: a.list_id, excluded: r?.updated_count ?? 0 };
+      const n = payload(res)?.updated_count;
+      // Never assert a false "0" — if the count field is ever absent, say "done" without a number.
+      return typeof n === "number"
+        ? { list_id: a.list_id, excluded: n }
+        : { list_id: a.list_id, done: true, note: "Invalid addresses were excluded; the exact count wasn't reported — use get_address_list for current totals." };
     });
 
   t("remove_duplicate_addresses",
@@ -436,8 +437,10 @@ export function registerWriteTools(server, { userJwt }) {
     async (a) => {
       const res = await callApi("removeAllDuplicateAddresses", "POST", null, userJwt, { list_id: a.list_id });
       const g = guard(res); if (g) return g;
-      const r = payload(res);
-      return { list_id: a.list_id, excluded: r?.excluded_count ?? 0 };
+      const n = payload(res)?.excluded_count ?? payload(res)?.updated_count; // fn returns excluded_count (updated_count on the no-op path)
+      return typeof n === "number"
+        ? { list_id: a.list_id, excluded: n }
+        : { list_id: a.list_id, done: true, note: "Duplicates were excluded; the exact count wasn't reported — use get_address_list for current totals." };
     });
 
   t("delete_addresses",
