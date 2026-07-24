@@ -737,6 +737,8 @@ export async function chatHandler(req, res) {
     let dupMatch = 0;      // chars of the reply-snapshot matched so far (0 = not matching)
     let dupHeld = "";      // held-back candidate duplicate text
     let dupRef = "";       // the reply snapshot being matched against
+    let paraStart = 0;     // index in assistantReply where the current paragraph begins
+    let pendingParaBreak = false; // saw a newline; next non-newline char starts a paragraph
     const SENT_END = new Set([".", "!", "?", "…"]);
     const atSentenceEnd = () => {
       const tail = assistantReply.slice(-6).trimEnd();
@@ -746,6 +748,8 @@ export async function chatHandler(req, res) {
     };
     // Single choke point: every cleaned chunk streams through here. Emitted chars append to
     // assistantReply immediately, so the restatement reference is always the current reply.
+    // Restatements anchor at TWO places: the reply's beginning (the "X.X" doubles) and the
+    // current paragraph's beginning (address-list creates re-rendered just their last paragraph).
     const pushText = (out) => {
       let emit = "";
       for (const ch of out) {
@@ -754,7 +758,7 @@ export async function chatHandler(req, res) {
             dupHeld += ch;
             dupMatch += 1;
             if (dupMatch >= dupRef.length) {
-              console.warn("[/chat] dropped a verbatim reply restatement:", JSON.stringify(dupHeld.slice(0, 80)));
+              console.warn("[/chat] dropped a verbatim restatement:", JSON.stringify(dupHeld.slice(0, 80)));
               dupMatch = 0; dupHeld = ""; dupRef = "";
             }
             continue;
@@ -765,13 +769,28 @@ export async function chatHandler(req, res) {
           dupMatch = 0; dupHeld = ""; dupRef = "";
           continue;
         }
-        if (assistantReply.length >= 24 && ch === assistantReply[0] && atSentenceEnd()) {
-          // A sentence just ended and this char could be the reply starting over — hold and
-          // compare against a snapshot of the reply as it stands now.
-          dupRef = assistantReply;
-          dupMatch = 1; dupHeld = ch;
-          continue;
+        if (assistantReply.length >= 16 && atSentenceEnd()) {
+          // A sentence just ended — this char could be the reply (or its current paragraph)
+          // starting over verbatim. Hold and compare against that snapshot (whitespace-trimmed,
+          // so a trailing newline never breaks the final match). Whole-reply anchor wins when
+          // both match this first char.
+          const wholeRef = assistantReply.replace(/\s+$/, "");
+          const paraRef = assistantReply.slice(paraStart).replace(/\s+$/, "");
+          if (wholeRef.length >= 16 && ch === wholeRef[0]) {
+            dupRef = wholeRef;
+            dupMatch = 1; dupHeld = ch;
+            continue;
+          }
+          if (paraRef.length >= 16 && ch === paraRef[0]) {
+            dupRef = paraRef;
+            dupMatch = 1; dupHeld = ch;
+            continue;
+          }
         }
+        // Paragraph tracking: a new paragraph starts at the first non-newline char after a
+        // newline (deferred, so blank lines don't leave paraStart pointing at emptiness).
+        if (ch === "\n") pendingParaBreak = true;
+        else if (pendingParaBreak) { paraStart = assistantReply.length; pendingParaBreak = false; }
         assistantReply += ch;
         emit += ch;
       }
@@ -963,8 +982,25 @@ export async function chatHandler(req, res) {
       const reader = upstream.body.getReader();
       const decoder = new TextDecoder();
       let buf = "";
+      // Stall guard: a hung Flowise turn used to leave the user staring at nothing forever
+      // (QA saw >2.5 min with zero frames). If the upstream produces NOTHING for STALL_MS,
+      // treat it as a turn error — the user gets the friendly line + Retry instead of a hang.
+      const STALL_MS = 90_000;
+      const readWithStall = () => new Promise((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error("__stall__")), STALL_MS);
+        reader.read().then(
+          (r) => { clearTimeout(timer); resolve(r); },
+          (e) => { clearTimeout(timer); reject(e); },
+        );
+      });
       while (true) {
-        const { done, value } = await reader.read().catch(() => ({ done: true, value: undefined }));
+        const { done, value } = await readWithStall().catch((e) => {
+          if (String(e?.message) === "__stall__") {
+            turnError = `Upstream produced no data for ${STALL_MS / 1000}s — treating the turn as stalled`;
+            reader.cancel().catch(() => { /* already dead */ });
+          }
+          return { done: true, value: undefined };
+        });
         if (done) break;
         buf += decoder.decode(value, { stream: true });
         const lines = buf.split("\n");
