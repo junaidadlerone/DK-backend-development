@@ -887,6 +887,23 @@ export async function chatHandler(req, res) {
     };
 
     const seenJobIds = new Set();
+    // Drain emit_ui frames referenced in a serialized blob. Tool outputs USED to arrive via
+    // `usedTools` per iteration; the shared Flowise now emits usedTools only ONCE per turn, so
+    // later iterations' outputs (where emit_ui usually runs) never surface there — the cards
+    // silently vanished. `agentFlowExecutedData` still carries every node's output, so ui jobs
+    // are extracted from BOTH paths, dedup'd by seenJobIds (draining twice is a no-op).
+    // Escaping-agnostic: the id appears once-escaped in usedTools' toolOutput but DOUBLE-escaped
+    // inside stringified agentFlowExecutedData (\\\"ui_job_id\\\") — so match the key name and
+    // grab the next UUID, whatever quoting/backslash depth surrounds it.
+    const UI_JOB_RE = /ui_job_id[^0-9a-f]{1,10}([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/gi;
+    const drainUiJobs = async (raw) => {
+      for (const m of String(raw).matchAll(UI_JOB_RE)) {
+        if (seenJobIds.has(m[1])) continue;
+        seenJobIds.add(m[1]);
+        const n = await inlineJobEvents(m[1], auth.userJwt, emitSurface);
+        if (n > 0) sawUi = true;
+      }
+    };
     const handleEvent = async (ev, data) => {
       switch (ev) {
         // On a reject resume the model tends to emit unreliable filler; suppress it and let the
@@ -942,16 +959,20 @@ export async function chatHandler(req, res) {
                 if (typeof args[k] === "string" && args[k]) refreshIds[k] = args[k];
               }
             }
-            const um = out.match(/\\?"ui_job_id\\?"\s*:\s*\\?"([0-9a-f-]{36})\\?"/i);
-            if (um && !seenJobIds.has(um[1])) {
-              seenJobIds.add(um[1]);
-              const n = await inlineJobEvents(um[1], auth.userJwt, emitSurface);
-              if (n > 0) sawUi = true;
-            }
+            await drainUiJobs(out);
           }
           break;
-        // agentFlowEvent / nextAgentFlow / agentFlowExecutedData / metadata /
-        // usageMetadata / end → internal; unknown events are ignored by design.
+        // Per-node execution snapshots — the only reliable carrier of LATER iterations' tool
+        // outputs on current Flowise (see drainUiJobs). Only each node's OUTPUT is scanned:
+        // inputs can embed chat history, and an ui_job_id from an old turn must not re-drain.
+        case "agentFlowExecutedData":
+          for (const nodeExec of (Array.isArray(data) ? data : [])) {
+            const outStr = JSON.stringify(nodeExec?.data?.output ?? "");
+            if (nodeExec?.data?.output) await drainUiJobs(JSON.stringify(nodeExec.data.output));
+          }
+          break;
+        // agentFlowEvent / nextAgentFlow / metadata / usageMetadata / end → internal;
+        // unknown events are ignored by design.
       }
     };
 

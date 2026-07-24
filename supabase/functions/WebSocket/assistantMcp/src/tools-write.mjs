@@ -434,7 +434,13 @@ export function registerWriteTools(server, { userJwt }) {
       const res = await callApi("createNewTemplateBundle", "POST", null, userJwt, { description, html_front, html_back, postcardSize });
       const g = guard(res); if (g) return g;
       const nb = payload(res);
-      return { id: nb?.bundle?.id ?? nb?.id, name: description, postcardSize };
+      const newId = nb?.bundle?.id ?? nb?.id;
+      return {
+        id: newId,
+        name: description,
+        postcardSize,
+        note: `Duplicated. SHOW the user the new design: emit a PostcardPreview block with bundleId "${newId}".`,
+      };
     }, "template_management");
 
   t("update_template_settings",
@@ -447,7 +453,11 @@ export function registerWriteTools(server, { userJwt }) {
       if (a.name) body.description = a.name;
       if (a.postcard_size) body.postcardSize = a.postcard_size;
       const res = await callApi("updateTemplateBundle", "POST", null, userJwt, body);
-      return guard(res) ?? { bundle_id: a.bundle_id, updated: true };
+      return guard(res) ?? {
+        bundle_id: a.bundle_id,
+        updated: true,
+        note: `Updated. SHOW the user the design: emit a PostcardPreview block with bundleId "${a.bundle_id}".`,
+      };
     }, "template_management");
 
   // ── Address-list campaigns (3C-1) ────────────────────────────────────────────
