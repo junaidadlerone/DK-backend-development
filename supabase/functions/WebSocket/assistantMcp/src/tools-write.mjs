@@ -12,13 +12,98 @@
 // tells the user to finish the consent section (enforced here by omission + in the prompt).
 import { z } from "zod";
 import { callApi } from "./helpers.mjs";
-import { makeGuard, payload, wrap as wrapShared } from "./tool-helpers.mjs";
+import { QR_ELEMENT_RE, makeGuard, payload, roleAreaDenial, wrap as wrapShared } from "./tool-helpers.mjs";
 import { POSTGRID_POSTCARD_API_KEY } from "./env.mjs";
 
 // Shared plumbing (tool-helpers.mjs) with the write-flavored guard tone. The 400/422 branch
 // sanitizes the upstream body before surfacing it (never raw — it can carry internal codes/ids).
 const wrap = (fn) => wrapShared(fn, "write tool");
 const guard = makeGuard("write");
+
+// ── Referral field canonicalization (bug-bash 2026-07-24) ─────────────────────
+// The app's form submits state as the FULL NAME from world_states ("Illinois", never "IL") and
+// job_type as {id: <job_types uuid>, name} — the backend stores whatever it's given verbatim
+// (no FK checks), so a raw "IL" or a name-only job type saves but renders as EMPTY selectors in
+// the app's forms and keeps the referral from ever reaching "Ready". Resolve both here against
+// the same public endpoints the form uses (getAllStatesV2 / getAllJobs), cached in-process.
+const DEFAULT_COUNTRY = "United States of America";
+const optionCache = new Map(); // key -> { list, expiresAt }
+async function cachedList(key, fetcher) {
+  const hit = optionCache.get(key);
+  if (hit && hit.expiresAt > Date.now()) return hit.list;
+  const list = await fetcher();
+  if (list) optionCache.set(key, { list, expiresAt: Date.now() + 10 * 60_000 });
+  return list ?? hit?.list ?? null;
+}
+async function statesForCountry(country, userJwt) {
+  return cachedList(`states:${country.toLowerCase()}`, async () => {
+    const res = await callApi("getAllStatesV2", "GET", { country_name: country }, userJwt);
+    const list = res && !res.__error ? payload(res) : null;
+    return Array.isArray(list) ? list : null; // [{ name, code }]
+  });
+}
+async function jobTypes(userJwt) {
+  return cachedList("jobs", async () => {
+    const res = await callApi("getAllJobs", "GET", null, userJwt);
+    const list = res && !res.__error ? payload(res) : null;
+    return Array.isArray(list) ? list : null; // [{ id: uuid, name }]
+  });
+}
+// Mutates a copy of home_owner_info: fills the default country and canonicalizes the state
+// ("IL" or "illinois" → "Illinois"). Unresolvable values stay verbatim (the server accepts
+// them; better saved-as-typed than dropped).
+async function canonicalizeAddress(hoi, userJwt) {
+  if (!hoi?.address) return hoi;
+  const address = { ...hoi.address };
+  if (!address.country?.trim() && (address.state || address.city || address.street_address)) {
+    address.country = DEFAULT_COUNTRY;
+  }
+  if (address.state?.trim() && address.country?.trim()) {
+    const states = await statesForCountry(address.country.trim(), userJwt);
+    if (states) {
+      const q = address.state.trim().toLowerCase();
+      // world_states codes are ISO-prefixed ("US-IL") — match against both the full code and
+      // its bare tail, so "IL", "us-il" and "Illinois" all canonicalize to "Illinois".
+      const match =
+        states.find((s) => s.name?.toLowerCase() === q) ??
+        states.find((s) => s.code?.toLowerCase() === q) ??
+        states.find((s) => s.code?.toLowerCase().split("-").pop() === q);
+      if (match?.name) address.state = match.name;
+    }
+  }
+  return { ...hoi, address };
+}
+// Resolves a job type given by NAME to the app's {id, name}. AUTO-ACCEPTS ONLY an exact
+// (case-insensitive) name match — with 700+ job types, a fuzzy auto-pick is worse than asking
+// (an early draft substring-matched "Roofing" to "Waterproofing"). Anything inexact returns
+// {unresolved: {message, options}} with word-level close matches for the user to pick from.
+const jobWords = (s) => (s ?? "").toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+async function resolveJobType(jt, userJwt) {
+  if (!jt || (jt.id && jt.name)) return { job_type: jt };
+  const list = await jobTypes(userJwt);
+  if (!list) return { job_type: jt }; // lookup unavailable — save as given rather than block
+  const q = (jt.name ?? "").trim().toLowerCase();
+  if (!q) return { job_type: jt };
+  const exact = list.find((j) => j.name?.toLowerCase() === q);
+  if (exact) return { job_type: { id: exact.id, name: exact.name } };
+  // Close matches: every query word must line up with a name word (equal, or a ≥4-char prefix
+  // in either direction — "roofing"↔"roof" matches, "roofing"↔"waterproofing" does not).
+  const qw = jobWords(q);
+  const wordsMatch = (a, b) => a === b || (a.length >= 4 && b.startsWith(a)) || (b.length >= 4 && a.startsWith(b));
+  const close = qw.length
+    ? list.filter((j) => {
+        const nw = jobWords(j.name);
+        return qw.every((w) => nw.some((n) => wordsMatch(w, n)));
+      })
+    : [];
+  const options = (close.length ? close : list).slice(0, 12).map((j) => j.name);
+  return {
+    unresolved: {
+      message: `"${jt.name}" isn't an exact job type in the app. Ask the user to pick one${close.length ? " of these close matches" : ""}: ${options.join(", ")}.`,
+      options,
+    },
+  };
+}
 
 // Referral sub-shapes — mirror createReferral/updateReferralById exactly. Consent/signature are
 // intentionally NOT accepted here (left to the user).
@@ -59,29 +144,35 @@ function referralMissingToFinalize(hoi, jd) {
   return miss;
 }
 
-// A design side counts as having a QR element if its HTML references the QR image service or the
-// {{qr_url}} merge token (mirrors the frontend htmlParser QR detection). Used by the campaign QR gate.
-const QR_ELEMENT_RE = /qrserver\.com|\{\{\s*qr_url\s*\}\}/i;
-
 export function registerWriteTools(server, { userJwt }) {
   const W = { readOnlyHint: false, destructiveHint: false };
   const D = { readOnlyHint: false, destructiveHint: true };
-  const t = (name, description, inputSchema, annotations, handler) =>
-    server.registerTool(name, { description, inputSchema, annotations }, wrap(handler));
+  // Optional `area` gates the tool by the caller's per-org role (roleAreaDenial) — mirrors the
+  // app's menu matrix (technicians: no campaigns/templates; marketers: no template management).
+  const t = (name, description, inputSchema, annotations, handler, area) =>
+    server.registerTool(name, { description, inputSchema, annotations }, wrap(async (a) =>
+      (await roleAreaDenial(userJwt, area)) ?? handler(a)));
 
   // ── Referrals ──────────────────────────────────────────────────────────────
   t("create_referral",
-    "Create a new referral. Gather the referrer's details and job info from the user; NEVER fill owner consent or a signature — those are the user's to complete in the app. The referral is created in DRAFT. Use the returned `missing_to_finalize` list to prompt the user for any still-missing required fields (name, full address, job type, job value), then tell them to complete the consent + signature section in the app to finalize it.",
+    "Create a new referral. Gather the referrer's details and job info from the user; NEVER fill owner consent or a signature — those are the user's to complete in the app. State may be given as a name or abbreviation ('IL' works); job type is given by NAME and matched to the app's real job-type list (a non-matching name returns the valid options to offer the user). The referral is created in DRAFT. Use the returned `missing_to_finalize` list to prompt the user for any still-missing required fields (name, full address, job type, job value), then tell them to complete the consent + signature section in the app to finalize it.",
     { home_owner_info: homeOwnerInfo, job_details: jobDetails },
     W,
     async (a) => {
       const body = {};
-      if (a.home_owner_info) body.home_owner_info = a.home_owner_info;
-      if (a.job_details) body.job_details = a.job_details;
+      if (a.home_owner_info) body.home_owner_info = await canonicalizeAddress(a.home_owner_info, userJwt);
+      if (a.job_details) {
+        body.job_details = { ...a.job_details };
+        if (a.job_details.job_type) {
+          const jr = await resolveJobType(a.job_details.job_type, userJwt);
+          if (jr.unresolved) return { missing_required: ["job_type"], valid_job_types: jr.unresolved.options, note: jr.unresolved.message };
+          body.job_details.job_type = jr.job_type;
+        }
+      }
       const res = await callApi("createReferral", "POST", null, userJwt, body);
       const g = guard(res); if (g) return g;
       const r = payload(res);
-      const missing = referralMissingToFinalize(a.home_owner_info, a.job_details);
+      const missing = referralMissingToFinalize(body.home_owner_info ?? a.home_owner_info, body.job_details ?? a.job_details);
       return {
         id: r?.id,
         status: r?.status?.name ?? r?.status ?? "Draft",
@@ -98,8 +189,15 @@ export function registerWriteTools(server, { userJwt }) {
     W,
     async (a) => {
       const body = { id: a.id };
-      if (a.home_owner_info) body.home_owner_info = a.home_owner_info;
-      if (a.job_details) body.job_details = a.job_details;
+      if (a.home_owner_info) body.home_owner_info = await canonicalizeAddress(a.home_owner_info, userJwt);
+      if (a.job_details) {
+        body.job_details = { ...a.job_details };
+        if (a.job_details.job_type) {
+          const jr = await resolveJobType(a.job_details.job_type, userJwt);
+          if (jr.unresolved) return { missing_required: ["job_type"], valid_job_types: jr.unresolved.options, note: jr.unresolved.message };
+          body.job_details.job_type = jr.job_type;
+        }
+      }
       if (a.status) body.status = a.status;
       const res = await callApi("updateReferralById", "PATCH", null, userJwt, body);
       const g = guard(res); if (g) return g;
@@ -276,7 +374,7 @@ export function registerWriteTools(server, { userJwt }) {
         status: "Draft",
         note: "Campaign created as a draft with its design attached. NEXT: set the mailing audience (map targeting) for it, then the user completes consents + payment to launch in the app. The audience isn't set yet, and it hasn't been launched.",
       };
-    });
+    }, "campaigns");
 
   t("update_campaign",
     "Edit an existing campaign's metadata (name, linked referral, disclaimer, start date, target type). Pass only what changes. Set referral_id to null to unlink a referral. This tool never changes launch status and never charges — launching stays in the app. (Changing the mailing audience is a separate audience-builder step, not here.)",
@@ -301,7 +399,7 @@ export function registerWriteTools(server, { userJwt }) {
       if (Object.keys(body).length === 1) return { error: "Nothing to update — pass at least one field to change." };
       const res = await callApi("editCampaignV2", "POST", null, userJwt, body);
       return guard(res) ?? { id: a.id, updated: true };
-    });
+    }, "campaigns");
 
   t("delete_campaign",
     "Delete a campaign permanently. Irreversible — confirm the user really means this campaign.",
@@ -310,7 +408,7 @@ export function registerWriteTools(server, { userJwt }) {
     async (a) => {
       const res = await callApi("deleteCampaign", "DELETE", null, userJwt, { id: a.id });
       return guard(res) ?? { id: a.id, deleted: true };
-    });
+    }, "campaigns");
 
   // ── Templates (design bundles) ───────────────────────────────────────────────
   // The agent does NOT author postcard HTML (that's the visual editor). It can duplicate an
@@ -337,7 +435,7 @@ export function registerWriteTools(server, { userJwt }) {
       const g = guard(res); if (g) return g;
       const nb = payload(res);
       return { id: nb?.bundle?.id ?? nb?.id, name: description, postcardSize };
-    });
+    }, "template_management");
 
   t("update_template_settings",
     "Update a design bundle's name and/or postcard size. (Editing the artwork/HTML itself is done in the visual editor, not chat.)",
@@ -350,7 +448,7 @@ export function registerWriteTools(server, { userJwt }) {
       if (a.postcard_size) body.postcardSize = a.postcard_size;
       const res = await callApi("updateTemplateBundle", "POST", null, userJwt, body);
       return guard(res) ?? { bundle_id: a.bundle_id, updated: true };
-    });
+    }, "template_management");
 
   // ── Address-list campaigns (3C-1) ────────────────────────────────────────────
   // The CSV itself NEVER passes through the model/gateway: after this tool creates the Draft,
@@ -414,7 +512,7 @@ export function registerWriteTools(server, { userJwt }) {
         status: "Draft",
         note: "Address-list campaign created as a draft with its design attached. NEXT: render the CSV uploader card for this campaign so the user can attach their address list. After that: optional address verification ($0.025/address, user-completed) or skip, then the user launches in the launch screen. Nothing is uploaded, verified, or launched yet.",
       };
-    });
+    }, "campaigns");
 
   t("remove_invalid_addresses",
     "Exclude every INVALID address (missing mandatory fields) from a campaign's uploaded address list, in bulk.",
@@ -428,7 +526,7 @@ export function registerWriteTools(server, { userJwt }) {
       return typeof n === "number"
         ? { list_id: a.list_id, excluded: n }
         : { list_id: a.list_id, done: true, note: "Invalid addresses were excluded; the exact count wasn't reported — use get_address_list for current totals." };
-    });
+    }, "campaigns");
 
   t("remove_duplicate_addresses",
     "Exclude every DUPLICATE address from a campaign's uploaded address list, in bulk (the first occurrence of each address stays).",
@@ -441,7 +539,7 @@ export function registerWriteTools(server, { userJwt }) {
       return typeof n === "number"
         ? { list_id: a.list_id, excluded: n }
         : { list_id: a.list_id, done: true, note: "Duplicates were excluded; the exact count wasn't reported — use get_address_list for current totals." };
-    });
+    }, "campaigns");
 
   t("delete_addresses",
     "Remove specific addresses from a campaign's uploaded address list (they won't receive postcards). Irreversible for this list.",
@@ -452,7 +550,7 @@ export function registerWriteTools(server, { userJwt }) {
       const g = guard(res); if (g) return g;
       const r = payload(res);
       return { list_id: a.list_id, removed: r?.updated_count ?? a.address_ids.length };
-    });
+    }, "campaigns");
 
   t("set_verification_skip",
     "Set whether an address-list campaign SKIPS the optional paid address verification ($0.025/address). skip=true lets it launch unverified; skip=false re-enables the verification requirement. This toggles intent only — it never charges; actual verification is completed by the user in the app.",
@@ -461,7 +559,7 @@ export function registerWriteTools(server, { userJwt }) {
     async (a) => {
       const res = await callApi("updateCampaignVerification", "POST", null, userJwt, { csv_address_list_id: a.csv_address_list_id, skip_address_verification: a.skip });
       return guard(res) ?? { csv_address_list_id: a.csv_address_list_id, skip_address_verification: a.skip };
-    });
+    }, "campaigns");
 
   // ── Branding (3C-2) ──────────────────────────────────────────────────────────
   // Setting a logo requires a FILE and happens via the ImageUploader card (client-side);
@@ -591,7 +689,7 @@ export function registerWriteTools(server, { userJwt }) {
       const g = guard(res); if (g) return g;
       const r = payload(res);
       return { bundle_id: a.bundle_id, shared_with: r?.shared_with_organization_ids ?? [] };
-    });
+    }, "template_management");
 
   t("unshare_agency_template",
     "Stop sharing an agency-owned postcard design with specific client organizations (removes them from the share list).",
@@ -602,7 +700,7 @@ export function registerWriteTools(server, { userJwt }) {
       const g = guard(res); if (g) return g;
       const r = payload(res);
       return { bundle_id: a.bundle_id, shared_with: r?.shared_with_organization_ids ?? [] };
-    });
+    }, "template_management");
 
   t("delete_template_bundle",
     "Delete a postcard design bundle permanently (removes it from PostGrid too). Irreversible — confirm the user means this design. Requires OWNER/ADMIN of the design's owning organization.",
@@ -613,7 +711,7 @@ export function registerWriteTools(server, { userJwt }) {
       if (!POSTGRID_POSTCARD_API_KEY) return { error: "Design deletion isn't available right now — it needs additional server configuration. The user can delete it from the Templates page." };
       const res = await callApi("deleteTemplateBundle", "POST", null, userJwt, { template_bundle_id: a.bundle_id, postgridApiKey: POSTGRID_POSTCARD_API_KEY });
       return guard(res) ?? { bundle_id: a.bundle_id, deleted: true };
-    });
+    }, "template_management");
 
   // ── Organizations (3C-4) ─────────────────────────────────────────────────────
   // createOrganization inserts a BLANK org; the V1 completeOnboarding step-dispatch fn (accepts

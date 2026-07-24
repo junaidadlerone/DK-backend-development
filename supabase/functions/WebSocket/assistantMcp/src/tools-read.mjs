@@ -7,7 +7,7 @@
 // a friendly "requires an admin role" instead of erroring.
 import { z } from "zod";
 import { callApi } from "./helpers.mjs";
-import { makeGuard, payload, wrap as wrapShared } from "./tool-helpers.mjs";
+import { QR_ELEMENT_RE, makeGuard, payload, roleAreaDenial, wrap as wrapShared } from "./tool-helpers.mjs";
 import { loadActiveContext, buildContextPrompt, buildLiveState } from "./context.mjs";
 
 // Shared plumbing (tool-helpers.mjs) with the read-flavored guard tone.
@@ -32,14 +32,38 @@ const referralRow = (r) => ({
   status: r.status?.name ?? r.status ?? null,
   campaign_id: r.campaign_id ?? null,
 });
-const bundleRow = (b) => ({
-  bundle_id: b.id ?? b.bundle_id,
-  name: b.name ?? b.bundle_name ?? null,
-  postcardSize: b.postcardSize ?? b.postcard_size ?? null,
-  status: b.status ?? null,
-  isUniversal: b.isUniversal ?? false,
-  isAgencyTemplate: b.isAgencyTemplate ?? false,
-});
+// A bundle has NO name of its own anywhere in the schema — the display name lives in the
+// side templates' description with a trailing side token, e.g. "QA Dup v2 Back" → "QA Dup v2"
+// (owner-confirmed rule; matches the frontend's stripBundleSuffix).
+const bundleNameFromDescriptions = (front, back) => {
+  const d = front?.description ?? back?.description ?? null;
+  if (!d) return null;
+  const stripped = d.replace(/\s+(front|back)$/i, "").trim();
+  return stripped || d;
+};
+const bundleUsedCount = (side) => {
+  const used = side?.campaigns_used;
+  if (Array.isArray(used)) return used.length;
+  if (typeof used === "number") return used;
+  return null;
+};
+// getAllTemplatesBundles / ...V3 both return {id, is_universal, isAgencyTemplate, front:{html,
+// description, postcard_size, campaigns_used…}, back:{…}} — there is NO top-level name /
+// postcardSize (an earlier draft of this projection read those and returned null names, which
+// pushed the model into fetching full bundles to find names).
+const bundleRow = (b) => {
+  const front = b.front ?? b.front_template ?? null;
+  const back = b.back ?? b.back_template ?? null;
+  const used = bundleUsedCount(front) ?? bundleUsedCount(back);
+  return {
+    bundle_id: b.id ?? b.bundle_id,
+    name: b.name ?? b.bundle_name ?? bundleNameFromDescriptions(front, back),
+    postcardSize: b.postcardSize ?? b.postcard_size ?? front?.postcard_size ?? back?.postcard_size ?? null,
+    used_in_campaigns: used,
+    isUniversal: b.isUniversal ?? b.is_universal ?? false,
+    isAgencyTemplate: b.isAgencyTemplate ?? false,
+  };
+};
 
 // ── Agency-workspace guard ─────────────────────────────────────────────────────
 // When the active org is an agency it owns NO campaigns/referrals/analytics/billing of its
@@ -72,8 +96,11 @@ async function maybeAgencyNote(userJwt, result, check) {
 
 export function registerReadTools(server, { userId, userJwt }) {
   const R = { readOnlyHint: true };
-  const t = (name, description, inputSchema, handler) =>
-    server.registerTool(name, { description, inputSchema, annotations: R }, wrap(handler));
+  // Optional `area` gates the tool by the caller's per-org role (see roleAreaDenial) — the
+  // same areas the app's menu hides: technicians get no campaigns/templates/targeting/analytics.
+  const t = (name, description, inputSchema, handler, area) =>
+    server.registerTool(name, { description, inputSchema, annotations: R }, wrap(async (a) =>
+      (await roleAreaDenial(userJwt, area)) ?? handler(a)));
 
   // ── Live page context ────────────────────────────────────────────────────────
   t("get_live_context",
@@ -98,7 +125,7 @@ export function registerReadTools(server, { userId, userJwt }) {
       const g = guard(res); if (g) return g;
       const campaigns = (payload(res) ?? []).map(campaignRow);
       return maybeAgencyNote(userJwt, { campaigns, pagination: res?.pagination ?? null }, campaigns.length === 0);
-    });
+    }, "campaigns");
 
   t("get_campaign", "Full detail for one campaign: status, cost breakdown (postcards + address verification), total spent, template bundle, start date.",
     { id: z.string().describe("campaign UUID") },
@@ -112,7 +139,7 @@ export function registerReadTools(server, { userId, userJwt }) {
         total_spent: c?.total_spent ?? null, template_bundle_id: c?.template_bundle_id ?? null,
         start_date: c?.start_date ?? null, postcards_sent: c?.postcards_sent ?? null, scan_rate: c?.scan_rate ?? null,
       };
-    });
+    }, "campaigns");
 
   t("search_campaigns", "Search/filter the user's campaigns. Provide at least a query or a filter.",
     {
@@ -125,7 +152,7 @@ export function registerReadTools(server, { userId, userJwt }) {
       const g = guard(res); if (g) return g;
       const campaigns = (payload(res) ?? []).map(campaignRow);
       return maybeAgencyNote(userJwt, { campaigns, pagination: res?.pagination ?? null }, campaigns.length === 0);
-    });
+    }, "campaigns");
 
   t("get_campaign_history", "The activity log for one campaign (who changed what, when).",
     { id: z.string().describe("campaign UUID") },
@@ -134,14 +161,14 @@ export function registerReadTools(server, { userId, userJwt }) {
       const g = guard(res); if (g) return g;
       const history = payload(res)?.history ?? payload(res) ?? [];
       return maybeAgencyNote(userJwt, { history }, Array.isArray(history) && history.length === 0);
-    });
+    }, "campaigns");
 
   t("get_campaign_statuses", "The list of valid campaign status names/ids (for filtering). Small enum.",
     {},
     async () => {
       const res = await callApi("getCampaignStatuses", "GET", null, userJwt);
       return guard(res) ?? { statuses: payload(res) ?? [] };
-    });
+    }, "campaigns");
 
   // ── Analytics (pass-through; the model picks the type) ────────────────────────
   t("get_dashboard_analytics",
@@ -151,7 +178,7 @@ export function registerReadTools(server, { userId, userJwt }) {
       const res = await callApi("getAnalyticsV2", "POST", null, userJwt, { type: a.type, campaign_ids: a.campaign_ids, last_24hours: a.last_24hours, last_week: a.last_week, last_month: a.last_month });
       const g = guard(res); if (g) return g;
       return maybeAgencyNote(userJwt, { type: a.type, data: payload(res) }, true);
-    });
+    }, "analytics");
 
   t("get_summary_analytics",
     "High-level summary stats. type ∈ DASHBOARD | CAMPAIGNS | REFERRALS | TEMPLATES | TARGETING_ZONES | ADDRESS_COLLECTION | GLOBAL_EXCLUSIONS. e.g. DASHBOARD → total_referrals, active_campaigns, total_spent, estimated_conversion_rate, average_scan_rate.",
@@ -160,7 +187,7 @@ export function registerReadTools(server, { userId, userJwt }) {
       const res = await callApi("getAnalytics", "POST", null, userJwt, { type: a.type });
       const g = guard(res); if (g) return g;
       return maybeAgencyNote(userJwt, { type: a.type, data: payload(res) }, true);
-    });
+    }, "analytics");
 
   t("get_analytics_page",
     "Date-rangeable analytics page data. type ∈ OVERVIEW | CAMPAIGN_PERFORMANCE | ROI. ROI → total_spent, avg_estimated_roi, estimated_revenue_generated, cost_breakdown. Pass selected_start_date + selected_end_date together, or neither.",
@@ -169,7 +196,7 @@ export function registerReadTools(server, { userId, userJwt }) {
       const res = await callApi("getAnalyticsPageData", "POST", null, userJwt, { type: a.type, selected_campaign_id: a.selected_campaign_id, selected_start_date: a.selected_start_date, selected_end_date: a.selected_end_date });
       const g = guard(res); if (g) return g;
       return maybeAgencyNote(userJwt, { type: a.type, data: payload(res)?.analytics_data ?? payload(res) }, true);
-    });
+    }, "analytics");
 
   // ── Referrals ─────────────────────────────────────────────────────────────────
   t("list_referrals", "List the user's referrals/jobs (referrer, job type, value, status). Paginated.",
@@ -292,14 +319,34 @@ export function registerReadTools(server, { userId, userJwt }) {
     async (a) => {
       const res = await callApi("getAllTemplatesBundles", "GET", { page: a.page ?? 1, limit: a.limit ?? 10, postcardSize: a.postcardSize, sort: a.sort }, userJwt);
       return guard(res) ?? { bundles: (payload(res) ?? []).map(bundleRow), pagination: res?.pagination ?? null };
-    });
+    }, "templates");
 
-  t("get_template_bundle", "Full detail for one design bundle, INCLUDING the front and back template HTML (for rendering a preview).",
+  t("get_template_bundle", "Detail for one design bundle: name, size, whether it has a QR code, usage. NO raw HTML is returned (a design can be 10k+ lines) — to SHOW the design, render a PostcardPreview block with this bundle_id; the app fetches and draws it client-side.",
     { bundle_id: z.string().describe("bundle UUID") },
     async (a) => {
       const res = await callApi("getTemplateBundleById", "GET", { bundle_id: a.bundle_id }, userJwt);
-      return guard(res) ?? { bundle: payload(res) };
-    });
+      const g = guard(res); if (g) return g;
+      const p = payload(res);
+      const front = p?.front_template ?? null;
+      const back = p?.back_template ?? null;
+      // Project HARD: the edge fn returns the full template rows including raw `html` — passing
+      // that through blew up the model context (designs run to 10k+ lines). Everything the
+      // agent legitimately needs is metadata; previews render by reference via PostcardPreview.
+      return {
+        bundle: {
+          bundle_id: p?.bundle?.id ?? a.bundle_id,
+          name: bundleNameFromDescriptions(front, back),
+          postcard_size: front?.postcard_size ?? back?.postcard_size ?? null,
+          has_qr_code: QR_ELEMENT_RE.test(`${front?.html ?? ""}\n${back?.html ?? ""}`),
+          used_in_campaigns: bundleUsedCount(front) ?? bundleUsedCount(back),
+          is_universal: p?.bundle?.is_universal ?? false,
+          isAgencyTemplate: p?.bundle?.isAgencyTemplate ?? false,
+          created_at: p?.bundle?.created_at ?? null,
+          updated_at: p?.bundle?.updated_at ?? null,
+        },
+        note: "To show this design in the chat, emit a PostcardPreview with the bundle_id — never describe the HTML.",
+      };
+    }, "templates");
 
   t("list_templates", "List the user's individual template sides (front/back). Compact — HTML omitted.",
     { postcardSize: z.enum(["4x6", "6x9", "6x11"]).optional(), templateType: z.enum(["Front", "Back"]).optional() },
@@ -308,14 +355,14 @@ export function registerReadTools(server, { userId, userJwt }) {
       const g = guard(res); if (g) return g;
       const list = payload(res)?.templates ?? payload(res) ?? [];
       return { templates: (Array.isArray(list) ? list : []).map((x) => ({ id: x.id, description: x.description, templateType: x.templateType, postcardSize: x.postcardSize, isUniversal: x.isUniversal, live: x.live })) };
-    });
+    }, "templates");
 
   t("get_merge_variables", "The business info merged onto a campaign's postcard (business name, phone, website, disclaimer).",
     { campaign_id: z.string() },
     async (a) => {
       const res = await callApi("getMergeVariables", "GET", { campaign_id: a.campaign_id }, userJwt);
       return guard(res) ?? { merge_variables: payload(res) };
-    });
+    }, "campaigns");
 
   // ── Targeting summary (counts, not raw address dumps) ──────────────────────────
   t("get_targeting_summary", "Summary of the user's targeting zones and address collection (counts, status breakdown) — NOT the raw address list.",
@@ -324,7 +371,7 @@ export function registerReadTools(server, { userId, userJwt }) {
       const res = await callApi("getAnalytics", "POST", null, userJwt, { type: a.scope ?? "TARGETING_ZONES" });
       const g = guard(res); if (g) return g;
       return maybeAgencyNote(userJwt, { scope: a.scope ?? "TARGETING_ZONES", data: payload(res) }, true);
-    });
+    }, "targeting");
 
   t("get_campaign_targeting",
     "The audience a specific campaign targets. Campaigns use either a location ZONE or an uploaded CSV address list; this resolves whichever the campaign has. Returns type:\"zone\" with zone_id + counts (show it visually with emit_ui ZoneMap{zoneId} — the app loads the addresses itself), or type:\"csv_list\" with up to 100 address rows (if rows carry lat/lng, show emit_ui ZoneMap with those points; otherwise a DataTable of the addresses), or type:\"none\" when no audience is attached yet. Use this whenever the user asks WHERE a campaign targets or which addresses it sends to.",
@@ -381,7 +428,7 @@ export function registerReadTools(server, { userId, userJwt }) {
           };
         }),
       };
-    });
+    }, "campaigns");
 
   // ── Billing (ADMIN-only — 403 handled gracefully) ─────────────────────────────
   t("get_billing_history", "The organization's billing/charge history. Requires an admin role.",
@@ -407,7 +454,7 @@ export function registerReadTools(server, { userId, userJwt }) {
       const g = guard(res); if (g) return g;
       const payments = payload(res)?.payments ?? payload(res) ?? [];
       return maybeAgencyNote(userJwt, { payments, total: res?.total ?? null }, Array.isArray(payments) && payments.length === 0);
-    });
+    }, "campaigns");
 
   // ── Agency (only meaningful for agency accounts; self-gated) ──────────────────
   t("get_agency_overview", "For agency accounts: a rollup of the caller's client organizations (campaigns, scans, spend per client).",
@@ -444,7 +491,7 @@ export function registerReadTools(server, { userId, userJwt }) {
     async (a) => {
       const res = await callApi("getAllTemplatesBundlesV3", "GET", { page: a.page ?? 1, limit: a.limit ?? 10, postcardSize: a.postcardSize, sort: a.sort }, userJwt);
       return guard(res) ?? { bundles: (payload(res) ?? []).map(bundleRow), pagination: res?.pagination ?? null };
-    });
+    }, "templates");
 
   t("get_branding_theme",
     "The user's branding theme: the three brand colors (hex) and the heading/body font names. Use these when DESIGNING a postcard so it matches their brand.",
@@ -489,5 +536,5 @@ export function registerReadTools(server, { userId, userJwt }) {
         verification_performed: !!d.verification_performed,
         skip_address_verification: !!d.skip_address_verification,
       };
-    });
+    }, "campaigns");
 }
