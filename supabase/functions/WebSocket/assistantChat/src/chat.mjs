@@ -361,24 +361,41 @@ const PERM_TITLES = {
   switch_to_agency_account: "Convert your account to an agency",
 };
 const permissionTitle = (tool) => PERM_TITLES[tool] ?? `Run: ${String(tool ?? "this action").replace(/_/g, " ")}`;
+// The human-readable TARGET of a pending action, pulled from the tool args the model sent.
+// Shown on the approval card so the user approves a NAMED thing — a wrong-target delete once
+// slipped through because the card showed only "Delete this campaign" with no name. Ids are
+// never shown; only name-like fields qualify.
+const TARGET_ARG_KEYS = ["name", "campaign_name", "referrer_name", "new_name", "agency_name", "business_name", "email", "description"];
+const actionTarget = (args) => {
+  if (!args || typeof args !== "object") return null;
+  for (const k of TARGET_ARG_KEYS) {
+    const v = args[k] ?? args?.home_owner_info?.[k];
+    if (typeof v === "string" && v.trim()) return v.trim().slice(0, 80);
+  }
+  return null;
+};
 // Plain Approve/Reject card for non-charging writes (charging actions get a cost+checkbox
 // variant in Phase 3B). Rendered through the same GenUI catalog the read tools use, so the
 // frontend's existing perm_-surface handling (retract on click, exclude from history) applies.
-const buildApprovalCard = (actionId, sessionId, tool) => cleanUiFrame({
-  type: "ui",
-  surface_id: `perm_${actionId ?? sessionId}`,
-  mode: "replace",
-  root: "perm-card",
-  components: [
-    { id: "perm-card", component: { Card: { title: "Approval needed", children: ["perm-title", "perm-cap", "perm-row"] } } },
-    { id: "perm-title", component: { Text: { text: permissionTitle(tool), variant: "subtitle" } } },
-    { id: "perm-cap", component: { Text: { text: "Approve to run it, or reject to cancel.", variant: "caption" } } },
-    { id: "perm-row", component: { Row: { children: ["perm-approve", "perm-reject"], gap: "sm" } } },
-    { id: "perm-approve", component: { Button: { label: "Approve", tone: "primary", action: { type: "send", display: "Approved", prompt: HITL_PROCEED } } } },
-    { id: "perm-reject", component: { Button: { label: "Reject", tone: "ghost", action: { type: "send", display: "Rejected", prompt: HITL_REJECT } } } },
-  ],
-  data_model: {},
-});
+const buildApprovalCard = (actionId, sessionId, tool, args) => {
+  const target = actionTarget(args);
+  return cleanUiFrame({
+    type: "ui",
+    surface_id: `perm_${actionId ?? sessionId}`,
+    mode: "replace",
+    root: "perm-card",
+    components: [
+      { id: "perm-card", component: { Card: { title: "Approval needed", children: ["perm-title", ...(target ? ["perm-target"] : []), "perm-cap", "perm-row"] } } },
+      { id: "perm-title", component: { Text: { text: permissionTitle(tool), variant: "subtitle" } } },
+      ...(target ? [{ id: "perm-target", component: { Text: { text: `Target: “${target}”`, variant: "body" } } }] : []),
+      { id: "perm-cap", component: { Text: { text: "Approve to run it, or reject to cancel.", variant: "caption" } } },
+      { id: "perm-row", component: { Row: { children: ["perm-approve", "perm-reject"], gap: "sm" } } },
+      { id: "perm-approve", component: { Button: { label: "Approve", tone: "primary", action: { type: "send", display: "Approved", prompt: HITL_PROCEED } } } },
+      { id: "perm-reject", component: { Button: { label: "Reject", tone: "ghost", action: { type: "send", display: "Rejected", prompt: HITL_REJECT } } } },
+    ],
+    data_model: {},
+  });
+};
 
 // ── leak filters + redaction (Tier 2) ─────────────────────────────────────────
 // Flowise synthesizes "Attempting to use tool…" text around tool pauses, and
@@ -938,7 +955,7 @@ export async function chatHandler(req, res) {
             noteThinking(label);
           } else {
             sawPermission = true;
-            emitSurface(buildApprovalCard(data?.id, sessionId, pendingAction?.tool));
+            emitSurface(buildApprovalCard(data?.id, sessionId, pendingAction?.tool, pendingAction?.args));
           }
           break;
         }
