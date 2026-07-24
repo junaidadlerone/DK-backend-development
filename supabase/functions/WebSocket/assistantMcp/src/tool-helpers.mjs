@@ -3,6 +3,12 @@
 // tools-write.mjs and had already drifted (the read copy lacked the 400/422 branch, neither
 // distinguished 401/409/500). One module now owns them; the two registries only differ in the
 // guard's tone ("access this data" vs "do this"), picked via makeGuard(kind).
+import { callApi } from "./helpers.mjs";
+
+// A design side counts as having a QR element if its HTML references the QR image service or
+// the {{qr_url}} merge token (mirrors the frontend htmlParser QR detection). Used by the
+// campaign QR gate (writes) and the template detail projection (reads).
+export const QR_ELEMENT_RE = /qrserver\.com|\{\{\s*qr_url\s*\}\}/i;
 
 export const asText = (obj) => ({ content: [{ type: "text", text: JSON.stringify(obj) }] });
 export const asError = (err) => ({ isError: true, content: [{ type: "text", text: `Error: ${err.message ?? err}` }] });
@@ -75,5 +81,58 @@ export function makeGuard(kind /* "read" | "write" */) {
     }
     if (res.status >= 500) return { error: "The app hit a server error on that one — try again in a moment." };
     return { error: fallback };
+  };
+}
+
+// ── Role gating (bug-bash 2026-07-24) ─────────────────────────────────────────
+// The app hides whole areas by role (menu-driven): TECHNICIAN sees no campaigns / templates /
+// targeting / analytics; MARKETER sees no templates. Server-side, most edge fns check org
+// MEMBERSHIP only — so without this gate the assistant happily walked a technician through
+// templates and campaign creation. The authoritative signal is the PER-ORG role from getUser's
+// organizations[] (matched on active_organization_id; values OWNER/ADMIN/MARKETER/TECHNICIAN) —
+// NOT the global profiles.role. Fail-open on lookup failure (this mirrors the app's UX gating;
+// the server's own auth still applies) but log it.
+const AREA_LABEL = {
+  campaigns: "campaigns",
+  templates: "postcard designs (templates)",
+  template_management: "managing postcard designs (templates)",
+  targeting: "targeting",
+  analytics: "analytics",
+};
+// MARKETER keeps template BROWSING (the campaign wizard shows designs to marketers — only the
+// Templates management page is hidden for them), so only template_management is denied.
+const ROLE_DENIED_AREAS = {
+  TECHNICIAN: new Set(["campaigns", "templates", "template_management", "targeting", "analytics"]),
+  MARKETER: new Set(["template_management"]),
+};
+const roleCache = new Map(); // userJwt -> { role, expiresAt }
+async function activeOrgRole(userJwt) {
+  const hit = roleCache.get(userJwt);
+  if (hit && hit.expiresAt > Date.now()) return hit.role;
+  let role = null;
+  try {
+    const res = await callApi("getUser", "GET", null, userJwt);
+    if (res && !res.__error) {
+      const u = payload(res);
+      const orgs = Array.isArray(u?.organizations) ? u.organizations : [];
+      const active = orgs.find((o) => o?.id === u?.active_organization_id);
+      role = (active?.role ?? u?.role ?? null)?.toUpperCase?.() ?? null;
+    }
+  } catch (e) {
+    console.warn("[role-gate] getUser lookup failed (failing open):", e.message);
+  }
+  roleCache.set(userJwt, { role, expiresAt: Date.now() + 60_000 });
+  if (roleCache.size > 5000) roleCache.clear();
+  return role;
+}
+/** Null when allowed; a friendly {error} when the caller's role lacks the area. */
+export async function roleAreaDenial(userJwt, area) {
+  if (!area) return null;
+  const role = await activeOrgRole(userJwt);
+  if (!role || !ROLE_DENIED_AREAS[role]?.has(area)) return null;
+  const roleName = role.charAt(0) + role.slice(1).toLowerCase();
+  return {
+    error: `Your role in this organization (${roleName}) doesn't include ${AREA_LABEL[area] ?? area}. An admin, marketer, or the owner can help with this.`,
+    role_restricted: true,
   };
 }

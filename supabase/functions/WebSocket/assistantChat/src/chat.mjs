@@ -264,6 +264,57 @@ async function isAutoApprovable(tool) {
   }
   return toolSafetyCache?.get(tool) === "auto"; // unknown/unfetched → false → card
 }
+// ── Post-write refresh signal (bug-bash 2026-07-24, Nami's TOOL_RESOURCES pattern) ────────────
+// When a write tool SUCCEEDS, the app screens showing that data are now stale. Each mutating
+// tool maps to the frontend resource scopes it dirties; scopes accumulate across the turn and
+// ONE {type:"refresh", resources:[...], ids:{...}} frame is emitted before `done` — the widget
+// invalidates exactly those (react-query keys / redux thunks / screen-level refetch events).
+// Read tools are absent deliberately (no signal). Ids let detail screens refetch the one record.
+const TOOL_RESOURCES = {
+  create_referral: ["referrals"],
+  update_referral: ["referrals"],
+  delete_referral: ["referrals"],
+  delete_referral_image: ["referrals"],
+  mark_notification: ["notifications"],
+  clear_notification: ["notifications"],
+  clear_notifications: ["notifications"],
+  update_organization: ["organization"],
+  update_profile: ["organization"],
+  set_default_payment_method: ["organization"],
+  create_campaign: ["campaigns"],
+  update_campaign: ["campaigns"],
+  delete_campaign: ["campaigns"],
+  create_address_list_campaign: ["campaigns"],
+  remove_invalid_addresses: ["campaigns"],
+  remove_duplicate_addresses: ["campaigns"],
+  delete_addresses: ["campaigns"],
+  set_verification_skip: ["campaigns"],
+  duplicate_template_bundle: ["templates"],
+  update_template_settings: ["templates"],
+  delete_template_bundle: ["templates"],
+  share_agency_template: ["templates"],
+  unshare_agency_template: ["templates"],
+  update_branding_theme: ["branding", "organization"],
+  remove_company_logo: ["branding", "organization"],
+  invite_user: ["team"],
+  edit_user_access: ["team"],
+  revoke_user_access: ["team"],
+  update_agency_settings: ["organization"],
+  create_client_organization: ["organization"],
+  complete_org_onboarding: ["organization"],
+  switch_to_agency_account: ["organization"],
+};
+// A write "succeeded" when its result parses without an error/denial marker. Tool results are
+// compact JSON — an {error}/{missing_required}/{role_restricted} result means nothing changed.
+function toolSucceeded(outText) {
+  try {
+    const parsed = JSON.parse(outText);
+    return !(parsed?.error || parsed?.missing_required || parsed?.role_restricted);
+  } catch {
+    return !/"(error|missing_required|role_restricted)"/.test(outText.slice(0, 400));
+  }
+}
+
 // Durable stand-in text persisted for a turn that produced a generative-UI surface but NO answer
 // text, so the turn still gets a chat_messages row and survives a reload (otherwise the response
 // would exist only in-memory / the browser's surface cache and vanish on the next full reload —
@@ -677,6 +728,62 @@ export async function chatHandler(req, res) {
     let pendingText = "";
     let assistantReply = "";
     let suppressRest = false;
+    // ── Restatement dedupe (bug-bash 2026-07-24) ─────────────────────────────
+    // The model intermittently RESTATES its reply from the beginning mid-turn (QA saw
+    // "I'll create that referral now.I'll create that referral now." before an approval card).
+    // Detector: after a sentence boundary, if the incoming stream starts re-emitting the reply
+    // from its FIRST character, hold those chars; a complete restatement is dropped, any
+    // divergence flushes the held text untouched (fail-open — never lose real words).
+    let dupMatch = 0;      // chars of the reply-snapshot matched so far (0 = not matching)
+    let dupHeld = "";      // held-back candidate duplicate text
+    let dupRef = "";       // the reply snapshot being matched against
+    const SENT_END = new Set([".", "!", "?", "…"]);
+    const atSentenceEnd = () => {
+      const tail = assistantReply.slice(-6).trimEnd();
+      const last = tail[tail.length - 1];
+      if (SENT_END.has(last)) return true;
+      return ["\"", "'", ")", "]"].includes(last) && SENT_END.has(tail[tail.length - 2]);
+    };
+    // Single choke point: every cleaned chunk streams through here. Emitted chars append to
+    // assistantReply immediately, so the restatement reference is always the current reply.
+    const pushText = (out) => {
+      let emit = "";
+      for (const ch of out) {
+        if (dupMatch > 0) {
+          if (ch === dupRef[dupMatch]) {
+            dupHeld += ch;
+            dupMatch += 1;
+            if (dupMatch >= dupRef.length) {
+              console.warn("[/chat] dropped a verbatim reply restatement:", JSON.stringify(dupHeld.slice(0, 80)));
+              dupMatch = 0; dupHeld = ""; dupRef = "";
+            }
+            continue;
+          }
+          // Divergence — not a verbatim restatement; everything held was real text.
+          assistantReply += dupHeld + ch;
+          emit += dupHeld + ch;
+          dupMatch = 0; dupHeld = ""; dupRef = "";
+          continue;
+        }
+        if (assistantReply.length >= 24 && ch === assistantReply[0] && atSentenceEnd()) {
+          // A sentence just ended and this char could be the reply starting over — hold and
+          // compare against a snapshot of the reply as it stands now.
+          dupRef = assistantReply;
+          dupMatch = 1; dupHeld = ch;
+          continue;
+        }
+        assistantReply += ch;
+        emit += ch;
+      }
+      if (emit) send({ delta: emit });
+    };
+    // Turn over while still matching: a full match already dropped itself; a partial hold is
+    // real text that happened to shadow the reply's opening — release it.
+    const dedupeFlush = () => {
+      const held = dupMatch > 0 ? dupHeld : "";
+      dupMatch = 0; dupHeld = ""; dupRef = "";
+      if (held) { assistantReply += held; send({ delta: held }); }
+    };
     const earliestMarker = (s) => LEAK_MARKERS.map((m) => s.indexOf(m)).filter((i) => i !== -1).sort((a, b) => a - b)[0];
     const emitDelta = (chunk) => {
       if (suppressRest || !chunk) return;       // Flowise leads with empty token events
@@ -684,26 +791,34 @@ export async function chatHandler(req, res) {
       const hit = earliestMarker(pendingText);
       if (hit !== undefined) {
         const before = clean(pendingText.slice(0, hit).replace(/\s+$/, ""));
-        if (before) { assistantReply += before; send({ delta: before }); }
+        if (before) pushText(before);
         pendingText = ""; suppressRest = true; return;
       }
       const safeEnd = pendingText.length - KEEP_BACK;
       if (safeEnd <= 0) return;
       const region = pendingText.slice(0, safeEnd);
-      const cut = Math.max(region.lastIndexOf(" "), region.lastIndexOf("\n"), region.lastIndexOf("\t")) + 1;
+      let cut = Math.max(region.lastIndexOf(" "), region.lastIndexOf("\n"), region.lastIndexOf("\t")) + 1;
+      // Never cut right before an em/en dash: deDash must see "X — Y" in one piece — split
+      // across fragments it rendered as "X , Y" (the swallowed space was already streamed).
+      while (cut > 0 && /^\s*[—–]/.test(pendingText.slice(cut))) {
+        const prev = Math.max(region.lastIndexOf(" ", cut - 2), region.lastIndexOf("\n", cut - 2), region.lastIndexOf("\t", cut - 2)) + 1;
+        if (prev >= cut) { cut = 0; break; }
+        cut = prev;
+      }
       if (cut > 0) {
-        const out = clean(pendingText.slice(0, cut));
-        assistantReply += out;
-        send({ delta: out });
+        pushText(clean(pendingText.slice(0, cut)));
         pendingText = pendingText.slice(cut);
       }
     };
     const flushDeltas = () => {
-      if (suppressRest || !pendingText) { pendingText = ""; return; }
-      const hit = earliestMarker(pendingText);
-      const out = clean(hit !== undefined ? pendingText.slice(0, hit).replace(/\s+$/, "") : pendingText);
-      if (out) { assistantReply += out; send({ delta: out }); }
-      pendingText = "";
+      if (suppressRest || !pendingText) { pendingText = ""; }
+      else {
+        const hit = earliestMarker(pendingText);
+        const out = clean(hit !== undefined ? pendingText.slice(0, hit).replace(/\s+$/, "") : pendingText);
+        if (out) pushText(out);
+        pendingText = "";
+      }
+      dedupeFlush();
     };
 
     // Raw upstream errors are logged, never forwarded (they read as a crash).
@@ -723,6 +838,9 @@ export async function chatHandler(req, res) {
     // Whether this turn rendered a generative-UI surface (drives durable persistence of an
     // otherwise-textless card turn — see the persist logic below).
     let sawUi = false;
+    // Post-write refresh signal accumulation (see TOOL_RESOURCES above).
+    const refreshResources = new Set();
+    const refreshIds = {};
 
     // WS2 capture: everything persistTurn stores alongside the text.
     // thinkingLabels — ordered progress labels (consecutive-duplicate collapsed, matching the
@@ -797,6 +915,14 @@ export async function chatHandler(req, res) {
             // auto-approve policy judges when the NEXT pause arrives (B3).
             if (t?.tool && t?.toolOutput && pendingAction?.tool === t.tool) pendingAction = null;
             const out = typeof t?.toolOutput === "string" ? t.toolOutput : JSON.stringify(t?.toolOutput ?? "");
+            // Successful write → remember which app data went stale (one refresh frame at turn end).
+            if (!isReject && TOOL_RESOURCES[t?.tool] && toolSucceeded(out)) {
+              for (const r of TOOL_RESOURCES[t.tool]) refreshResources.add(r);
+              const args = t?.toolInput ?? {};
+              for (const k of ["id", "campaign_id", "referral_id", "bundle_id", "organization_id"]) {
+                if (typeof args[k] === "string" && args[k]) refreshIds[k] = args[k];
+              }
+            }
             const um = out.match(/\\?"ui_job_id\\?"\s*:\s*\\?"([0-9a-f-]{36})\\?"/i);
             if (um && !seenJobIds.has(um[1])) {
               seenJobIds.add(um[1]);
@@ -912,6 +1038,10 @@ export async function chatHandler(req, res) {
       surfaces: emittedSurfaces,
       attachment,
     });
+    // Data-change signal: tell the widget which app resources this turn's writes dirtied.
+    if (refreshResources.size) {
+      send({ type: "refresh", resources: [...refreshResources], ...(Object.keys(refreshIds).length ? { ids: refreshIds } : {}) });
+    }
     send({
       done: true,
       session_id: sessionId,

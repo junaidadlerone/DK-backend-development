@@ -28,6 +28,101 @@ const ajv = new Ajv({ allErrors: true, strict: false });
 const validators = {};
 for (const [name, schema] of Object.entries(COMPONENT_SCHEMAS)) validators[name] = ajv.compile(schema);
 
+// ── Validation parity with the frontend (bug-bash 2026-07-24) ─────────────────
+// The frontend's zod catalog STRIPS unknown props (no .strict() anywhere) — but the generated
+// JSON schema says additionalProperties:false, so ajv REJECTED frames the frontend would have
+// rendered fine. Worse, for union-heavy components (TemplateProposal: 38 strict objects, 6
+// anyOf) errors[0] was a bare "must NOT have additional properties" with the property name
+// dropped, and the model looped retrying blind. Two fixes:
+//   1. strip-parity: delete exactly the offending additional properties (ajv names them in
+//      params.additionalProperty) and re-validate — mirroring what zod does on render;
+//   2. when a frame still fails, report the DEEPEST real errors with property names and
+//      allowed values, skipping anyOf/discriminator noise.
+// Pick the union branch a value is aimed at: first by a `const` discriminator property
+// (elements carry type:"shape"|"text"|…), else by required-key presence (fills: {color} vs
+// {gradient}). Null when nothing matches — then we don't strip (validation reports normally).
+function pickBranch(branches, value) {
+  if (value == null || typeof value !== "object") return null;
+  for (const b of branches) {
+    const disc = Object.entries(b.properties ?? {}).find(([, s]) => s && s.const !== undefined);
+    if (disc && value[disc[0]] === disc[1].const) return b;
+  }
+  for (const b of branches) {
+    const req = b.required ?? [];
+    if (req.length && req.every((k) => k in value)) return b;
+  }
+  return null;
+}
+// Schema-aware unknown-property strip (zod-parity: the frontend silently drops extras).
+// IMPORTANT: naive stripping from ajv's additionalProperties errors is WRONG for unions — the
+// non-matching branches flag every branch-specific prop as "additional" and blind deletion
+// destroys valid elements. This walker descends the schema, resolves each union to ITS branch,
+// and strips only genuinely-unknown keys. Mutates `value` in place.
+function stripUnknown(schema, value) {
+  if (!schema || value == null || typeof value !== "object") return;
+  const branches = schema.oneOf ?? schema.anyOf;
+  if (branches) {
+    const b = pickBranch(branches, value);
+    if (b) stripUnknown(b, value);
+    return;
+  }
+  if (Array.isArray(value)) {
+    if (schema.items) for (const item of value) stripUnknown(schema.items, item);
+    return;
+  }
+  const props = schema.properties;
+  if (props) {
+    if (schema.additionalProperties === false) {
+      for (const k of Object.keys(value)) if (!(k in props)) delete value[k];
+    }
+    for (const [k, sub] of Object.entries(props)) if (k in value) stripUnknown(sub, value[k]);
+  }
+}
+function formatErrors(errors) {
+  const real = (errors ?? []).filter((e) =>
+    e.keyword !== "anyOf" && e.keyword !== "oneOf" &&
+    !(e.keyword === "const" && /\/type$/.test(e.instancePath)) &&
+    !(e.keyword === "enum" && /\/type$/.test(e.instancePath)));
+  const pool = real.length ? real : (errors ?? []);
+  // Union noise: several branches report "required" at the same path — fold them into one line.
+  const requiredByPath = new Map();
+  const rest = [];
+  for (const e of pool) {
+    if (e.keyword === "required" && e.params?.missingProperty) {
+      const set = requiredByPath.get(e.instancePath) ?? new Set();
+      set.add(e.params.missingProperty);
+      requiredByPath.set(e.instancePath, set);
+    } else {
+      rest.push(e);
+    }
+  }
+  const lines = [];
+  for (const [path, propsSet] of requiredByPath) {
+    const names = [...propsSet];
+    lines.push(`${path || "(root)"} is missing ${names.length > 1 ? `one of: ${names.join(" | ")}` : `required property "${names[0]}"`}`);
+  }
+  for (const e of rest) {
+    let msg = `${e.instancePath || "(root)"} ${e.message}`;
+    if (e.params?.additionalProperty) msg += ` ("${e.params.additionalProperty}" is not a valid property here — remove it)`;
+    if (e.params?.allowedValues) msg += ` (allowed: ${e.params.allowedValues.join(", ")})`;
+    lines.push(msg);
+  }
+  return lines
+    .sort((a, b) => b.indexOf(" ") - a.indexOf(" ")) // deepest paths first (longer pointer prefix)
+    .slice(0, 3)
+    .join("; ") || "invalid props";
+}
+// Validate one component's props with frontend strip-parity.
+// Returns { ok:true, props } (possibly stripped) or { ok:false, error }.
+function validateComponentProps(type, props) {
+  const validate = validators[type];
+  if (validate(props)) return { ok: true, props };
+  const work = JSON.parse(JSON.stringify(props));
+  stripUnknown(COMPONENT_SCHEMAS[type], work);
+  if (validate(work)) return { ok: true, props: work };
+  return { ok: false, error: formatErrors(validate.errors) };
+}
+
 // Normalize both accepted wire forms into { id, type, props }.
 function normalizeEntry(entry) {
   if (!entry || typeof entry !== "object") return null;
@@ -68,14 +163,14 @@ export function validateUiFrame(input) {
   }
   if (!byId.has(root)) return { ok: false, error: `root "${root}" is not among the components` };
 
-  // Per-component prop validation against the catalog schema.
+  // Per-component prop validation against the catalog schema (strip-parity with the frontend:
+  // unknown extra properties are removed, not fatal — see validateComponentProps).
   for (const n of normalized) {
-    const ok = validators[n.type](n.props);
-    if (!ok) {
-      const e = validators[n.type].errors?.[0];
-      const where = e ? `${e.instancePath || "(root)"} ${e.message}` : "invalid props";
-      return { ok: false, error: `${n.type} "${n.id}": ${where}` };
+    const result = validateComponentProps(n.type, n.props);
+    if (!result.ok) {
+      return { ok: false, error: `${n.type} "${n.id}": ${result.error}` };
     }
+    n.props = result.props;
   }
 
   // Referential integrity + depth + cycle check from root.
