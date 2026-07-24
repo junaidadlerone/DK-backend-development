@@ -213,11 +213,29 @@ export function registerWriteTools(server, { userJwt }) {
       };
     });
 
+  // Wrong-target guard for destructive tools (bug-bash 2026-07-24): a hallucinated/stale id
+  // once deleted a DIFFERENT campaign than the one the user named, and nothing caught it. Every
+  // named delete now requires the target's NAME alongside the id; the tool fetches the record
+  // and refuses on mismatch, naming what the id actually belongs to.
+  const nameMismatch = (expected, actual, kind) => {
+    const e = (expected ?? "").trim().toLowerCase();
+    const act = (actual ?? "").trim().toLowerCase();
+    if (!e || !act || e === act) return null;
+    return {
+      error: `STOP — that id belongs to the ${kind} "${actual}", not "${expected}". Nothing was deleted. Look the ${kind} up again (fresh list/search in THIS conversation) and retry with the matching id and name.`,
+    };
+  };
+
   t("delete_referral",
-    "Delete a referral permanently (also removes its gallery images). Irreversible.",
-    { id: z.string().describe("referral UUID") },
+    "Delete a referral permanently (also removes its gallery images). Irreversible. Pass BOTH the id AND the referrer's exact name — the tool verifies they match before deleting (a mismatch deletes nothing).",
+    { id: z.string().describe("referral UUID"), referrer_name: z.string().optional().describe("REQUIRED — the referral's referrer name, for verification") },
     D,
     async (a) => {
+      if (!a.referrer_name?.trim()) return { missing_required: ["referrer_name"], note: "Pass the referrer's exact name with the id — it's verified against the record before deleting." };
+      const rb = await callApi("getReferralById", "POST", null, userJwt, { id: a.id });
+      const gr = guard(rb); if (gr) return gr;
+      const actual = payload(rb)?.home_owner_info?.name ?? null;
+      const mm = nameMismatch(a.referrer_name, actual, "referral"); if (mm) return mm;
       const res = await callApi("deleteReferral", "DELETE", null, userJwt, { id: a.id });
       return guard(res) ?? { id: a.id, deleted: true };
     });
@@ -402,12 +420,17 @@ export function registerWriteTools(server, { userJwt }) {
     }, "campaigns");
 
   t("delete_campaign",
-    "Delete a campaign permanently. Irreversible — confirm the user really means this campaign.",
-    { id: z.string().describe("campaign UUID") },
+    "Delete a campaign permanently. Irreversible — confirm the user really means this campaign. Pass BOTH the id AND the campaign's exact name — the tool verifies they match before deleting (a mismatch deletes nothing). Get the id fresh from list/search in THIS conversation; never reuse a remembered id.",
+    { id: z.string().describe("campaign UUID"), name: z.string().optional().describe("REQUIRED — the campaign's exact name, for verification") },
     D,
     async (a) => {
+      if (!a.name?.trim()) return { missing_required: ["name"], note: "Pass the campaign's exact name with the id — it's verified against the record before deleting." };
+      const cb = await callApi("getCampaignById", "POST", null, userJwt, { id: a.id });
+      const gc = guard(cb); if (gc) return gc;
+      const actual = payload(cb)?.campaign_name ?? null;
+      const mm = nameMismatch(a.name, actual, "campaign"); if (mm) return mm;
       const res = await callApi("deleteCampaign", "DELETE", null, userJwt, { id: a.id });
-      return guard(res) ?? { id: a.id, deleted: true };
+      return guard(res) ?? { id: a.id, name: actual ?? a.name, deleted: true };
     }, "campaigns");
 
   // ── Templates (design bundles) ───────────────────────────────────────────────
@@ -434,7 +457,13 @@ export function registerWriteTools(server, { userJwt }) {
       const res = await callApi("createNewTemplateBundle", "POST", null, userJwt, { description, html_front, html_back, postcardSize });
       const g = guard(res); if (g) return g;
       const nb = payload(res);
-      return { id: nb?.bundle?.id ?? nb?.id, name: description, postcardSize };
+      const newId = nb?.bundle?.id ?? nb?.id;
+      return {
+        id: newId,
+        name: description,
+        postcardSize,
+        note: `Duplicated. SHOW the user the new design: emit a PostcardPreview block with bundleId "${newId}".`,
+      };
     }, "template_management");
 
   t("update_template_settings",
@@ -447,7 +476,11 @@ export function registerWriteTools(server, { userJwt }) {
       if (a.name) body.description = a.name;
       if (a.postcard_size) body.postcardSize = a.postcard_size;
       const res = await callApi("updateTemplateBundle", "POST", null, userJwt, body);
-      return guard(res) ?? { bundle_id: a.bundle_id, updated: true };
+      return guard(res) ?? {
+        bundle_id: a.bundle_id,
+        updated: true,
+        note: `Updated. SHOW the user the design: emit a PostcardPreview block with bundleId "${a.bundle_id}".`,
+      };
     }, "template_management");
 
   // ── Address-list campaigns (3C-1) ────────────────────────────────────────────
@@ -703,14 +736,20 @@ export function registerWriteTools(server, { userJwt }) {
     }, "template_management");
 
   t("delete_template_bundle",
-    "Delete a postcard design bundle permanently (removes it from PostGrid too). Irreversible — confirm the user means this design. Requires OWNER/ADMIN of the design's owning organization.",
-    { bundle_id: z.string() },
+    "Delete a postcard design bundle permanently (removes it from PostGrid too). Irreversible — confirm the user means this design. Pass BOTH the bundle id AND the design's exact name — the tool verifies they match before deleting. Requires OWNER/ADMIN of the design's owning organization.",
+    { bundle_id: z.string(), name: z.string().optional().describe("REQUIRED — the design's exact name, for verification") },
     D,
     async (a) => {
       // This edge fn uniquely requires the PostGrid key in the BODY (create/update use their own env).
       if (!POSTGRID_POSTCARD_API_KEY) return { error: "Design deletion isn't available right now — it needs additional server configuration. The user can delete it from the Templates page." };
+      if (!a.name?.trim()) return { missing_required: ["name"], note: "Pass the design's exact name with the bundle id — it's verified against the record before deleting." };
+      const bb = await callApi("getTemplateBundleById", "GET", { bundle_id: a.bundle_id }, userJwt);
+      const gb = guard(bb); if (gb) return gb;
+      const p = payload(bb);
+      const actual = (p?.front_template?.description ?? p?.back_template?.description ?? "").replace(/\s+(front|back)$/i, "").trim() || null;
+      const mm = nameMismatch(a.name, actual, "design"); if (mm) return mm;
       const res = await callApi("deleteTemplateBundle", "POST", null, userJwt, { template_bundle_id: a.bundle_id, postgridApiKey: POSTGRID_POSTCARD_API_KEY });
-      return guard(res) ?? { bundle_id: a.bundle_id, deleted: true };
+      return guard(res) ?? { bundle_id: a.bundle_id, name: actual ?? a.name, deleted: true };
     }, "template_management");
 
   // ── Organizations (3C-4) ─────────────────────────────────────────────────────

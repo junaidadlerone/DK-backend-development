@@ -361,24 +361,41 @@ const PERM_TITLES = {
   switch_to_agency_account: "Convert your account to an agency",
 };
 const permissionTitle = (tool) => PERM_TITLES[tool] ?? `Run: ${String(tool ?? "this action").replace(/_/g, " ")}`;
+// The human-readable TARGET of a pending action, pulled from the tool args the model sent.
+// Shown on the approval card so the user approves a NAMED thing — a wrong-target delete once
+// slipped through because the card showed only "Delete this campaign" with no name. Ids are
+// never shown; only name-like fields qualify.
+const TARGET_ARG_KEYS = ["name", "campaign_name", "referrer_name", "new_name", "agency_name", "business_name", "email", "description"];
+const actionTarget = (args) => {
+  if (!args || typeof args !== "object") return null;
+  for (const k of TARGET_ARG_KEYS) {
+    const v = args[k] ?? args?.home_owner_info?.[k];
+    if (typeof v === "string" && v.trim()) return v.trim().slice(0, 80);
+  }
+  return null;
+};
 // Plain Approve/Reject card for non-charging writes (charging actions get a cost+checkbox
 // variant in Phase 3B). Rendered through the same GenUI catalog the read tools use, so the
 // frontend's existing perm_-surface handling (retract on click, exclude from history) applies.
-const buildApprovalCard = (actionId, sessionId, tool) => cleanUiFrame({
-  type: "ui",
-  surface_id: `perm_${actionId ?? sessionId}`,
-  mode: "replace",
-  root: "perm-card",
-  components: [
-    { id: "perm-card", component: { Card: { title: "Approval needed", children: ["perm-title", "perm-cap", "perm-row"] } } },
-    { id: "perm-title", component: { Text: { text: permissionTitle(tool), variant: "subtitle" } } },
-    { id: "perm-cap", component: { Text: { text: "Approve to run it, or reject to cancel.", variant: "caption" } } },
-    { id: "perm-row", component: { Row: { children: ["perm-approve", "perm-reject"], gap: "sm" } } },
-    { id: "perm-approve", component: { Button: { label: "Approve", tone: "primary", action: { type: "send", display: "Approved", prompt: HITL_PROCEED } } } },
-    { id: "perm-reject", component: { Button: { label: "Reject", tone: "ghost", action: { type: "send", display: "Rejected", prompt: HITL_REJECT } } } },
-  ],
-  data_model: {},
-});
+const buildApprovalCard = (actionId, sessionId, tool, args) => {
+  const target = actionTarget(args);
+  return cleanUiFrame({
+    type: "ui",
+    surface_id: `perm_${actionId ?? sessionId}`,
+    mode: "replace",
+    root: "perm-card",
+    components: [
+      { id: "perm-card", component: { Card: { title: "Approval needed", children: ["perm-title", ...(target ? ["perm-target"] : []), "perm-cap", "perm-row"] } } },
+      { id: "perm-title", component: { Text: { text: permissionTitle(tool), variant: "subtitle" } } },
+      ...(target ? [{ id: "perm-target", component: { Text: { text: `Target: “${target}”`, variant: "body" } } }] : []),
+      { id: "perm-cap", component: { Text: { text: "Approve to run it, or reject to cancel.", variant: "caption" } } },
+      { id: "perm-row", component: { Row: { children: ["perm-approve", "perm-reject"], gap: "sm" } } },
+      { id: "perm-approve", component: { Button: { label: "Approve", tone: "primary", action: { type: "send", display: "Approved", prompt: HITL_PROCEED } } } },
+      { id: "perm-reject", component: { Button: { label: "Reject", tone: "ghost", action: { type: "send", display: "Rejected", prompt: HITL_REJECT } } } },
+    ],
+    data_model: {},
+  });
+};
 
 // ── leak filters + redaction (Tier 2) ─────────────────────────────────────────
 // Flowise synthesizes "Attempting to use tool…" text around tool pauses, and
@@ -737,6 +754,8 @@ export async function chatHandler(req, res) {
     let dupMatch = 0;      // chars of the reply-snapshot matched so far (0 = not matching)
     let dupHeld = "";      // held-back candidate duplicate text
     let dupRef = "";       // the reply snapshot being matched against
+    let paraStart = 0;     // index in assistantReply where the current paragraph begins
+    let pendingParaBreak = false; // saw a newline; next non-newline char starts a paragraph
     const SENT_END = new Set([".", "!", "?", "…"]);
     const atSentenceEnd = () => {
       const tail = assistantReply.slice(-6).trimEnd();
@@ -746,6 +765,8 @@ export async function chatHandler(req, res) {
     };
     // Single choke point: every cleaned chunk streams through here. Emitted chars append to
     // assistantReply immediately, so the restatement reference is always the current reply.
+    // Restatements anchor at TWO places: the reply's beginning (the "X.X" doubles) and the
+    // current paragraph's beginning (address-list creates re-rendered just their last paragraph).
     const pushText = (out) => {
       let emit = "";
       for (const ch of out) {
@@ -754,7 +775,7 @@ export async function chatHandler(req, res) {
             dupHeld += ch;
             dupMatch += 1;
             if (dupMatch >= dupRef.length) {
-              console.warn("[/chat] dropped a verbatim reply restatement:", JSON.stringify(dupHeld.slice(0, 80)));
+              console.warn("[/chat] dropped a verbatim restatement:", JSON.stringify(dupHeld.slice(0, 80)));
               dupMatch = 0; dupHeld = ""; dupRef = "";
             }
             continue;
@@ -765,13 +786,28 @@ export async function chatHandler(req, res) {
           dupMatch = 0; dupHeld = ""; dupRef = "";
           continue;
         }
-        if (assistantReply.length >= 24 && ch === assistantReply[0] && atSentenceEnd()) {
-          // A sentence just ended and this char could be the reply starting over — hold and
-          // compare against a snapshot of the reply as it stands now.
-          dupRef = assistantReply;
-          dupMatch = 1; dupHeld = ch;
-          continue;
+        if (assistantReply.length >= 16 && atSentenceEnd()) {
+          // A sentence just ended — this char could be the reply (or its current paragraph)
+          // starting over verbatim. Hold and compare against that snapshot (whitespace-trimmed,
+          // so a trailing newline never breaks the final match). Whole-reply anchor wins when
+          // both match this first char.
+          const wholeRef = assistantReply.replace(/\s+$/, "");
+          const paraRef = assistantReply.slice(paraStart).replace(/\s+$/, "");
+          if (wholeRef.length >= 16 && ch === wholeRef[0]) {
+            dupRef = wholeRef;
+            dupMatch = 1; dupHeld = ch;
+            continue;
+          }
+          if (paraRef.length >= 16 && ch === paraRef[0]) {
+            dupRef = paraRef;
+            dupMatch = 1; dupHeld = ch;
+            continue;
+          }
         }
+        // Paragraph tracking: a new paragraph starts at the first non-newline char after a
+        // newline (deferred, so blank lines don't leave paraStart pointing at emptiness).
+        if (ch === "\n") pendingParaBreak = true;
+        else if (pendingParaBreak) { paraStart = assistantReply.length; pendingParaBreak = false; }
         assistantReply += ch;
         emit += ch;
       }
@@ -868,6 +904,23 @@ export async function chatHandler(req, res) {
     };
 
     const seenJobIds = new Set();
+    // Drain emit_ui frames referenced in a serialized blob. Tool outputs USED to arrive via
+    // `usedTools` per iteration; the shared Flowise now emits usedTools only ONCE per turn, so
+    // later iterations' outputs (where emit_ui usually runs) never surface there — the cards
+    // silently vanished. `agentFlowExecutedData` still carries every node's output, so ui jobs
+    // are extracted from BOTH paths, dedup'd by seenJobIds (draining twice is a no-op).
+    // Escaping-agnostic: the id appears once-escaped in usedTools' toolOutput but DOUBLE-escaped
+    // inside stringified agentFlowExecutedData (\\\"ui_job_id\\\") — so match the key name and
+    // grab the next UUID, whatever quoting/backslash depth surrounds it.
+    const UI_JOB_RE = /ui_job_id[^0-9a-f]{1,10}([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/gi;
+    const drainUiJobs = async (raw) => {
+      for (const m of String(raw).matchAll(UI_JOB_RE)) {
+        if (seenJobIds.has(m[1])) continue;
+        seenJobIds.add(m[1]);
+        const n = await inlineJobEvents(m[1], auth.userJwt, emitSurface);
+        if (n > 0) sawUi = true;
+      }
+    };
     const handleEvent = async (ev, data) => {
       switch (ev) {
         // On a reject resume the model tends to emit unreliable filler; suppress it and let the
@@ -902,7 +955,7 @@ export async function chatHandler(req, res) {
             noteThinking(label);
           } else {
             sawPermission = true;
-            emitSurface(buildApprovalCard(data?.id, sessionId, pendingAction?.tool));
+            emitSurface(buildApprovalCard(data?.id, sessionId, pendingAction?.tool, pendingAction?.args));
           }
           break;
         }
@@ -923,16 +976,20 @@ export async function chatHandler(req, res) {
                 if (typeof args[k] === "string" && args[k]) refreshIds[k] = args[k];
               }
             }
-            const um = out.match(/\\?"ui_job_id\\?"\s*:\s*\\?"([0-9a-f-]{36})\\?"/i);
-            if (um && !seenJobIds.has(um[1])) {
-              seenJobIds.add(um[1]);
-              const n = await inlineJobEvents(um[1], auth.userJwt, emitSurface);
-              if (n > 0) sawUi = true;
-            }
+            await drainUiJobs(out);
           }
           break;
-        // agentFlowEvent / nextAgentFlow / agentFlowExecutedData / metadata /
-        // usageMetadata / end → internal; unknown events are ignored by design.
+        // Per-node execution snapshots — the only reliable carrier of LATER iterations' tool
+        // outputs on current Flowise (see drainUiJobs). Only each node's OUTPUT is scanned:
+        // inputs can embed chat history, and an ui_job_id from an old turn must not re-drain.
+        case "agentFlowExecutedData":
+          for (const nodeExec of (Array.isArray(data) ? data : [])) {
+            const outStr = JSON.stringify(nodeExec?.data?.output ?? "");
+            if (nodeExec?.data?.output) await drainUiJobs(JSON.stringify(nodeExec.data.output));
+          }
+          break;
+        // agentFlowEvent / nextAgentFlow / metadata / usageMetadata / end → internal;
+        // unknown events are ignored by design.
       }
     };
 
@@ -963,8 +1020,25 @@ export async function chatHandler(req, res) {
       const reader = upstream.body.getReader();
       const decoder = new TextDecoder();
       let buf = "";
+      // Stall guard: a hung Flowise turn used to leave the user staring at nothing forever
+      // (QA saw >2.5 min with zero frames). If the upstream produces NOTHING for STALL_MS,
+      // treat it as a turn error — the user gets the friendly line + Retry instead of a hang.
+      const STALL_MS = 90_000;
+      const readWithStall = () => new Promise((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error("__stall__")), STALL_MS);
+        reader.read().then(
+          (r) => { clearTimeout(timer); resolve(r); },
+          (e) => { clearTimeout(timer); reject(e); },
+        );
+      });
       while (true) {
-        const { done, value } = await reader.read().catch(() => ({ done: true, value: undefined }));
+        const { done, value } = await readWithStall().catch((e) => {
+          if (String(e?.message) === "__stall__") {
+            turnError = `Upstream produced no data for ${STALL_MS / 1000}s — treating the turn as stalled`;
+            reader.cancel().catch(() => { /* already dead */ });
+          }
+          return { done: true, value: undefined };
+        });
         if (done) break;
         buf += decoder.decode(value, { stream: true });
         const lines = buf.split("\n");
