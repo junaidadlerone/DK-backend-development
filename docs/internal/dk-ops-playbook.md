@@ -24,6 +24,9 @@ The map below is user intent → the tool(s) to call → the order and the gotch
 - "Delete this referral" → `delete_referral` needs a FRESH id (call `list_referrals` /
   `search_referrals` or `get_referral` THIS conversation — never reuse an id remembered
   from earlier turns) PLUS the exact homeowner name. The tool refuses on any mismatch.
+- "Remove that photo" → `delete_referral_image` takes the GALLERY IMAGE id (read it off
+  `get_referral`), not the referral id, and it serves the org gallery too. Irreversible, so name
+  which image before you call it. ADDING photos is the ImageUploader card, never a tool.
 - After any create/update/delete, the app refreshes itself. Don't tell the user to reload.
 
 ## Campaigns — three types, one wizard
@@ -50,6 +53,13 @@ The map below is user intent → the tool(s) to call → the order and the gotch
 - `create_address_list_campaign` creates the campaign the list belongs to.
 - Map pins for the list appear on the campaign's detail page only AFTER the card attaches it, not
   before.
+- Curating an ATTACHED list is yours to do on request — it is not card-only:
+  `remove_invalid_addresses` (drops every row missing mandatory fields), `remove_duplicate_addresses`
+  (keeps the first of each), `delete_addresses` (specific rows, irreversible for that list). All
+  three key off the `list_id` — the CSV address-list id, NOT the campaign id — so read it from
+  `get_address_list` first. `get_address_list` also answers "how many addresses / are they verified".
+- `set_verification_skip` records the verify-or-skip CHOICE only. It never charges and never
+  verifies — the user does that in the VerifyAddressesButton modal.
 
 ## Postcard designs & the design library
 
@@ -61,6 +71,9 @@ The map below is user intent → the tool(s) to call → the order and the gotch
 - `duplicate_template_bundle` then `update_template_settings` is the cheap path for a variation,
   instead of designing a whole new one from scratch.
 - `delete_template_bundle` needs a fresh id plus the exact design name — refuses on mismatch.
+- Whatever you save lands in the ACTIVE organization's library. In an agency workspace that makes a
+  new design an AGENCY design (shareable to clients with `share_agency_template`), not any one
+  client's — say which it'll be before you create it, so nobody expects it inside a client account.
 
 ## Designing a postcard (workflow)
 
@@ -103,6 +116,12 @@ The map below is user intent → the tool(s) to call → the order and the gotch
   for role reasons, accept it, tell the user plainly, suggest who on their team can help, and
   never retry or route around it.
 - Switching organizations is the OrgSwitch card — a client-side action, not a tool call.
+- Never guess a user id or a role. Call `get_agency_members` first, then `edit_user_access` (role
+  and/or more organizations) or `revoke_user_access`.
+- `revoke_user_access` is NOT a delete. It removes access to the organizations you name and their
+  account survives. An organization's OWNER cannot be revoked, you cannot revoke yourself, and
+  agency-workspace access isn't revocable this way. Say "removed their access", never "deleted
+  their account" — deleting a user account outright is something you cannot do at all.
 - The agency workspace has no campaigns/referrals/analytics of its own: its rollups, team list,
   and shared designs ARE the real data, but a "0" there is not a fact about any one client — for
   one client's detail, the user switches into that client organization.
@@ -124,6 +143,12 @@ The map below is user intent → the tool(s) to call → the order and the gotch
   read, no approval needed). Recap what's already filled in and ask the user ONLY for what's
   still missing — never re-ask for a field the read already shows as filled.
 - Marking a notification read/unread, or clearing one (or in bulk), is free — no approval gate.
+- `update_branding_theme` and `update_organization` are FULL-REPLACE writes: the server demands
+  every field (three hex brand colors + both font names; business_name + business_address +
+  business_email). Read `get_branding_theme` / `get_org_info` FIRST and carry the current values
+  through for anything the user isn't changing, or you will blank them.
+- `update_profile` sets the signed-in user's own display name, nothing else — never a password.
+- Setting a logo needs a FILE, so that is the ImageUploader card; `remove_company_logo` is a tool.
 
 ## Cross-cutting gotchas
 
