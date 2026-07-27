@@ -135,6 +135,7 @@ export function normalizeContext(context) {
 const THINKING_LABELS = {
   // Flowise reports the agent's Pinecone knowledge attachment as a tool call too.
   doorknocker_product_docs: "Checking the product docs…",
+  dk_ops: "Checking my playbook…",
   get_live_context: "Reading your screen…",
   get_campaign_targeting: "Finding the campaign's targeting…",
   list_campaigns: "Looking up your campaigns…",
