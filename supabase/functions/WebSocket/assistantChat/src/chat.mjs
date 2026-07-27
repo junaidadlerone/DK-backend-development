@@ -718,6 +718,19 @@ export async function chatHandler(req, res) {
       chatId: sessionId,
       overrideConfig: {
         sessionId,
+        // Observability (Nami's pattern): Flowise-native analytics — LangSmith + Langfuse
+        // credentials live in Flowise, not here; we only attach runtime attributes so traces
+        // thread per conversation and attribute per user. Langfuse auto-maps chatId →
+        // sessionId for session grouping, but userId is not automatic — pass it explicitly.
+        // LangSmith groups traces into threads via the session_id metadata key (propagated
+        // to child runs by RunTree, so the whole turn carries it).
+        analytics: {
+          langFuse: { userId: auth.userId, sessionId },
+          langSmith: {
+            metadata: { session_id: sessionId, user_id: auth.userId, mode: approvalMode, page: ctx?.page ?? "" },
+            tags: [`mode:${approvalMode}`, ctx?.organization?.id ? `org:${ctx.organization.id}` : "org:none"],
+          },
+        },
         // vars.userJwt feeds the Flowise customMCP header (Authorization: Bearer
         // {{$vars.userJwt}}); page/ids are available to the system prompt too.
         vars: {
@@ -751,74 +764,80 @@ export async function chatHandler(req, res) {
     // Detector: after a sentence boundary, if the incoming stream starts re-emitting the reply
     // from its FIRST character, hold those chars; a complete restatement is dropped, any
     // divergence flushes the held text untouched (fail-open — never lose real words).
-    let dupMatch = 0;      // chars of the reply-snapshot matched so far (0 = not matching)
-    let dupHeld = "";      // held-back candidate duplicate text
-    let dupRef = "";       // the reply snapshot being matched against
-    let paraStart = 0;     // index in assistantReply where the current paragraph begins
-    let pendingParaBreak = false; // saw a newline; next non-newline char starts a paragraph
-    const SENT_END = new Set([".", "!", "?", "…"]);
-    const atSentenceEnd = () => {
-      const tail = assistantReply.slice(-6).trimEnd();
-      const last = tail[tail.length - 1];
-      if (SENT_END.has(last)) return true;
-      return ["\"", "'", ")", "]"].includes(last) && SENT_END.has(tail[tail.length - 2]);
+    // ── Restatement dedupe (generalized) ─────────────────────────────────────
+    // The model intermittently re-emits a verbatim copy of text it already wrote — sometimes
+    // the whole reply ("X.X"), sometimes just the last sentence or clause group, and the copy
+    // can start mid-word-boundary with no separator ("…Creating the" + full restart,
+    // "…nowDeleting …", "…permanentlyIt's …"). Every observed restatement is a verbatim copy
+    // of a SUFFIX of the reply beginning at some sentence start. So: track recent sentence
+    // starts as anchors; when an incoming char matches an anchor's first char, hold the stream
+    // and advance ALL matching anchors in parallel; if any anchor's suffix is fully re-matched,
+    // the held text was a restatement — drop it. Any divergence flushes the held text intact
+    // (fail-open: real words are never lost, at worst briefly buffered).
+    const SENT_END = new Set([".", "!", "?", "…", "\n"]);
+    let sentenceStarts = [0];      // offsets in assistantReply where sentences begin (last 8)
+    let pendingSentenceStart = false;
+    let dupCands = null;           // active candidate refs (suffix snapshots) or null
+    let dupPos = 0;                // chars matched so far across candidates
+    let dupHeld = "";              // held-back candidate duplicate text
+    const trackChar = (ch) => {
+      if (SENT_END.has(ch)) { pendingSentenceStart = true; }
+      else if (pendingSentenceStart && !/\s/.test(ch) && ch !== "\"" && ch !== "'" && ch !== "*") {
+        sentenceStarts.push(assistantReply.length);
+        if (sentenceStarts.length > 8) sentenceStarts = sentenceStarts.slice(-8);
+        pendingSentenceStart = false;
+      }
+      assistantReply += ch;
     };
-    // Single choke point: every cleaned chunk streams through here. Emitted chars append to
-    // assistantReply immediately, so the restatement reference is always the current reply.
-    // Restatements anchor at TWO places: the reply's beginning (the "X.X" doubles) and the
-    // current paragraph's beginning (address-list creates re-rendered just their last paragraph).
     const pushText = (out) => {
       let emit = "";
       for (const ch of out) {
-        if (dupMatch > 0) {
-          if (ch === dupRef[dupMatch]) {
+        if (dupCands) {
+          const survivors = dupCands.filter((ref) => ref[dupPos] === ch);
+          if (survivors.length) {
+            dupCands = survivors;
             dupHeld += ch;
-            dupMatch += 1;
-            if (dupMatch >= dupRef.length) {
+            dupPos += 1;
+            if (survivors.some((ref) => ref.length === dupPos)) {
               console.warn("[/chat] dropped a verbatim restatement:", JSON.stringify(dupHeld.slice(0, 80)));
-              dupMatch = 0; dupHeld = ""; dupRef = "";
+              dupCands = null; dupPos = 0; dupHeld = "";
             }
             continue;
           }
-          // Divergence — not a verbatim restatement; everything held was real text.
-          assistantReply += dupHeld + ch;
-          emit += dupHeld + ch;
-          dupMatch = 0; dupHeld = ""; dupRef = "";
+          // Divergence — real text; release the hold (and keep sentence tracking honest).
+          for (const h of dupHeld) trackChar(h);
+          emit += dupHeld;
+          dupCands = null; dupPos = 0; dupHeld = "";
+          // fall through: process ch normally (it may itself start a new candidate)
+        }
+        const cands = [];
+        if (assistantReply.length >= 16) {
+          for (const a of sentenceStarts) {
+            if (assistantReply[a] !== ch) continue;
+            const ref = assistantReply.slice(a).replace(/\s+$/, "");
+            if (ref.length >= 16) cands.push(ref);
+          }
+        }
+        if (cands.length) {
+          dupCands = cands;
+          dupPos = 1;
+          dupHeld = ch;
           continue;
         }
-        if (assistantReply.length >= 16 && atSentenceEnd()) {
-          // A sentence just ended — this char could be the reply (or its current paragraph)
-          // starting over verbatim. Hold and compare against that snapshot (whitespace-trimmed,
-          // so a trailing newline never breaks the final match). Whole-reply anchor wins when
-          // both match this first char.
-          const wholeRef = assistantReply.replace(/\s+$/, "");
-          const paraRef = assistantReply.slice(paraStart).replace(/\s+$/, "");
-          if (wholeRef.length >= 16 && ch === wholeRef[0]) {
-            dupRef = wholeRef;
-            dupMatch = 1; dupHeld = ch;
-            continue;
-          }
-          if (paraRef.length >= 16 && ch === paraRef[0]) {
-            dupRef = paraRef;
-            dupMatch = 1; dupHeld = ch;
-            continue;
-          }
-        }
-        // Paragraph tracking: a new paragraph starts at the first non-newline char after a
-        // newline (deferred, so blank lines don't leave paraStart pointing at emptiness).
-        if (ch === "\n") pendingParaBreak = true;
-        else if (pendingParaBreak) { paraStart = assistantReply.length; pendingParaBreak = false; }
-        assistantReply += ch;
+        trackChar(ch);
         emit += ch;
       }
       if (emit) send({ delta: emit });
     };
-    // Turn over while still matching: a full match already dropped itself; a partial hold is
-    // real text that happened to shadow the reply's opening — release it.
+    // Turn over while still matching: a completed match already dropped itself; a partial hold
+    // is real text that happened to shadow an earlier sentence — release it.
     const dedupeFlush = () => {
-      const held = dupMatch > 0 ? dupHeld : "";
-      dupMatch = 0; dupHeld = ""; dupRef = "";
-      if (held) { assistantReply += held; send({ delta: held }); }
+      const held = dupHeld;
+      dupCands = null; dupPos = 0; dupHeld = "";
+      if (held) {
+        for (const h of held) trackChar(h);
+        send({ delta: held });
+      }
     };
     const earliestMarker = (s) => LEAK_MARKERS.map((m) => s.indexOf(m)).filter((i) => i !== -1).sort((a, b) => a - b)[0];
     const emitDelta = (chunk) => {
@@ -826,6 +845,7 @@ export async function chatHandler(req, res) {
       pendingText += chunk;
       const hit = earliestMarker(pendingText);
       if (hit !== undefined) {
+        if (pendingText.slice(hit).startsWith("Attempting to use tool")) sawToolLeak = true;
         const before = clean(pendingText.slice(0, hit).replace(/\s+$/, ""));
         if (before) pushText(before);
         pendingText = ""; suppressRest = true; return;
@@ -850,6 +870,7 @@ export async function chatHandler(req, res) {
       if (suppressRest || !pendingText) { pendingText = ""; }
       else {
         const hit = earliestMarker(pendingText);
+        if (hit !== undefined && pendingText.slice(hit).startsWith("Attempting to use tool")) sawToolLeak = true;
         const out = clean(hit !== undefined ? pendingText.slice(0, hit).replace(/\s+$/, "") : pendingText);
         if (out) pushText(out);
         pendingText = "";
@@ -863,6 +884,12 @@ export async function chatHandler(req, res) {
       return "Something went wrong on my end. Please try that again in a moment.";
     };
     let turnError = null;
+    // Toolless-turn signature: Flowise intermittently runs the LLM with NO tools bound (MCP
+    // tool-load failure / provider fallback) — the model then writes its tool calls as TEXT
+    // ("Attempting to use tool: ```json…"). sawToolLeak marks that text; sawToolActivity marks
+    // any REAL tool call/return. Leak with zero activity = the announced action never ran.
+    let sawToolLeak = false;
+    let sawToolActivity = false;
     // HITL: the tool Flowise is about to run (captured from calledTools) and whether this turn
     // ended by pausing for approval (drives the done frame's awaiting_approval + composer lock).
     let pendingAction = null;
@@ -921,6 +948,20 @@ export async function chatHandler(req, res) {
         if (n > 0) sawUi = true;
       }
     };
+    // A tool RETURNED (via either carrier — the once-per-turn usedTools event or a node's
+    // agentFlowExecutedData output) → accumulate the data-change refresh signal. Returns the
+    // stringified output for further scanning.
+    const noteToolReturn = (t) => {
+      const out = typeof t?.toolOutput === "string" ? t.toolOutput : JSON.stringify(t?.toolOutput ?? "");
+      if (!isReject && TOOL_RESOURCES[t?.tool] && toolSucceeded(out)) {
+        for (const r of TOOL_RESOURCES[t.tool]) refreshResources.add(r);
+        const args = t?.toolInput ?? {};
+        for (const k of ["id", "campaign_id", "referral_id", "bundle_id", "organization_id"]) {
+          if (typeof args[k] === "string" && args[k]) refreshIds[k] = args[k];
+        }
+      }
+      return out;
+    };
     const handleEvent = async (ev, data) => {
       switch (ev) {
         // On a reject resume the model tends to emit unreliable filler; suppress it and let the
@@ -932,6 +973,7 @@ export async function chatHandler(req, res) {
         case "calledTools":
           if (isReject) break;
           for (const t of (Array.isArray(data) ? data : [])) {
+            if (t?.tool) sawToolActivity = true;
             if (t?.tool && !t?.toolOutput) {
               const label = thinkingLabel(t.tool);
               send({ type: "thinking", delta: label });
@@ -963,29 +1005,30 @@ export async function chatHandler(req, res) {
         // frame from the MCP jobs side channel onto this stream.
         case "usedTools":
           for (const t of (Array.isArray(data) ? data : [])) {
+            if (t?.tool) sawToolActivity = true;
             // This tool RETURNED — it can no longer be the one Flowise is about to pause on.
             // Without this, a stale pendingAction (e.g. a read) could be the tool the
             // auto-approve policy judges when the NEXT pause arrives (B3).
             if (t?.tool && t?.toolOutput && pendingAction?.tool === t.tool) pendingAction = null;
-            const out = typeof t?.toolOutput === "string" ? t.toolOutput : JSON.stringify(t?.toolOutput ?? "");
-            // Successful write → remember which app data went stale (one refresh frame at turn end).
-            if (!isReject && TOOL_RESOURCES[t?.tool] && toolSucceeded(out)) {
-              for (const r of TOOL_RESOURCES[t.tool]) refreshResources.add(r);
-              const args = t?.toolInput ?? {};
-              for (const k of ["id", "campaign_id", "referral_id", "bundle_id", "organization_id"]) {
-                if (typeof args[k] === "string" && args[k]) refreshIds[k] = args[k];
-              }
-            }
-            await drainUiJobs(out);
+            await drainUiJobs(noteToolReturn(t));
           }
           break;
         // Per-node execution snapshots — the only reliable carrier of LATER iterations' tool
-        // outputs on current Flowise (see drainUiJobs). Only each node's OUTPUT is scanned:
-        // inputs can embed chat history, and an ui_job_id from an old turn must not re-drain.
+        // outputs on current Flowise (see drainUiJobs): the usedTools event above now fires only
+        // ONCE per turn, so writes (and emit_ui calls) from later iterations surface only here.
+        // Only each node's OUTPUT is scanned: inputs can embed chat history, and an ui_job_id
+        // from an old turn must not re-drain. Refresh accumulation is idempotent (Set/keyed map),
+        // so double-counting a tool seen on both carriers is harmless.
         case "agentFlowExecutedData":
           for (const nodeExec of (Array.isArray(data) ? data : [])) {
-            const outStr = JSON.stringify(nodeExec?.data?.output ?? "");
-            if (nodeExec?.data?.output) await drainUiJobs(JSON.stringify(nodeExec.data.output));
+            const output = nodeExec?.data?.output;
+            if (!output) continue;
+            const laterToolReturns = Array.isArray(output.usedTools) ? output.usedTools : [];
+            for (const t of laterToolReturns) {
+              if (t?.tool) sawToolActivity = true;
+              noteToolReturn(t);
+            }
+            await drainUiJobs(JSON.stringify(output));
           }
           break;
         // agentFlowEvent / nextAgentFlow / metadata / usageMetadata / end → internal;
@@ -1064,6 +1107,24 @@ export async function chatHandler(req, res) {
       pendingText = "";
       suppressRest = false;
       await runAttempt();
+    }
+
+    // Toolless-turn recovery: the model wrote its tool calls as TEXT ("Attempting to use
+    // tool: …") and no tool actually ran — Flowise gave the LLM no tools this request (MCP
+    // tool-load failure flaps per request). The leak filter hides that text, which otherwise
+    // leaves an announce-then-silence turn the user has to nudge. Re-run the turn once — a
+    // fresh request usually binds tools; verbatim re-announcements are eaten by the dedupe.
+    // If the retry leaks toollessly again, surface a friendly error + Retry instead of silence.
+    if (sawToolLeak && !sawToolActivity && !sawPermission && !sawUi
+        && !turnError && !isResume && !upstreamAbort.signal.aborted) {
+      console.warn("[/chat] toolless tool-call-as-text turn — retrying once");
+      sawToolLeak = false;
+      pendingText = "";
+      suppressRest = false;
+      await runAttempt();
+      if (sawToolLeak && !sawToolActivity && !turnError) {
+        turnError = "toolless tool-call-as-text turn persisted after retry";
+      }
     }
 
     // AUTO mode (3C-6): silently resume each auto-approved pause on the SAME session — the
