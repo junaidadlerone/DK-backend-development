@@ -224,10 +224,14 @@ const HITL_REJECT = "__dk_hitl_reject__";
 // once and cached, so there is no drift-prone name list to maintain. "auto" now requires the
 // EXPLICIT write signature (readOnlyHint === false AND destructiveHint === false): read tools
 // (readOnlyHint true) and anything without explicit annotations map to "confirm", so a
-// misattributed pending tool (see pendingAction) can never silently resume a write it wasn't.
+// misattributed pending tool (see the `outstanding` map) can never silently resume a write it
+// wasn't.
 // On top of the annotations, ALWAYS_CONFIRM lists tools whose side effects leave the account
 // (payments; outbound invitation emails; privilege grants) — those card even in auto mode.
 // Any uncertainty (fetch failure, unknown tool) FAILS CLOSED to the manual card.
+// BELT (owner rule, not annotation-derived): ANY delete_* tool cards in BOTH modes, whatever the
+// MCP's annotations say. Deletion is the one class of action a wrong auto-approve cannot undo, so
+// it does not get to depend on a remote annotation staying correct.
 const ALWAYS_CONFIRM = new Set(["set_default_payment_method", "invite_user", "edit_user_access"]);
 const MAX_AUTO_RESUMES = 5; // per turn — runaway-loop backstop
 let toolSafetyCache = null; // Map<tool, "auto"|"confirm">
@@ -258,6 +262,7 @@ async function refreshToolSafety() {
 }
 async function isAutoApprovable(tool) {
   if (!tool || ALWAYS_CONFIRM.has(tool)) return false;
+  if (/^delete_/.test(tool)) return false; // deletes always card, in BOTH modes (belt, see above)
   const stale = Date.now() - toolSafetyFetchedAt > TOOL_SAFETY_TTL_MS;
   if ((!toolSafetyCache || stale) && ASSISTANT_MCP_URL) {
     toolSafetyInFlight ??= refreshToolSafety().finally(() => { toolSafetyInFlight = null; });
@@ -327,69 +332,108 @@ const UI_SURFACE_NOTE = "Here's what I found:";
 // reload showed a question with no response. The persisted perm_ surface (WS2) carries the
 // card itself; this line keeps the text history coherent next to it.
 const APPROVAL_NOTE = "Waiting for your approval on that action.";
-const PERM_TITLES = {
-  create_referral: "Create a new referral",
-  update_referral: "Update this referral",
-  delete_referral: "Delete this referral",
-  delete_referral_image: "Delete this image",
-  mark_notification: "Update a notification",
-  clear_notification: "Clear a notification",
-  clear_notifications: "Clear notifications",
-  update_organization: "Update your organization details",
-  update_profile: "Update your profile",
-  set_default_payment_method: "Set your default payment method",
-  create_campaign: "Create this campaign",
-  update_campaign: "Update this campaign",
-  delete_campaign: "Delete this campaign",
-  duplicate_template_bundle: "Duplicate this design",
-  update_template_settings: "Update this design's settings",
-  create_address_list_campaign: "Create this campaign",
-  remove_invalid_addresses: "Exclude all invalid addresses",
-  remove_duplicate_addresses: "Exclude all duplicate addresses",
-  delete_addresses: "Remove these addresses",
-  set_verification_skip: "Change the address-verification preference",
-  update_branding_theme: "Update your branding theme",
-  remove_company_logo: "Remove your company logo",
-  invite_user: "Send this team invitation",
-  edit_user_access: "Change this member's access",
-  revoke_user_access: "Remove this member's access",
-  update_agency_settings: "Update your agency settings",
-  share_agency_template: "Share this design with clients",
-  unshare_agency_template: "Stop sharing this design",
-  delete_template_bundle: "Delete this design",
-  create_client_organization: "Create the new organization",
-  complete_org_onboarding: "Finish this organization's setup",
-  switch_to_agency_account: "Convert your account to an agency",
+// Approval-card copy. The title is ONE line in the owner's voice, composed WITH the target
+// ("Creating campaign Spring Mailer") instead of a generic sentence plus a separate quoted
+// "Target:" line — the two-line version read like a form field and buried the thing being acted
+// on. `t` = gerund phrase that takes a target; `b` = the target-less fallback. Entries with only
+// `b` describe actions whose scope is implicit (all notifications, the selected addresses) and
+// must NEVER compose a target, since the args' name-ish fields would misdescribe them.
+const PERM_ACTIONS = {
+  create_referral: { t: "Creating a referral for", b: "Creating a new referral" },
+  update_referral: { t: "Updating referral", b: "Updating this referral" },
+  delete_referral: { t: "Deleting referral", b: "Deleting this referral" },
+  delete_referral_image: { t: "Deleting image", b: "Deleting this image" },
+  mark_notification: { t: "Updating notification", b: "Updating a notification" },
+  clear_notification: { t: "Clearing notification", b: "Clearing a notification" },
+  clear_notifications: { b: "Clearing all notifications" },
+  update_organization: { t: "Updating organization", b: "Updating your organization details" },
+  update_profile: { t: "Updating your profile name to", b: "Updating your profile" },
+  set_default_payment_method: { b: "Setting your default payment method" },
+  create_campaign: { t: "Creating campaign", b: "Creating a new campaign" },
+  create_address_list_campaign: { t: "Creating campaign", b: "Creating a new campaign" },
+  update_campaign: { t: "Updating campaign", b: "Updating this campaign" },
+  delete_campaign: { t: "Deleting campaign", b: "Deleting this campaign" },
+  remove_invalid_addresses: { b: "Excluding every invalid address" },
+  remove_duplicate_addresses: { b: "Excluding every duplicate address" },
+  delete_addresses: { b: "Removing the selected addresses" },
+  set_verification_skip: { b: "Changing the address-verification preference" },
+  duplicate_template_bundle: { t: "Duplicating design as", b: "Duplicating this design" },
+  update_template_settings: { t: "Updating design", b: "Updating this design's settings" },
+  delete_template_bundle: { t: "Deleting design", b: "Deleting this design" },
+  share_agency_template: { t: "Sharing design", b: "Sharing this design with clients" },
+  unshare_agency_template: { t: "Stopping the sharing of", b: "Stopping sharing this design" },
+  update_branding_theme: { b: "Updating your branding theme" },
+  remove_company_logo: { b: "Removing your company logo" },
+  invite_user: { t: "Inviting", b: "Sending this team invitation" },
+  edit_user_access: { t: "Changing access for", b: "Changing this member's access" },
+  revoke_user_access: { t: "Removing access for", b: "Removing this member's access" },
+  update_agency_settings: { b: "Updating your agency settings" },
+  create_client_organization: { t: "Creating organization", b: "Creating the new organization" },
+  complete_org_onboarding: { t: "Finishing setup for", b: "Finishing this organization's setup" },
+  switch_to_agency_account: { b: "Converting your account to an agency" },
 };
-const permissionTitle = (tool) => PERM_TITLES[tool] ?? `Run: ${String(tool ?? "this action").replace(/_/g, " ")}`;
 // The human-readable TARGET of a pending action, pulled from the tool args the model sent.
-// Shown on the approval card so the user approves a NAMED thing — a wrong-target delete once
+// Composed into the approval title so the user approves a NAMED thing — a wrong-target delete once
 // slipped through because the card showed only "Delete this campaign" with no name. Ids are
 // never shown; only name-like fields qualify.
 const TARGET_ARG_KEYS = ["name", "campaign_name", "referrer_name", "new_name", "agency_name", "business_name", "email", "description"];
-const actionTarget = (args) => {
+// A `description` is prose, not a name — fine inside a thinking label, but it turns the card title
+// into a paragraph, so titles compose from the name-ish keys only.
+const TITLE_ARG_KEYS = TARGET_ARG_KEYS.filter((k) => k !== "description");
+// Unmapped/new tool: a generic line. NEVER interpolate the raw tool name onto a user-facing card.
+const PERM_FALLBACK_TITLE = "Confirming this action";
+const actionTarget = (args, keys = TARGET_ARG_KEYS) => {
   if (!args || typeof args !== "object") return null;
-  for (const k of TARGET_ARG_KEYS) {
+  for (const k of keys) {
     const v = args[k] ?? args?.home_owner_info?.[k];
     if (typeof v === "string" && v.trim()) return v.trim().slice(0, 80);
   }
   return null;
 };
+// A truncated target keeps an ellipsis, so a clipped name never reads as the whole name on a card
+// the user is about to approve.
+const TITLE_TARGET_MAX = 60;
+const capTarget = (raw) => {
+  const t = String(raw).replace(/\s+/g, " ").trim();
+  return t.length > TITLE_TARGET_MAX ? `${t.slice(0, TITLE_TARGET_MAX).trimEnd()}…` : t;
+};
+const permissionTitle = (tool, args) => {
+  const entry = PERM_ACTIONS[tool];
+  if (!entry) return PERM_FALLBACK_TITLE;
+  const raw = entry.t ? actionTarget(args, TITLE_ARG_KEYS) : null;
+  const target = raw ? (capTarget(raw) || null) : null;
+  return target ? `${entry.t} ${target}` : (entry.b ?? PERM_FALLBACK_TITLE);
+};
+// An auto-approved step is the ONLY notice the user gets that a write ran without a card, so it
+// names what was touched ("Creating the campaign — Spring Mailer…") instead of the bare label.
+// The target is raw MODEL-supplied args, so it goes through clean() like any other user-visible
+// string — an id-shaped value would otherwise reach the transcript un-redacted. Same b-only rule
+// as the approval titles: a tool whose copy takes no target never composes one here either.
+const labelWithTarget = (tool, args) => {
+  const base = thinkingLabel(tool).replace(/…$/, "");
+  const entry = PERM_ACTIONS[tool];
+  const raw = entry && !entry.t ? null : actionTarget(args);
+  const target = (clean(raw ?? "") || "").trim() || null;
+  return target ? `${base} — ${target}…` : `${base}…`;
+};
 // Plain Approve/Reject card for non-charging writes (charging actions get a cost+checkbox
 // variant in Phase 3B). Rendered through the same GenUI catalog the read tools use, so the
 // frontend's existing perm_-surface handling (retract on click, exclude from history) applies.
-const buildApprovalCard = (actionId, sessionId, tool, args) => {
-  const target = actionTarget(args);
+const buildApprovalCard = (actionId, sessionId, tool, args, otherTitles = []) => {
+  // More than one write was still pending when Flowise paused — name the others so approving
+  // this card is never a blind yes to something the user can't see.
+  const others = (otherTitles ?? []).filter((s) => typeof s === "string" && s.trim());
+  const alsoLine = others.length ? `Also pending: ${others.join("; ")}.` : null;
   return cleanUiFrame({
     type: "ui",
     surface_id: `perm_${actionId ?? sessionId}`,
     mode: "replace",
     root: "perm-card",
     components: [
-      { id: "perm-card", component: { Card: { title: "Approval needed", children: ["perm-title", ...(target ? ["perm-target"] : []), "perm-cap", "perm-row"] } } },
-      { id: "perm-title", component: { Text: { text: permissionTitle(tool), variant: "subtitle" } } },
-      ...(target ? [{ id: "perm-target", component: { Text: { text: `Target: “${target}”`, variant: "body" } } }] : []),
+      { id: "perm-card", component: { Card: { title: "Approval needed", children: ["perm-title", "perm-cap", ...(alsoLine ? ["perm-others"] : []), "perm-row"] } } },
+      { id: "perm-title", component: { Text: { text: permissionTitle(tool, args), variant: "subtitle" } } },
       { id: "perm-cap", component: { Text: { text: "Approve to run it, or reject to cancel.", variant: "caption" } } },
+      ...(alsoLine ? [{ id: "perm-others", component: { Text: { text: alsoLine, variant: "caption" } } }] : []),
       { id: "perm-row", component: { Row: { children: ["perm-approve", "perm-reject"], gap: "sm" } } },
       { id: "perm-approve", component: { Button: { label: "Approve", tone: "primary", action: { type: "send", display: "Approved", prompt: HITL_PROCEED } } } },
       { id: "perm-reject", component: { Button: { label: "Reject", tone: "ghost", action: { type: "send", display: "Rejected", prompt: HITL_REJECT } } } },
@@ -397,6 +441,75 @@ const buildApprovalCard = (actionId, sessionId, tool, args) => {
     data_model: {},
   });
 };
+
+// ── continuation re-POSTs (retry D-after-write, retry E) ──────────────────────
+// Two situations need the model to CONTINUE rather than answer the original question again:
+// a stream that died mid-sentence AFTER a write already ran (re-asking would redo the write), and
+// a reply that announced an action and stopped without running it. Both re-POST with the original
+// question swapped for an instruction; neither ever repeats a completed action.
+const CONTINUE_CUTOFF_PROMPT = "Continue your previous reply from where it was cut off. Do not repeat anything you already wrote, and do not repeat any action you already completed.";
+const CONTINUE_NUDGE_PROMPT = "Continue: carry out the action you just said you would, using your tools, in this reply. Do not repeat what you already wrote. If it turns out you cannot do it, say plainly what you need instead.";
+// The worst failure mode QA still saw with tools bound and no leak marker: the model writes
+// "I'll create that campaign now." and STOPS, leaving the user holding a promise nothing ran.
+// This predicate reads the FLUSHED reply and decides whether the turn ended on an UNFULFILLED
+// first-person commitment. Deliberately narrow — a question, a hand-back, a request for missing
+// information, or anything made conditional on the user VETOES it, because nudging over a genuine
+// hand-back would talk past the user. Only the last TWO sentences are considered (the commitment
+// is often followed by one trailing caveat), and the commitment must be first-person and imminent:
+// "we'll"/"you'll" and past tense ("I've created") are not commitments to act now.
+const NUDGE_COMMIT_RE = /\b(?:I['’]?ll|I will|I['’]?m going to|I am going to|Let me|One moment|Give me a (?:sec|second|moment)|Hang tight)\b/i;
+// An action verb must follow the commitment ("I'll create…"), not merely appear somewhere. The
+// leading \b is load-bearing: unanchored, "budget" supplied "get" and "unchanged" supplied "chang",
+// so "I'll leave the budget as it is." read as a promise to act. Stems still match every
+// inflection ("creat" → creating/created) because the boundary is only at the START.
+const NUDGE_VERB_RE = /\b(?:creat|set up|updat|edit|chang|renam|delet|remov|exclud|launch|send|add|duplicat|shar|invit|upload|generat|build|sav|submit|verif|schedul|mark|clear|switch|convert|pull up|look up|fetch|retriev|list|show|open|find|search|check|get)/i;
+// Named so a veto can be logged and tuned (see the near-miss warning in the handler).
+// /\bwait/i covers "wait" and "waiting"; the apostrophe classes cover the curly variant.
+const NUDGE_VETOES = [
+  ["question", /\?/],
+  ["let me know", /let me know/i],
+  ["know if", /know if/i],
+  ["wait", /\bwait/i],
+  ["hold off", /hold off/i],
+  ["stand by", /stand by/i],
+  ["check with", /check with/i],
+  ["check back", /check back/i],
+  ["if you …", /if you (?:want|need|['’]d like|would like)/i],
+  ["once you", /once you/i],
+  ["when you", /when you/i],
+  ["after you", /after you/i],
+  ["as soon as", /as soon as/i],
+  ["unless", /unless/i],
+  ["i need", /\bi need/i],
+  ["i'll need", /\bi['’]?ll need/i],
+  ["need <object>", /need (?:you|your|the|a|an|more)/i],
+  ["would you like", /would you like/i],
+  ["do you want", /do you want/i],
+  ["which one/of", /which (?:one|of)/i],
+  ["feel free", /feel free/i],
+  ["i'll be here", /\bi['’]?ll be here/i],
+  ["leave it/that", /leave (?:it|that)/i],
+  ["keep it/that", /keep (?:it|that)/i],
+  ["explain", /explain/i],
+  ["walk you through", /walk you through/i],
+  ["no changes", /no changes/i],
+];
+// → { trigger, veto, tail }. `veto` is set ONLY when a commitment + action verb DID match but a
+// veto phrase overrode it — i.e. exactly the near-miss worth logging for tuning.
+export function announceNudgeCheck(reply) {
+  const text = String(reply ?? "").trim();
+  // An unfinished sentence is the cut-off retry's business, not this one; a trailing question is
+  // the model waiting on the user by definition.
+  if (!text || !/[.!…]$/.test(text)) return { trigger: false, veto: null, tail: "" };
+  const tail = text.split(/(?<=[.!?…])\s+/).slice(-2).join(" ");
+  const commit = tail.match(NUDGE_COMMIT_RE);
+  if (!commit) return { trigger: false, veto: null, tail };
+  if (!NUDGE_VERB_RE.test(tail.slice(commit.index))) return { trigger: false, veto: null, tail };
+  for (const [name, re] of NUDGE_VETOES) {
+    if (re.test(tail)) return { trigger: false, veto: name, tail };
+  }
+  return { trigger: true, veto: null, tail };
+}
 
 // ── leak filters + redaction (Tier 2) ─────────────────────────────────────────
 // Flowise synthesizes "Attempting to use tool…" text around tool pauses, and
@@ -641,24 +754,30 @@ export async function chatHandler(req, res) {
   // WS2: a GenUI card click carries its surface_id (+ optional {button_id, action, display}) —
   // mark that surface RESOLVED before streaming, so a reload from here on shows the card locked
   // with what the user chose instead of a fresh actionable card. HITL sentinels infer
-  // approve/reject when the frontend didn't spell it out. Fire-and-forget (session-scoped, so a
-  // caller can only resolve their own surfaces — ownership was just checked above).
+  // approve/reject when the frontend didn't spell it out. Session-scoped, so a caller can only
+  // resolve their own surfaces — ownership was just checked above.
+  // Started EAGERLY here (it should overlap the turn, not delay it) but the promise is KEPT and
+  // awaited before the done frame: fire-and-forget lost the write on short reject turns, where
+  // Cloud Run froze/reclaimed the instance right after res.end() and the reloaded card came back
+  // un-resolved ("Rejected" disappeared).
   const clickedSurfaceId = typeof req.body?.surface_id === "string" && req.body.surface_id ? req.body.surface_id : null;
-  if (clickedSurfaceId && !isNewSession) {
-    const given = (req.body?.interaction && typeof req.body.interaction === "object") ? req.body.interaction : {};
-    const interaction = {
-      resolved: true,
-      ...(typeof given.button_id === "string" ? { button_id: given.button_id.slice(0, 80) } : {}),
-      action: typeof given.action === "string" ? given.action.slice(0, 40) : (isResume ? (isReject ? "reject" : "approve") : "send"),
-      ...(typeof given.display === "string" ? { display: given.display.slice(0, 200) }
-        : isResume ? { display: isReject ? "Rejected" : "Approved" } : {}),
-      resolved_at: new Date().toISOString(),
-    };
-    adminSupabase.from("chat_surfaces")
-      .update({ interaction, updated_at: new Date().toISOString() })
-      .eq("session_id", sessionId).eq("surface_id", clickedSurfaceId)
-      .then(({ error }) => { if (error) console.error("[/chat] surface interaction update failed:", error.message); });
-  }
+  const surfaceUpdatePromise = clickedSurfaceId && !isNewSession
+    ? (async () => {
+      const given = (req.body?.interaction && typeof req.body.interaction === "object") ? req.body.interaction : {};
+      const interaction = {
+        resolved: true,
+        ...(typeof given.button_id === "string" ? { button_id: given.button_id.slice(0, 80) } : {}),
+        action: typeof given.action === "string" ? given.action.slice(0, 40) : (isResume ? (isReject ? "reject" : "approve") : "send"),
+        ...(typeof given.display === "string" ? { display: given.display.slice(0, 200) }
+          : isResume ? { display: isReject ? "Rejected" : "Approved" } : {}),
+        resolved_at: new Date().toISOString(),
+      };
+      const { error } = await adminSupabase.from("chat_surfaces")
+        .update({ interaction, updated_at: new Date().toISOString() })
+        .eq("session_id", sessionId).eq("surface_id", clickedSurfaceId);
+      if (error) console.error("[/chat] surface interaction update failed:", error.message);
+    })().catch((e) => console.error("[/chat] surface interaction update threw:", e?.message ?? e))
+    : null;
 
   // SSE response — same headers/framing as namiGateway
   res.writeHead(200, {
@@ -759,6 +878,12 @@ export async function chatHandler(req, res) {
     let pendingText = "";
     let assistantReply = "";
     let suppressRest = false;
+    // Lazy paragraph seam: a continuation attempt (cut-off retry, announce nudge) wants a blank
+    // line between what already streamed and what the new attempt writes — but only if the new
+    // attempt actually writes something. Emitting "\n\n" up front left a dangling empty paragraph
+    // whenever the retry produced nothing, so the seam is armed here and consumed by the FIRST
+    // character the next attempt emits (through assistantReply too, so the persisted text matches).
+    let pendingSeam = false;
     // ── Restatement dedupe (bug-bash 2026-07-24) ─────────────────────────────
     // The model intermittently RESTATES its reply from the beginning mid-turn (QA saw
     // "I'll create that referral now.I'll create that referral now." before an approval card).
@@ -790,9 +915,24 @@ export async function chatHandler(req, res) {
       }
       assistantReply += ch;
     };
+    // Consume an armed seam at the moment real text is about to be emitted (see pendingSeam).
+    // Only ever called with a NON-whitespace next character: a continuation attempt that opens
+    // with "\n" or " " would otherwise strand the seam as three blank lines. Also refuses when
+    // there is nothing to separate from, so an armed seam can't start a reply with a blank line.
+    const takeSeam = () => {
+      if (!pendingSeam) return "";
+      pendingSeam = false;
+      if (!assistantReply.trim()) return "";
+      trackChar("\n");
+      trackChar("\n");
+      return "\n\n";
+    };
     const pushText = (out) => {
       let emit = "";
       for (const ch of out) {
+        // Seam armed and not mid-hold: swallow the continuation's leading whitespace so the blank
+        // line lands directly against its first real character.
+        if (pendingSeam && !dupCands && /\s/.test(ch)) continue;
         if (dupCands) {
           const survivors = dupCands.filter((ref) => ref[dupPos] === ch);
           if (survivors.length) {
@@ -806,6 +946,7 @@ export async function chatHandler(req, res) {
             continue;
           }
           // Divergence — real text; release the hold (and keep sentence tracking honest).
+          emit += takeSeam();
           for (const h of dupHeld) trackChar(h);
           emit += dupHeld;
           dupCands = null; dupPos = 0; dupHeld = "";
@@ -825,6 +966,7 @@ export async function chatHandler(req, res) {
           dupHeld = ch;
           continue;
         }
+        emit += takeSeam();
         trackChar(ch);
         emit += ch;
       }
@@ -835,9 +977,13 @@ export async function chatHandler(req, res) {
     const dedupeFlush = () => {
       const held = dupHeld;
       dupCands = null; dupPos = 0; dupHeld = "";
-      if (held) {
-        for (const h of held) trackChar(h);
-        send({ delta: held });
+      // Same whitespace rule as pushText: with a seam armed, the release must not open on
+      // whitespace (and if the hold was ALL whitespace, the seam stays armed for real text).
+      const body = pendingSeam ? held.replace(/^\s+/, "") : held;
+      if (body) {
+        const seam = takeSeam();
+        for (const h of body) trackChar(h);
+        send({ delta: seam + body });
       }
     };
     const earliestMarker = (s) => LEAK_MARKERS.map((m) => s.indexOf(m)).filter((i) => i !== -1).sort((a, b) => a - b)[0];
@@ -891,10 +1037,26 @@ export async function chatHandler(req, res) {
     // any REAL tool call/return. Leak with zero activity = the announced action never ran.
     let sawToolLeak = false;
     let sawToolActivity = false;
-    // HITL: the tool Flowise is about to run (captured from calledTools) and whether this turn
-    // ended by pausing for approval (drives the done frame's awaiting_approval + composer lock).
-    let pendingAction = null;
+    // A write tool RAN and came back error/denied. The cut-off retry must not re-POST after that
+    // (the model would narrate a success that never happened, or retry the write).
+    let sawFailedWrite = false;
+    // Shared budget across ALL the recovery re-POSTs below (error retry, toolless-leak retry,
+    // cut-off retry, announce nudge). Each guard checked its own "once" flag before, so a
+    // pathological turn could stack four extra upstream calls; the budget caps the whole turn.
+    let extraAttempts = 0;
+    const MAX_EXTRA_ATTEMPTS = 2;
+    let g6Fired = false; // the announce nudge is once per turn, full stop
+    // HITL: every tool Flowise has CALLED but not yet returned (tool → {tool, args}), and whether
+    // this turn ended by pausing for approval (drives the done frame's awaiting_approval +
+    // composer lock). A single pendingAction slot used to be enough, but the agent can call two
+    // write tools in one iteration — the slot then held the LAST one, so a paused delete could be
+    // judged (and silently auto-approved) under a co-called safe write's identity. The map keeps
+    // EVERY outstanding candidate, and the `action` handler only auto-resumes when they ALL pass.
+    const outstanding = new Map();
     let sawPermission = false;
+    // Flowise's id for the most recent pause — the approval surface_id, so the orphaned-pause
+    // backstop can card the SAME pause the auto-approval claimed.
+    let lastActionId = null;
     // AUTO mode (3C-6): a pause on a non-destructive write sets this instead of carding; the
     // resume loop below re-POSTs with humanInput proceed. Capped per turn.
     let pendingAutoResume = false;
@@ -906,10 +1068,36 @@ export async function chatHandler(req, res) {
     const refreshResources = new Set();
     const refreshIds = {};
 
+    // ── attempt seam ──────────────────────────────────────────────────────────
+    // Every re-POST of this turn (error retry, toolless-leak retry, each auto-resume iteration,
+    // the cut-off retry, the announce nudge) goes through here, so the buffers are always left in
+    // the same state. The old ad-hoc `pendingText = ""` DISCARDED the keep-back tail (up to 21 real
+    // characters) at every seam — flushDeltas releases it instead (and releases any held dedupe
+    // text). flushDeltas still respects suppressRest, so a leak-tripped tail stays dropped; only
+    // the NEXT attempt gets a clean slate. sentenceStarts keeps exactly its LAST anchor: a full
+    // reset would blind the dedupe to the cross-pause restatement it exists to catch, and the
+    // anchor is an offset into the (ever-growing) assistantReply, which stays valid.
+    // discardBuffer: for the ERROR-RETRY only. That guard is `turnError && !assistantReply`, so
+    // nothing user-visible streamed and the buffer holds a sub-KEEP_BACK scrap of a failed attempt
+    // — too short for the dedupe to have armed (it needs 16 chars), so flushing it would splice a
+    // garbled fragment in front of the retry's answer. Every other seam flushes.
+    const beginAttempt = ({ discardBuffer = false } = {}) => {
+      if (!discardBuffer) flushDeltas();
+      sentenceStarts = sentenceStarts.slice(-1);
+      pendingSentenceStart = true;
+      outstanding.clear();
+      suppressRest = false;
+      pendingText = "";
+    };
+
     // WS2 capture: everything persistTurn stores alongside the text.
     // thinkingLabels — ordered progress labels (consecutive-duplicate collapsed, matching the
     // frontend's display dedupe). emittedSurfaces — every streamed {type:"ui"} frame INCLUDING
     // the perm_ approval card, size-capped so one pathological frame can't bloat the table.
+    // A resumed stream REPLAYS the earlier iterations' calledTools events, so the same step would
+    // be streamed again after every auto-resume (noteThinking only collapses CONSECUTIVE repeats).
+    // Turn-scoped: an exact label is streamed at most once per turn.
+    const streamedThinking = new Set();
     const thinkingLabels = [];
     const noteThinking = (label) => {
       if (label && label !== thinkingLabels[thinkingLabels.length - 1]) thinkingLabels.push(label);
@@ -954,6 +1142,7 @@ export async function chatHandler(req, res) {
     // stringified output for further scanning.
     const noteToolReturn = (t) => {
       const out = typeof t?.toolOutput === "string" ? t.toolOutput : JSON.stringify(t?.toolOutput ?? "");
+      if (!isReject && TOOL_RESOURCES[t?.tool] && !toolSucceeded(out)) sawFailedWrite = true;
       if (!isReject && TOOL_RESOURCES[t?.tool] && toolSucceeded(out)) {
         for (const r of TOOL_RESOURCES[t.tool]) refreshResources.add(r);
         const args = t?.toolInput ?? {};
@@ -963,23 +1152,44 @@ export async function chatHandler(req, res) {
       }
       return out;
     };
+    // Approval-card selection, shared by the `action` handler and the orphaned-pause backstop.
+    // Preference order: a candidate that FAILED the policy AND has approval copy (i.e. a real
+    // mutating tool) — otherwise a stale outstanding READ could take the card's title while the
+    // actual write got demoted to the "Also pending" line.
+    const NEVER_AUTO = () => false;
+    const chooseCandidate = (candidates, autoOk = NEVER_AUTO) =>
+      candidates.find((c) => !autoOk(c) && PERM_ACTIONS[c.tool])
+      ?? candidates.find((c) => !autoOk(c))
+      ?? candidates.find((c) => PERM_ACTIONS[c.tool])
+      ?? candidates[0]
+      ?? null;
+    const emitApprovalCard = (candidates, autoOk = NEVER_AUTO) => {
+      const chosen = chooseCandidate(candidates, autoOk);
+      const others = candidates.filter((c) => c !== chosen && PERM_ACTIONS[c.tool]).map((c) => permissionTitle(c.tool, c.args));
+      emitSurface(buildApprovalCard(lastActionId, sessionId, chosen?.tool, chosen?.args, others));
+    };
     const handleEvent = async (ev, data) => {
       switch (ev) {
         // On a reject resume the model tends to emit unreliable filler; suppress it and let the
         // deterministic "cancelled" line (below) stand in.
         case "token": if (!isReject) emitDelta(data); break;
         case "error": turnError = data; break;
-        // Tier 2: a tool has been CALLED but not yet returned → live thinking step. Tier 3: also
-        // remember it as the pending action, so if Flowise pauses next we can title the card.
+        // Tier 2: a tool has been CALLED but not yet returned → live thinking step (streamed at
+        // most once per label per turn: a resumed stream replays earlier iterations' calledTools).
+        // Tier 3: also record it as an outstanding candidate, so if Flowise pauses next, the
+        // approval decision sees EVERY call it might be pausing on.
         case "calledTools":
           if (isReject) break;
           for (const t of (Array.isArray(data) ? data : [])) {
             if (t?.tool) sawToolActivity = true;
             if (t?.tool && !t?.toolOutput) {
               const label = thinkingLabel(t.tool);
-              send({ type: "thinking", delta: label });
-              noteThinking(label);
-              pendingAction = { tool: t.tool, args: t.toolInput ?? {} };
+              if (!streamedThinking.has(label)) {
+                streamedThinking.add(label);
+                send({ type: "thinking", delta: label });
+                noteThinking(label);
+              }
+              outstanding.set(t.tool, { tool: t.tool, args: t.toolInput ?? {} });
             }
           }
           break;
@@ -989,16 +1199,35 @@ export async function chatHandler(req, res) {
         case "action": {
           // AUTO mode: non-destructive writes resume without a card (visible as an auto-approved
           // thinking step). Destructive/payment tools, unknown tools, a failed policy fetch, or
-          // the per-turn cap all FALL THROUGH to the manual card.
-          if (approvalMode === "auto" && autoResumes < MAX_AUTO_RESUMES && (await isAutoApprovable(pendingAction?.tool))) {
+          // the per-turn cap all FALL THROUGH to the manual card. The decision is made over EVERY
+          // outstanding call: with no candidate at all we fail closed to a card, and a silent
+          // resume needs ALL of them auto-approvable (a paused delete can never ride along with a
+          // safe write). isAutoApprovable is async — resolve each candidate ONCE, up front, and
+          // ONLY when a silent resume is even possible: in manual mode (or once the resume budget
+          // is spent) the answer cannot change the outcome, and resolving it would put the
+          // tool-safety fetch's 5s timeout in front of every approval card.
+          lastActionId = data?.id ?? null;
+          const candidates = [...outstanding.values()];
+          const mayAutoResume = approvalMode === "auto" && autoResumes < MAX_AUTO_RESUMES;
+          let autoOk = NEVER_AUTO;
+          if (mayAutoResume && candidates.length) {
+            const autoFlags = new Map();
+            for (const c of candidates) {
+              if (!autoFlags.has(c.tool)) autoFlags.set(c.tool, await isAutoApprovable(c.tool));
+            }
+            autoOk = (c) => autoFlags.get(c.tool) === true;
+          }
+          if (candidates.length && mayAutoResume && candidates.every(autoOk)) {
             pendingAutoResume = true;
             autoResumes += 1;
-            const label = `Auto-approved: ${thinkingLabel(pendingAction?.tool)}`;
-            send({ type: "thinking", delta: label });
-            noteThinking(label);
+            for (const c of candidates) {
+              const label = `Auto-approved: ${labelWithTarget(c.tool, c.args)}`;
+              send({ type: "thinking", delta: label });
+              noteThinking(label);
+            }
           } else {
             sawPermission = true;
-            emitSurface(buildApprovalCard(data?.id, sessionId, pendingAction?.tool, pendingAction?.args));
+            emitApprovalCard(candidates, autoOk);
           }
           break;
         }
@@ -1008,9 +1237,9 @@ export async function chatHandler(req, res) {
           for (const t of (Array.isArray(data) ? data : [])) {
             if (t?.tool) sawToolActivity = true;
             // This tool RETURNED — it can no longer be the one Flowise is about to pause on.
-            // Without this, a stale pendingAction (e.g. a read) could be the tool the
+            // Without this, a stale candidate (e.g. a read) could be part of the set the
             // auto-approve policy judges when the NEXT pause arrives (B3).
-            if (t?.tool && t?.toolOutput && pendingAction?.tool === t.tool) pendingAction = null;
+            if (t?.tool && t?.toolOutput) outstanding.delete(t.tool);
             await drainUiJobs(noteToolReturn(t));
           }
           break;
@@ -1027,6 +1256,9 @@ export async function chatHandler(req, res) {
             const laterToolReturns = Array.isArray(output.usedTools) ? output.usedTools : [];
             for (const t of laterToolReturns) {
               if (t?.tool) sawToolActivity = true;
+              // Same retirement as the usedTools event: tools whose return arrives ONLY via a node
+              // snapshot would otherwise stay outstanding forever and skew the next pause's set.
+              if (t?.tool && t?.toolOutput) outstanding.delete(t.tool);
               noteToolReturn(t);
             }
             await drainUiJobs(JSON.stringify(output));
@@ -1097,16 +1329,18 @@ export async function chatHandler(req, res) {
       }
     };
 
+    beginAttempt();
     await runAttempt();
     // Retry once, but only if nothing user-visible streamed yet (namiGateway's rule). Never retry
     // a resume — re-sending humanInput could double-execute the approved action. seenJobIds is
     // deliberately KEPT: a retried run mints fresh job ids for its own emit_ui calls, and keeping
     // the old entries prevents re-draining (= re-streaming) a card the first attempt already sent.
-    if (turnError && !assistantReply && !isResume && !upstreamAbort.signal.aborted) {
+    if (turnError && !assistantReply && !isResume && extraAttempts < MAX_EXTRA_ATTEMPTS
+        && !upstreamAbort.signal.aborted) {
       console.warn("[/chat] recoverable turn error — retrying once");
       turnError = null;
-      pendingText = "";
-      suppressRest = false;
+      beginAttempt({ discardBuffer: true });
+      extraAttempts += 1;
       await runAttempt();
     }
 
@@ -1117,11 +1351,13 @@ export async function chatHandler(req, res) {
     // fresh request usually binds tools; verbatim re-announcements are eaten by the dedupe.
     // If the retry leaks toollessly again, surface a friendly error + Retry instead of silence.
     if (sawToolLeak && !sawToolActivity && !sawPermission && !sawUi
-        && !turnError && !isResume && !upstreamAbort.signal.aborted) {
+        && !turnError && !isResume && extraAttempts < MAX_EXTRA_ATTEMPTS
+        && !upstreamAbort.signal.aborted) {
       console.warn("[/chat] toolless tool-call-as-text turn — retrying once");
       sawToolLeak = false;
-      pendingText = "";
-      suppressRest = false;
+      beginAttempt();
+      pendingSeam = true; // separate the pre-leak text from the re-run (no-op if nothing streamed)
+      extraAttempts += 1;
       await runAttempt();
       if (sawToolLeak && !sawToolActivity && !turnError) {
         turnError = "toolless tool-call-as-text turn persisted after retry";
@@ -1131,25 +1367,35 @@ export async function chatHandler(req, res) {
     // AUTO mode (3C-6): silently resume each auto-approved pause on the SAME session — the
     // resumed stream's tokens/ui/thinking keep flowing to the client. A pause that wasn't
     // auto-approvable emitted a card and set sawPermission instead, so the loop ends. Errors in a
-    // resumed run are never retried (re-sending humanInput could double-execute). suppressRest/
-    // pendingText reset like the retry path — a leak-marker trip suppresses THAT attempt's tail
-    // only, never the resumed run's actual answer.
-    while (pendingAutoResume && !turnError && !upstreamAbort.signal.aborted) {
-      pendingAutoResume = false;
-      suppressRest = false;
-      pendingText = "";
-      predictionBody.humanInput = { type: "proceed", startNodeId: AGENT_NODE_ID };
-      await runAttempt();
-    }
+    // resumed run are never retried (re-sending humanInput could double-execute). beginAttempt()
+    // per iteration — a leak-marker trip suppresses THAT attempt's tail only, never the resumed
+    // run's actual answer, and the keep-back tail is flushed instead of discarded.
+    // MUST run after EVERY later attempt too: the cut-off retry and the announce nudge can each
+    // provoke a fresh auto-approvable pause, and a pause nobody drains means we told the user
+    // "Auto-approved: …" for an action that never ran. autoResumes/MAX_AUTO_RESUMES still bound
+    // the total, so re-calling this cannot widen the loop budget.
+    const drainAutoResumes = async () => {
+      while (pendingAutoResume && !turnError && !upstreamAbort.signal.aborted) {
+        pendingAutoResume = false;
+        beginAttempt();
+        predictionBody.humanInput = { type: "proceed", startNodeId: AGENT_NODE_ID };
+        await runAttempt();
+      }
+    };
+    await drainAutoResumes();
 
     flushDeltas();
 
     // Flowise intermittently ends the SSE stream mid-answer (clean close, no error event),
     // leaving a dangling half-sentence dead-end ("Here's your performance at a glance:" …
-    // nothing). When the turn was reads-only (no approval pause, no auto-approved write, no UI
-    // block) and the short reply doesn't end like a finished sentence, re-run it once — a fresh
-    // run nearly always completes, and the restatement dedupe splices a verbatim re-opening
-    // onto what already streamed instead of doubling it.
+    // nothing). Two strategies, because re-POSTing the ORIGINAL question is only safe when
+    // nothing was written yet:
+    //   zero-write turn  → verbatim re-POST (a fresh run nearly always completes, and the
+    //                      restatement dedupe splices a verbatim re-opening onto what streamed).
+    //   after a write    → continuation instruction only. Re-asking the question after an
+    //                      auto-approved write invites the model to run the write AGAIN. Requires
+    //                      every call to have returned (outstanding empty) and no failed write, so
+    //                      the continuation can't narrate a success that didn't happen.
     // predictionBody may still carry humanInput from the auto-resume loop above (mutated in
     // place, not this turn's own resume) — clear it before re-POSTing so the retry can't be
     // mistaken for a HITL resume.
@@ -1157,23 +1403,74 @@ export async function chatHandler(req, res) {
     const looksCutOff = trimmedReply.length > 0 && trimmedReply.length < 200
       && !/[.!?…](["')\]]*)?$/.test(trimmedReply)
       && !trimmedReply.includes("\n");
-    if (looksCutOff && !sawUi && !sawPermission && !turnError && autoResumes === 0
-        && refreshResources.size === 0 && !isResume && !upstreamAbort.signal.aborted) {
-      console.warn("[/chat] reads-only turn ended mid-sentence — retrying once:", JSON.stringify(trimmedReply.slice(-60)));
-      send({ delta: "\n\n" });
-      assistantReply += "\n\n";
+    const cutoffZeroWrite = autoResumes === 0 && refreshResources.size === 0;
+    const cutoffAfterWrite = autoResumes > 0 && outstanding.size === 0 && !sawFailedWrite;
+    if (looksCutOff && !sawUi && !sawPermission && !turnError && !isResume
+        && extraAttempts < MAX_EXTRA_ATTEMPTS && !upstreamAbort.signal.aborted
+        && (cutoffZeroWrite || cutoffAfterWrite)) {
+      console.warn(`[/chat] turn ended mid-sentence (${cutoffZeroWrite ? "zero-write, verbatim" : "post-write, continuation"}) — retrying once:`, JSON.stringify(trimmedReply.slice(-60)));
       sawToolLeak = false;
       delete predictionBody.humanInput;
-      pendingText = "";
-      suppressRest = false;
+      const questionBeforeCutoff = cutoffZeroWrite ? null : predictionBody.question;
+      if (!cutoffZeroWrite) predictionBody.question = CONTINUE_CUTOFF_PROMPT;
+      beginAttempt();
+      pendingSeam = true; // armed AFTER beginAttempt's flush, consumed by the retry's first char
+      extraAttempts += 1;
       await runAttempt();
+      // The retry may itself have paused on an auto-approvable write — drain it here or the
+      // "Auto-approved" step we just streamed would be a claim about nothing.
+      await drainAutoResumes();
       flushDeltas();
+      if (questionBeforeCutoff !== null) predictionBody.question = questionBeforeCutoff;
+    }
+
+    // Announce-then-stop (retry E): the turn ended on a finished sentence promising an action,
+    // with NOTHING to show for it — no tool call, no leak marker, no card, no UI, no write. That
+    // is the model narrating an intention and dropping it. Nudge it once to actually do the thing.
+    // Runs LAST because it reads the post-cut-off text; disjoint from the cut-off retry by
+    // construction (that one needs missing terminal punctuation, this one requires it).
+    const nudge = (!isResume && !isReject && !turnError && !sawToolActivity && !sawToolLeak
+        && !sawUi && !sawPermission && autoResumes === 0 && refreshResources.size === 0
+        && !upstreamAbort.signal.aborted && extraAttempts < MAX_EXTRA_ATTEMPTS && !g6Fired)
+      ? announceNudgeCheck(assistantReply)
+      : null;
+    // Near-miss = commitment + action verb matched, a veto phrase overrode it. Logged so the veto
+    // list can be tuned against real traffic rather than guesses.
+    if (nudge?.veto) {
+      console.warn("[/chat] announce-nudge near-miss (vetoed):", nudge.veto, JSON.stringify(nudge.tail.slice(-120)));
+    }
+    if (nudge?.trigger) {
+      console.warn("[/chat] announce-then-stop nudge:", JSON.stringify(nudge.tail.slice(-120)));
+      const questionBeforeNudge = predictionBody.question;
+      predictionBody.question = CONTINUE_NUDGE_PROMPT;
+      delete predictionBody.humanInput;
+      beginAttempt();
+      pendingSeam = true;
+      extraAttempts += 1;
+      g6Fired = true;
+      await runAttempt();
+      // The whole point of the nudge is to make the action happen — which means it very often
+      // pauses. Drain it, or the nudge produces the same false claim it was meant to cure.
+      await drainAutoResumes();
+      flushDeltas();
+      predictionBody.question = questionBeforeNudge;
     }
 
     // Reject: the model's post-reject output is suppressed above, so stand in a deterministic line.
     if (isReject && !assistantReply && !turnError) {
       assistantReply = "Okay, I've cancelled that. What would you like to do instead?";
       send({ delta: assistantReply });
+    }
+
+    // Orphaned-pause backstop: an auto-approval still undrained here (the resume loop bailed on a
+    // turn error or a client abort) means the user was told "Auto-approved: …" for an action that
+    // never ran. The pause is real and unresolved on the Flowise side, so hand them the card
+    // instead of the false claim — approving it from history resumes the same paused node.
+    if (pendingAutoResume) {
+      console.warn("[/chat] auto-approved pause left undrained — falling back to an approval card");
+      pendingAutoResume = false;
+      sawPermission = true;
+      emitApprovalCard([...outstanding.values()]);
     }
 
     // Surface a turn error as one friendly line. Skip when the client aborted (stop button /
@@ -1209,6 +1506,8 @@ export async function chatHandler(req, res) {
     if (refreshResources.size) {
       send({ type: "refresh", resources: [...refreshResources], ...(Object.keys(refreshIds).length ? { ids: refreshIds } : {}) });
     }
+    // The click-resolution write MUST land before this instance can be frozen at res.end().
+    if (surfaceUpdatePromise) await surfaceUpdatePromise;
     send({
       done: true,
       session_id: sessionId,
@@ -1219,6 +1518,7 @@ export async function chatHandler(req, res) {
   } catch (e) {
     console.error("[/chat] error:", e.message);
     try {
+      if (surfaceUpdatePromise) await surfaceUpdatePromise;
       send({ error: "Something went wrong on my end. Please try that again." });
       res.end();
     } catch { /* client gone */ }
