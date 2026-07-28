@@ -7,6 +7,7 @@
 // The tool's RETURN value is a tiny ack so the (large) UI payload never re-enters the model's
 // context.
 import { z } from "zod";
+import { asText, roleAreaDenial } from "./tool-helpers.mjs";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
@@ -210,7 +211,7 @@ export function validateUiFrame(input) {
   };
 }
 
-export function registerGenUiTools(server, { userId }) {
+export function registerGenUiTools(server, { userId, userJwt }) {
   server.registerTool("emit_ui", {
     description:
       "Render a rich UI block in the chat (design-system components) instead of plain prose. Use when a block genuinely beats text: campaign/referral/template lists, a targeting-zone map, metric tiles, readiness checklists, step guides, clickable choices. ALWAYS also answer briefly in text — the block supplements, never replaces. Prefer ONE domain component per surface. Re-call with the SAME surface_id to revise a block in place. Components (props): " +
@@ -245,6 +246,16 @@ export function registerGenUiTools(server, { userId }) {
     const v = validateUiFrame(a);
     if (!v.ok) {
       return { isError: true, content: [{ type: "text", text: `emit_ui rejected: ${v.error}. Fix the payload and call emit_ui again.` }] };
+    }
+    // Designer surfaces are write paths in disguise: the proposal card's Approve button saves
+    // to the design library (or the campaign) straight from the browser, bypassing the write
+    // tools' role gates. Gate the surface itself: technicians never design; marketers may only
+    // design FOR a campaign (library saves are template management, which their role excludes).
+    const proposal = v.frame.components.find((c) => c.component?.TemplateProposal);
+    if (proposal) {
+      const area = proposal.component.TemplateProposal?.campaign_id ? "campaigns" : "template_management";
+      const denial = await roleAreaDenial(userJwt, area);
+      if (denial) return asText(denial);
     }
     const job = createJob(userId, "emit_ui");
     jobEmit(job, v.frame);
