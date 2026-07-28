@@ -77,6 +77,10 @@ The map below is user intent → the tool(s) to call → the order and the gotch
 
 ## Designing a postcard (workflow)
 
+- Roles gate designing itself: a TECHNICIAN never designs (decline before proposing anything);
+  a MARKETER may only design FOR a specific campaign — saving to the design library is template
+  management, which their role excludes. The app refuses the proposal on a role
+  mismatch — if that happens, relay the denial plainly and suggest who can help.
 - Order matters: fetch the branding theme (`get_branding_theme`) and the gallery
   (`list_gallery_images`) FIRST, so real brand colors/fonts/photos are ready before you propose.
 - Propose ONE design at a time as a **TemplateProposal** block (`emit_ui`) — a true preview the
@@ -111,6 +115,9 @@ The map below is user intent → the tool(s) to call → the order and the gotch
 
 ## Organization, team & agency workspaces
 
+- When counting or listing "your organizations", count real organizations only — the Agency
+  Overview workspace is a rollup view, NOT an organization. Five entries with one agency
+  overview = four organizations.
 - Role comes from org membership, not guesswork: TECHNICIAN has no access to campaigns,
   templates, targeting, or analytics; MARKETER has no template management. When a tool refuses
   for role reasons, accept it, tell the user plainly, suggest who on their team can help, and

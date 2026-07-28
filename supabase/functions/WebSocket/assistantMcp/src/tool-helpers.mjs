@@ -131,8 +131,11 @@ export async function roleAreaDenial(userJwt, area) {
   const role = await activeOrgRole(userJwt);
   if (!role || !ROLE_DENIED_AREAS[role]?.has(area)) return null;
   const roleName = role.charAt(0) + role.slice(1).toLowerCase();
+  const whoCanHelp = area === "template_management"
+    ? "An admin or the owner can help with this."
+    : "An admin, marketer, or the owner can help with this.";
   return {
-    error: `Your role in this organization (${roleName}) doesn't include ${AREA_LABEL[area] ?? area}. An admin, marketer, or the owner can help with this.`,
+    error: `Your role in this organization (${roleName}) doesn't include ${AREA_LABEL[area] ?? area}. ${whoCanHelp}`,
     role_restricted: true,
   };
 }

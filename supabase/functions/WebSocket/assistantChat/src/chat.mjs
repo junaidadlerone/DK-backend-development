@@ -1144,6 +1144,32 @@ export async function chatHandler(req, res) {
 
     flushDeltas();
 
+    // Flowise intermittently ends the SSE stream mid-answer (clean close, no error event),
+    // leaving a dangling half-sentence dead-end ("Here's your performance at a glance:" …
+    // nothing). When the turn was reads-only (no approval pause, no auto-approved write, no UI
+    // block) and the short reply doesn't end like a finished sentence, re-run it once — a fresh
+    // run nearly always completes, and the restatement dedupe splices a verbatim re-opening
+    // onto what already streamed instead of doubling it.
+    // predictionBody may still carry humanInput from the auto-resume loop above (mutated in
+    // place, not this turn's own resume) — clear it before re-POSTing so the retry can't be
+    // mistaken for a HITL resume.
+    const trimmedReply = assistantReply.trimEnd();
+    const looksCutOff = trimmedReply.length > 0 && trimmedReply.length < 200
+      && !/[.!?…](["')\]]*)?$/.test(trimmedReply)
+      && !trimmedReply.includes("\n");
+    if (looksCutOff && !sawUi && !sawPermission && !turnError && autoResumes === 0
+        && refreshResources.size === 0 && !isResume && !upstreamAbort.signal.aborted) {
+      console.warn("[/chat] reads-only turn ended mid-sentence — retrying once:", JSON.stringify(trimmedReply.slice(-60)));
+      send({ delta: "\n\n" });
+      assistantReply += "\n\n";
+      sawToolLeak = false;
+      delete predictionBody.humanInput;
+      pendingText = "";
+      suppressRest = false;
+      await runAttempt();
+      flushDeltas();
+    }
+
     // Reject: the model's post-reject output is suppressed above, so stand in a deterministic line.
     if (isReject && !assistantReply && !turnError) {
       assistantReply = "Okay, I've cancelled that. What would you like to do instead?";
@@ -1169,7 +1195,12 @@ export async function chatHandler(req, res) {
       || (sawUi ? UI_SURFACE_NOTE : null)
       || (sawPermission ? APPROVAL_NOTE : null);
     const { text: userText, attachment } = splitAttachmentMarkers(message ?? null);
-    const assistantMessageId = await persistTurn(sessionId, userText, assistantOutcome, {
+    // Card sends carry both a machine prompt (which may embed internal ids for the model) and a
+    // human display label — history must persist the label, not the plumbing (a raw card prompt
+    // once leaked a bundle UUID into the reloaded transcript).
+    const cardDisplay = clickedSurfaceId && !isResume && typeof req.body?.interaction?.display === "string"
+      && req.body.interaction.display.trim() ? req.body.interaction.display.slice(0, 200) : null;
+    const assistantMessageId = await persistTurn(sessionId, cardDisplay ?? userText, assistantOutcome, {
       thinking: thinkingLabels,
       surfaces: emittedSurfaces,
       attachment,
