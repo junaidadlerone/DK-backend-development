@@ -514,7 +514,9 @@ export function announceNudgeCheck(reply) {
 // ── leak filters + redaction (Tier 2) ─────────────────────────────────────────
 // Flowise synthesizes "Attempting to use tool…" text around tool pauses, and
 // deepseek can leak raw tool markup; strip both plus any literal emit_ui markup.
-const LEAK_MARKERS = ["Attempting to use tool", "｜DSML｜", "<emit_ui", "<emitui"];
+// "<｜DSML｜" is listed alongside the bare marker so the opening "<" is swallowed too — with
+// only the bare form, a lone "<" streamed to the user right before the marker matched.
+const LEAK_MARKERS = ["Attempting to use tool", "<｜DSML｜", "｜DSML｜", "<emit_ui", "<emitui"];
 const KEEP_BACK = Math.max(...LEAK_MARKERS.map((m) => m.length)) - 1;
 // De-dash prose without mangling data: numeric ranges keep a plain hyphen ("$5—10" → "$5-10");
 // only prose em/en-dashes become ", ".
@@ -1297,11 +1299,17 @@ export async function chatHandler(req, res) {
       const decoder = new TextDecoder();
       let buf = "";
       // Stall guard: a hung Flowise turn used to leave the user staring at nothing forever
-      // (QA saw >2.5 min with zero frames). If the upstream produces NOTHING for STALL_MS,
+      // (QA saw >2.5 min with zero frames). If the upstream produces NOTHING for the window,
       // treat it as a turn error — the user gets the friendly line + Retry instead of a hang.
+      // ADAPTIVE: once tools have run this turn, long silence is usually the model generating
+      // a huge tool-call argument (the designer's ~7KB TemplateProposal JSON emits ZERO SSE
+      // events while it's being generated — a live trace showed 90s+ of legitimate silence),
+      // so the window widens rather than killing a healthy designer turn mid-generation.
       const STALL_MS = 90_000;
+      const STALL_MS_ACTIVE = 240_000;
+      const stallWindow = () => (sawToolActivity ? STALL_MS_ACTIVE : STALL_MS);
       const readWithStall = () => new Promise((resolve, reject) => {
-        const timer = setTimeout(() => reject(new Error("__stall__")), STALL_MS);
+        const timer = setTimeout(() => reject(new Error("__stall__")), stallWindow());
         reader.read().then(
           (r) => { clearTimeout(timer); resolve(r); },
           (e) => { clearTimeout(timer); reject(e); },
@@ -1310,7 +1318,7 @@ export async function chatHandler(req, res) {
       while (true) {
         const { done, value } = await readWithStall().catch((e) => {
           if (String(e?.message) === "__stall__") {
-            turnError = `Upstream produced no data for ${STALL_MS / 1000}s — treating the turn as stalled`;
+            turnError = `Upstream produced no data for ${stallWindow() / 1000}s — treating the turn as stalled`;
             reader.cancel().catch(() => { /* already dead */ });
           }
           return { done: true, value: undefined };
@@ -1361,6 +1369,29 @@ export async function chatHandler(req, res) {
       await runAttempt();
       if (sawToolLeak && !sawToolActivity && !turnError) {
         turnError = "toolless tool-call-as-text turn persisted after retry";
+      }
+    } else if (sawToolLeak && sawToolActivity && !sawPermission && !sawUi
+        && !turnError && !isResume && refreshResources.size === 0 && autoResumes === 0
+        && !sawFailedWrite && extraAttempts < MAX_EXTRA_ATTEMPTS
+        && !upstreamAbort.signal.aborted) {
+      // Variant seen live (designer flows): reads DID run, then the model wrote its NEXT tool
+      // call as TEXT (deepseek ｜DSML｜ markup around emit_ui's huge TemplateProposal JSON). The
+      // leak filter hid the markup, leaving a half reply ("…Let me show you the design:") and
+      // no card, and the toolless branch above can't fire because real tools ran. Reads-only
+      // (no writes, no auto-resumes, no failed writes) makes a continuation nudge safe —
+      // nothing can double-execute.
+      console.warn("[/chat] tool-call-as-text after read-only activity — continuation nudge");
+      sawToolLeak = false;
+      const preLeakQuestion = predictionBody.question;
+      predictionBody.question = "Continue: finish what you were doing by INVOKING your tools through the tool interface — never write a tool call or its JSON as text. Do not repeat anything you already wrote.";
+      delete predictionBody.humanInput;
+      beginAttempt();
+      pendingSeam = true;
+      extraAttempts += 1;
+      await runAttempt();
+      predictionBody.question = preLeakQuestion;
+      if (sawToolLeak && !turnError) {
+        turnError = "tool-call-as-text persisted after continuation nudge";
       }
     }
 
