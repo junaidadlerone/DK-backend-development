@@ -1487,6 +1487,30 @@ export async function chatHandler(req, res) {
       predictionBody.question = questionBeforeNudge;
     }
 
+    // Referenced-but-never-emitted UI (retry E2): the reply points the user at a block ("Here's
+    // the launch button — …") but the turn emitted NO ui frame at all — a live trace showed the
+    // model narrating a LaunchButton it never rendered (zero emit_ui calls). The announce nudge
+    // above can't catch it (no first-person commitment phrase, clean punctuation). Same
+    // reads-only hard guards; one shot shared with g6Fired.
+    const UI_REFERENCE_RE = /\b(?:here(?:'|’)s (?:the|your|a)|use the|click the|tap the)\s[^.!?]{0,50}\b(?:button|card|preview|picker|builder|uploader|map)\b|\b(?:button|card|preview|picker|builder|uploader|map)\b[^.!?]{0,30}\b(?:below|above|in the chat)\b/i;
+    if (!g6Fired && !sawUi && !sawPermission && !isResume && !isReject && !turnError
+        && !sawToolLeak && autoResumes === 0 && refreshResources.size === 0
+        && !upstreamAbort.signal.aborted && extraAttempts < MAX_EXTRA_ATTEMPTS
+        && UI_REFERENCE_RE.test(assistantReply)) {
+      console.warn("[/chat] referenced a UI block without emitting one — nudging:", JSON.stringify(assistantReply.slice(-120)));
+      const questionBeforeUiNudge = predictionBody.question;
+      predictionBody.question = "Continue: you told the user about a UI block (a button/card) but you never rendered it. Call emit_ui NOW to render exactly the block you described — never mention a block you have not actually emitted. Do not repeat what you already wrote.";
+      delete predictionBody.humanInput;
+      beginAttempt();
+      pendingSeam = true;
+      extraAttempts += 1;
+      g6Fired = true;
+      await runAttempt();
+      await drainAutoResumes();
+      flushDeltas();
+      predictionBody.question = questionBeforeUiNudge;
+    }
+
     // Reject: the model's post-reject output is suppressed above, so stand in a deterministic line.
     if (isReject && !assistantReply && !turnError) {
       assistantReply = "Okay, I've cancelled that. What would you like to do instead?";
