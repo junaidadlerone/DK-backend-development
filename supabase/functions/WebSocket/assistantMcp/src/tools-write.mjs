@@ -12,7 +12,7 @@
 // tells the user to finish the consent section (enforced here by omission + in the prompt).
 import { z } from "zod";
 import { callApi } from "./helpers.mjs";
-import { QR_ELEMENT_RE, makeGuard, payload, roleAreaDenial, wrap as wrapShared } from "./tool-helpers.mjs";
+import { QR_ELEMENT_RE, makeGuard, normalizePhone, payload, roleAreaDenial, wrap as wrapShared } from "./tool-helpers.mjs";
 import { POSTGRID_POSTCARD_API_KEY } from "./env.mjs";
 
 // Shared plumbing (tool-helpers.mjs) with the write-flavored guard tone. The 400/422 branch
@@ -144,6 +144,65 @@ function referralMissingToFinalize(hoi, jd) {
   return miss;
 }
 
+// App-verified caps on SUPPLIED referral fields (bug-bash follow-up 2026-07-28): the app's own
+// forms enforce these limits client-side; the assistant's tools previously passed anything
+// through and let the upstream 400/422 surface a sanitized-but-vague error. Validate up front so
+// the model gets a specific, actionable note — same { missing_required, note } envelope the
+// job_type/referrer_name checks already use — instead of a generic bounce. Every field here is
+// still OPTIONAL: these only fire when a value is actually supplied, and phone stays optional too
+// (no phone, no complaint). Returns { error } to short-circuit, or the (possibly phone-normalized)
+// home_owner_info to use.
+function checkHomeOwnerInfo(hoi) {
+  if (!hoi) return { hoi };
+  const out = { ...hoi };
+  if (out.name != null && out.name.trim()) {
+    const trimmedName = out.name.trim();
+    const words = trimmedName.split(/\s+/).filter(Boolean);
+    if (words.length < 2) {
+      return { error: { missing_required: ["referrer_name"], note: "That name needs a first and last name — ask the user for the full name." } };
+    }
+    out.name = trimmedName;
+  }
+  if (out.phone != null && out.phone.trim()) {
+    const pn = normalizePhone(out.phone);
+    if (!pn.ok) {
+      return { error: { missing_required: ["phone"], note: "That phone number isn't a valid format. Ask the user for the full number with area code (or the country code if it isn't a US number), then call the tool again." } };
+    }
+    out.phone = pn.phone;
+  }
+  const addr = out.address;
+  if (addr) {
+    if (addr.street_address != null && addr.street_address.length > 100) {
+      return { error: { missing_required: ["street_address"], note: "That street address is too long (max 100 characters) — ask the user for a shorter version." } };
+    }
+    if (addr.city != null && addr.city.length > 50) {
+      return { error: { missing_required: ["city"], note: "That city name is too long (max 50 characters)." } };
+    }
+    if (addr.zip != null && addr.zip.trim() && !/^\d{5}(-\d{4})?$/.test(addr.zip.trim())) {
+      return { error: { missing_required: ["zip"], note: "That zip code isn't a valid format. Ask the user for a 5-digit zip or ZIP+4 (e.g. 12345 or 12345-6789)." } };
+    }
+    // Write trimmed address values back into the outgoing payload
+    if (addr.street_address != null) addr.street_address = addr.street_address.trim();
+    if (addr.city != null) addr.city = addr.city.trim();
+    if (addr.zip != null) addr.zip = addr.zip.trim();
+  }
+  return { hoi: out };
+}
+// Same pattern for job_details caps (value ceiling, notes length). job_type is resolved
+// separately (resolveJobType) — this only covers the plain-value caps.
+function checkJobDetails(jd) {
+  if (!jd) return { ok: true };
+  if (jd.value != null) {
+    if (typeof jd.value !== "number" || !Number.isFinite(jd.value) || jd.value <= 0 || jd.value > 9_999_999) {
+      return { error: { missing_required: ["job_value"], note: "The job value must be a number greater than 0 and no more than 9,999,999." } };
+    }
+  }
+  if (jd.notes != null && jd.notes.length > 250) {
+    return { error: { missing_required: ["notes"], note: "Notes must be 250 characters or fewer — ask the user to shorten them." } };
+  }
+  return { ok: true };
+}
+
 export function registerWriteTools(server, { userJwt }) {
   const W = { readOnlyHint: false, destructiveHint: false };
   const D = { readOnlyHint: false, destructiveHint: true };
@@ -155,13 +214,19 @@ export function registerWriteTools(server, { userJwt }) {
 
   // ── Referrals ──────────────────────────────────────────────────────────────
   t("create_referral",
-    "Create a new referral. Gather the referrer's details and job info from the user; NEVER fill owner consent or a signature — those are the user's to complete in the app. State may be given as a name or abbreviation ('IL' works); job type is given by NAME and matched to the app's real job-type list (a non-matching name returns the valid options to offer the user). The referral is created in DRAFT. Use the returned `missing_to_finalize` list to prompt the user for any still-missing required fields (name, full address, job type, job value), then tell them to complete the consent + signature section in the app to finalize it.",
+    "Create a new referral. Gather the referrer's details and job info from the user; NEVER fill owner consent or a signature — those are the user's to complete in the app. State may be given as a name or abbreviation ('IL' works); job type is given by NAME and matched to the app's real job-type list (a non-matching name returns the valid options to offer the user). Referrer name must be a first and last name (two words minimum). Phone is OPTIONAL but if given must be a real number, e.g. +17135550123 or (713) 555-0123 — US numbers can omit +1. Job value must be a number > 0 and <= 9,999,999. Notes are optional and must be 250 characters or fewer. Zip must be 5 digits or ZIP+4 (12345 or 12345-6789). The referral is created in DRAFT. Use the returned `missing_to_finalize` list to prompt the user for any still-missing required fields (name, full address, job type, job value), then tell them to complete the consent + signature section in the app to finalize it.",
     { home_owner_info: homeOwnerInfo, job_details: jobDetails },
     W,
     async (a) => {
       const body = {};
-      if (a.home_owner_info) body.home_owner_info = await canonicalizeAddress(a.home_owner_info, userJwt);
+      if (a.home_owner_info) {
+        const check = checkHomeOwnerInfo(await canonicalizeAddress(a.home_owner_info, userJwt));
+        if (check.error) return check.error;
+        body.home_owner_info = check.hoi;
+      }
       if (a.job_details) {
+        const jdCheck = checkJobDetails(a.job_details);
+        if (jdCheck.error) return jdCheck.error;
         body.job_details = { ...a.job_details };
         if (a.job_details.job_type) {
           const jr = await resolveJobType(a.job_details.job_type, userJwt);
@@ -184,13 +249,19 @@ export function registerWriteTools(server, { userJwt }) {
     });
 
   t("update_referral",
-    "Edit an existing referral (referrer details, job info, notes, or status). Notes live in job_details.notes. NEVER set owner consent or a signature. Pass only the fields being changed. The returned `missing_to_finalize` reflects the referral's CURRENT state after the edit — prompt the user for anything still missing.",
+    "Edit an existing referral (referrer details, job info, notes, or status). Notes live in job_details.notes (<= 250 characters). Phone is OPTIONAL but if given must be a real number, e.g. +17135550123 or (713) 555-0123 — US numbers can omit +1. Job value must be a number > 0 and <= 9,999,999. Zip must be 5 digits or ZIP+4 (12345 or 12345-6789). NEVER set owner consent or a signature. Pass only the fields being changed. The returned `missing_to_finalize` reflects the referral's CURRENT state after the edit — prompt the user for anything still missing.",
     { id: z.string().describe("referral UUID"), home_owner_info: homeOwnerInfo, job_details: jobDetails, status: z.string().optional().describe("e.g. Draft, Ready — only if the user explicitly asks to change status") },
     W,
     async (a) => {
       const body = { id: a.id };
-      if (a.home_owner_info) body.home_owner_info = await canonicalizeAddress(a.home_owner_info, userJwt);
+      if (a.home_owner_info) {
+        const check = checkHomeOwnerInfo(await canonicalizeAddress(a.home_owner_info, userJwt));
+        if (check.error) return check.error;
+        body.home_owner_info = check.hoi;
+      }
       if (a.job_details) {
+        const jdCheck = checkJobDetails(a.job_details);
+        if (jdCheck.error) return jdCheck.error;
         body.job_details = { ...a.job_details };
         if (a.job_details.job_type) {
           const jr = await resolveJobType(a.job_details.job_type, userJwt);

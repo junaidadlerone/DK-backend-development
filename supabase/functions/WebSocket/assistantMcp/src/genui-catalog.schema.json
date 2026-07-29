@@ -712,25 +712,65 @@
       },
       "ImageUploader": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "type": "object",
-        "properties": {
-          "target": {
-            "type": "string",
-            "enum": [
-              "referral_gallery",
-              "org_gallery",
-              "company_logo",
-              "agency_logo"
-            ]
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "target": {
+                "type": "string",
+                "const": "referral_gallery"
+              },
+              "referral_id": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "target",
+              "referral_id"
+            ],
+            "additionalProperties": false
           },
-          "referral_id": {
-            "type": "string"
+          {
+            "type": "object",
+            "properties": {
+              "target": {
+                "type": "string",
+                "const": "org_gallery"
+              }
+            },
+            "required": [
+              "target"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "target": {
+                "type": "string",
+                "const": "company_logo"
+              }
+            },
+            "required": [
+              "target"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "target": {
+                "type": "string",
+                "const": "agency_logo"
+              }
+            },
+            "required": [
+              "target"
+            ],
+            "additionalProperties": false
           }
-        },
-        "required": [
-          "target"
-        ],
-        "additionalProperties": false
+        ]
       },
       "OrgSwitchButton": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",

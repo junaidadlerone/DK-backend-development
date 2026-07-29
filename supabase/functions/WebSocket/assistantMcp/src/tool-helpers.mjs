@@ -20,6 +20,34 @@ export const wrap = (fn, tag = "tool") => async (args) => {
 // Edge functions wrap payloads as { status, message, data, ... } or { success, data }.
 export const payload = (res) => res?.data ?? res;
 
+// Normalize a user-supplied phone number to E.164 (bug-bash follow-up 2026-07-28). The frontend's
+// normalizePhoneNumber just prepends "+" to whatever digits it's given, which mints WRONG numbers
+// for anything that isn't already 11 digits starting with 1 — do not copy that behavior here.
+// - Starting with "+": strip spaces/dashes/parens/dots after the +, then it must be a plausible
+//   E.164 number (no leading 0 after the country code digit).
+// - Otherwise: strip ALL non-digits. Exactly 10 digits is assumed US (prepend "+1"). Exactly 11
+//   digits starting with "1" is US with the country code already included. Anything else fails —
+//   NEVER guess a country code for an ambiguous digit string.
+// Returns { ok: true, phone } in E.164, or { ok: false }.
+export function normalizePhone(raw) {
+  const trimmed = String(raw ?? "").trim();
+  if (!trimmed) return { ok: false };
+  if (trimmed.startsWith("+")) {
+    const cleaned = "+" + trimmed.slice(1).replace(/[\s\-().]/g, "");
+    return /^\+[1-9]\d{1,14}$/.test(cleaned) ? { ok: true, phone: cleaned } : { ok: false };
+  }
+  const digits = trimmed.replace(/\D/g, "");
+  if (digits.length === 10) {
+    // First digit must be 2-9 (no valid NANP area code starts with 0 or 1)
+    return /^[2-9]/.test(digits) ? { ok: true, phone: `+1${digits}` } : { ok: false };
+  }
+  if (digits.length === 11 && digits.startsWith("1")) {
+    // Second digit must be 2-9 (after the leading 1, area code first digit)
+    return /^1[2-9]/.test(digits) ? { ok: true, phone: `+${digits}` } : { ok: false };
+  }
+  return { ok: false };
+}
+
 // Make an upstream error body safe + useful for the model/user: prefer the envelope's human
 // `message`, then strip anything that reads as internals — ids, URLs, SCREAMING_ERROR_CODES,
 // JSON punctuation. Returns "" when nothing human survives (callers fall back to a generic
