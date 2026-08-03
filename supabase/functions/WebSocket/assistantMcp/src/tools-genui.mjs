@@ -140,6 +140,52 @@ function normalizeEntry(entry) {
   return { error: `component "${id}" has no component/componentType` };
 }
 
+// ── An in-app destination is never an openUrl (2026-08-03) ────────────────────
+// REPORTED LIVE: at the last step of an address-list campaign the user asked to verify addresses.
+// The agent correctly said it could not do that itself and offered a button — but it built a generic
+// Button with `action: {type:"openUrl", url:"https://app.doorknockerplus.com/campaigns/<id>/addresses/verify"}`.
+// That route does not exist. Clicking it opened a new tab on a dead page.
+//
+// Two hard rules broken in one frame: the wrong component (VerifyAddressesButton exists precisely for
+// this and opens the in-app modal where the user reviews and pays), and an INVENTED url — the model
+// cannot know the app's routes, so it guessed one. The prompt already names the right component for
+// this exact case; it was ignored. Prose cannot fix that, so the frame is refused here instead.
+//
+// THE RULE: openUrl may not point at an in-app destination. Whatever the host, a path beginning with
+// one of the app's own sections is a screen inside the app, and opening a screen in a new tab is
+// always wrong — it bypasses the router and abandons app state. External links (a receipt, a tracking
+// page from tool data) are untouched, which is why this is not a blanket ban on openUrl.
+//
+// Deliberately NOT validating `navigate` hrefs against a route table: that table lives in the
+// frontend and the two deploy independently, so a stale copy here would reject valid destinations. A
+// bad `navigate` at least stays in-app and lands on the app's own not-found page. Logged as follow-up.
+const APP_SECTIONS = [
+  "campaigns", "campaign", "referrals", "referral", "templates", "template", "targeting", "zones",
+  "zone", "addresses", "exclusions", "analytics", "dashboard", "settings", "profile", "team", "agency",
+  "billing", "notifications",
+];
+/** The first path segment of a URL, lowercased, or null. */
+function firstSegment(url) {
+  try { return new URL(url).pathname.split("/").filter(Boolean)[0]?.toLowerCase() ?? null; }
+  catch { return null; }
+}
+/** Refusal text if any component opens an in-app screen in a new tab, else null. */
+export function checkInAppOpenUrl(components) {
+  for (const n of components ?? []) {
+    const action = n?.props?.action;
+    if (action?.type !== "openUrl" || typeof action.url !== "string") continue;
+    const seg = firstSegment(action.url);
+    if (!seg || !APP_SECTIONS.includes(seg)) continue;
+    return `component "${n.id}" opens an in-app screen ("/${seg}/…") in a new browser tab, and that url is one you invented — it will not resolve. `
+      + "Use the PURPOSE-BUILT component for the action instead: address verification → VerifyAddressesButton{campaign_id, campaign_name}; "
+      + "launching a campaign → LaunchButton{campaign_id, campaign_name}; attaching a CSV → AddressListUploader{campaign_id}; "
+      + "setting an audience → AudienceBuilder{campaign_id}; adding a photo or logo → ImageUploader{target}; switching organization → OrgSwitchButton. "
+      + "Each opens the real in-app flow where the user reviews and confirms. If you only need to send the user to a screen, use "
+      + "NavButton{href} or action {type:\"navigate\", href:\"/path\"} with an in-app path — never openUrl, and never a url you composed yourself.";
+  }
+  return null;
+}
+
 // Validate a full frame. Returns { ok:true, frame } or { ok:false, error }.
 export function validateUiFrame(input) {
   if (!input || typeof input !== "object") return { ok: false, error: "frame must be an object" };
@@ -173,6 +219,12 @@ export function validateUiFrame(input) {
     }
     n.props = result.props;
   }
+
+  // Runs AFTER prop validation so the props are normalized (and any unknown keys stripped) before the
+  // action is inspected — otherwise a frame could be refused for a property that was about to be
+  // dropped anyway.
+  const openUrlError = checkInAppOpenUrl(normalized);
+  if (openUrlError) return { ok: false, error: openUrlError };
 
   // Referential integrity + depth + cycle check from root.
   const walk = (id, depth, path) => {
