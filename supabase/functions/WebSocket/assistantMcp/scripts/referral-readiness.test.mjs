@@ -11,7 +11,7 @@
 // Plus: at least one job photo (agent-side only — the server's Ready computation is NOT changed).
 import test from "node:test";
 import assert from "node:assert/strict";
-import { referralCampaignBlockers } from "../src/tools-write.mjs";
+import { referralCampaignBlockers, referralMissingToFinalize } from "../src/tools-write.mjs";
 
 const READY = {
   status: { name: "Ready" },
@@ -83,4 +83,51 @@ test("plain wording never leaks internal field names", () => {
 test("a missing/unreadable record is refused rather than treated as ready", () => {
   assert.equal(referralCampaignBlockers(null, 0).ok, false);
   assert.equal(referralCampaignBlockers(undefined, 5).ok, false);
+});
+
+// ── The job photo must appear in the referral's OWN completeness report ────────
+// Reported live 2026-08-03, auto-approve on: the agent created a referral with every field filled and
+// answered "saved as a draft with all the details… complete the consent and signature section". It
+// never mentioned a photo. The user found out only when a campaign later refused the referral.
+//
+// The photo requirement HAD been implemented — in referralCampaignBlockers, the campaign gate — but
+// never in what create_referral/update_referral report, which is what the agent reads at the moment it
+// decides what to say. And the prompt only tells it to render the uploader when the user WANTS photos,
+// which is reactive, so nothing triggered it. These tests pin the trigger.
+test("a brand-new referral reports job_photo as outstanding", () => {
+  // create_referral passes 0 without a read: a referral it just made cannot have images.
+  const miss = referralMissingToFinalize(
+    { name: "Adler Three", address: { country: "United States", street_address: "123 Franklin", city: "Franklin Township", state: "OH", zip: "43001" } },
+    { job_type: { name: "Roof Repair" }, value: 600 },
+    0,
+  );
+  assert.deepEqual(miss, ["job_photo"], "every field was supplied, so the photo is the ONLY thing left");
+});
+
+test("a referral that HAS a photo does not report one missing", () => {
+  const miss = referralMissingToFinalize(
+    { name: "Adler Three", address: { country: "US", street_address: "1", city: "c", state: "OH", zip: "43001" } },
+    { job_type: { name: "Roof Repair" }, value: 600 },
+    2,
+  );
+  assert.deepEqual(miss, [], "telling the user to upload a photo they already uploaded is its own bug");
+});
+
+test("an UNREADABLE gallery claims nothing either way", () => {
+  // referralPhotoCount returns undefined on a failed read. Reporting "no photo" then would send the
+  // user round a loop they cannot exit — the same class of unverified assertion as claiming a write.
+  const miss = referralMissingToFinalize(
+    { name: "A B", address: { country: "US", street_address: "1", city: "c", state: "OH", zip: "43001" } },
+    { job_type: { name: "Roof Repair" }, value: 600 },
+    undefined,
+  );
+  assert.deepEqual(miss, []);
+});
+
+test("the photo is listed alongside genuinely missing fields, not instead of them", () => {
+  const miss = referralMissingToFinalize({ name: "A B" }, {}, 0);
+  assert.ok(miss.includes("job_photo"));
+  for (const f of ["country", "street_address", "city", "state", "zip", "job_type", "job_value"]) {
+    assert.ok(miss.includes(f), `${f} must still be reported`);
+  }
 });
