@@ -7,11 +7,12 @@
 // a friendly "requires an admin role" instead of erroring.
 import { z } from "zod";
 import { callApi } from "./helpers.mjs";
-import { QR_ELEMENT_RE, makeGuard, payload, roleAreaDenial, wrap as wrapShared } from "./tool-helpers.mjs";
+import { QR_ELEMENT_RE, declaredOnly, loosenToolSchema, makeGuard, payload, roleAreaDenial, wrap as wrapShared } from "./tool-helpers.mjs";
 import { loadActiveContext, buildContextPrompt, buildLiveState } from "./context.mjs";
 
 // Shared plumbing (tool-helpers.mjs) with the read-flavored guard tone.
-const wrap = (fn) => wrapShared(fn, "read tool");
+// The tool NAME, not a generic tag — see the D5 note on wrap in tool-helpers.
+const wrap = (fn, name) => wrapShared(fn, name ?? "read tool");
 const guard = makeGuard("read");
 
 // ── compact projections ───────────────────────────────────────────────────────
@@ -108,9 +109,12 @@ export function registerReadTools(server, { userId, userJwt }) {
   const R = { readOnlyHint: true };
   // Optional `area` gates the tool by the caller's per-org role (see roleAreaDenial) — the
   // same areas the app's menu hides: technicians get no campaigns/templates/targeting/analytics.
-  const t = (name, description, inputSchema, handler, area) =>
-    server.registerTool(name, { description, inputSchema, annotations: R }, wrap(async (a) =>
-      (await roleAreaDenial(userJwt, area)) ?? handler(a)));
+  // D7: advertise passthrough, execute against the declared shape (see loosenToolSchema/declaredOnly).
+  const t = (name, description, inputSchema, handler, area) => {
+    const only = declaredOnly(inputSchema);
+    return server.registerTool(name, { description, inputSchema: loosenToolSchema(inputSchema), annotations: R }, wrap(async (a) =>
+      (await roleAreaDenial(userJwt, area)) ?? handler(only(a)), name));
+  };
 
   // ── Live page context ────────────────────────────────────────────────────────
   t("get_live_context",

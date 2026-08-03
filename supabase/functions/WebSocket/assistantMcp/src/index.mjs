@@ -18,6 +18,8 @@ import { authenticate, requireAuth } from "./auth.mjs";
 import { registerReadTools } from "./tools-read.mjs";
 import { registerWriteTools } from "./tools-write.mjs";
 import { registerGenUiTools } from "./tools-genui.mjs";
+import { registerControlTools } from "./tools-control.mjs";
+import { setTurnId } from "./tool-helpers.mjs";
 import { jobEventsHandler } from "./jobs.mjs";
 import { loadActiveContext, buildContextPrompt, buildLiveState } from "./context.mjs";
 
@@ -54,11 +56,20 @@ app.post("/mcp", async (req, res) => {
     }
     auth = { userId: null, userJwt: null }; // handshake-only session
   }
+  // D5: correlate this service's per-tool lines with the gateway's per-turn line and the LangSmith
+  // trace. The gateway exposes the id as `vars.turnId`; Flowise forwards it only if the customMCP
+  // entries declare a header for it, so this reads whatever arrives and stays null until the owner
+  // adds `X-DK-Turn: {{$vars.turnId}}` to BOTH customMCP entries. Null is harmless — the tool lines
+  // are still per-tool, they just can't be joined to a turn.
+  setTurnId(req.headers["x-dk-turn"] ?? null);
   try {
     const server = new McpServer({ name: "dk-assistant-mcp", version: "1.0.0" });
     registerReadTools(server, auth);
     registerWriteTools(server, auth);
     registerGenUiTools(server, auth);
+    // D8: no data access, no side effects — belongs in the flow's UNGATED bundle so Flowise
+    // never pauses on it (see tools-control.mjs).
+    registerControlTools(server, auth);
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     res.on("close", () => { transport.close(); server.close(); });
     await server.connect(transport);

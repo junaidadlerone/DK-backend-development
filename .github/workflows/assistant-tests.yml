@@ -1,0 +1,71 @@
+name: Assistant tests
+
+# The assistant's gateway and MCP carry essentially all of its behavioural risk — the turn
+# orchestration, the approval/HITL path, the write contracts and the auto-approve policy — and until
+# now nothing ran automatically when any of it changed. Every reported bug had to be found by a
+# person in a browser, which is why several of them came back after being fixed.
+#
+# These suites are plain `node --test` (no build step, no framework) and take seconds:
+#   assistantChat — pure-surface predicates + the mock-Flowise replay harness, which exercises the
+#                   real chat handler against production-captured event frames.
+#   assistantMcp  — payload shapes, write verification, the referral readiness gate, the error
+#                   channel, and the auto-approve classification table for every write tool.
+on:
+  pull_request:
+    branches:
+      - development
+    paths:
+      - "supabase/functions/WebSocket/assistantChat/**"
+      - "supabase/functions/WebSocket/assistantMcp/**"
+      - ".github/workflows/assistant-tests.yml"
+  push:
+    branches:
+      - development
+    paths:
+      - "supabase/functions/WebSocket/assistantChat/**"
+      - "supabase/functions/WebSocket/assistantMcp/**"
+      - ".github/workflows/assistant-tests.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: assistant-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Gateway + MCP
+    runs-on: ubuntu-latest
+    strategy:
+      # Keep going so a failure in one service still reports the other's result.
+      fail-fast: false
+      matrix:
+        service:
+          - assistantChat
+          - assistantMcp
+    defaults:
+      run:
+        working-directory: supabase/functions/WebSocket/${{ matrix.service }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          # Both services declare engines.node >= 20 (assistantChat requires >= 22).
+          node-version: "22"
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      # Catches a syntax error in any source file even if no test happens to import it.
+      - name: Syntax check every source file
+        run: |
+          set -o pipefail
+          for f in src/*.mjs; do node --check "$f"; done
+          echo "all src files parse"
+
+      - name: Run tests
+        run: npm test

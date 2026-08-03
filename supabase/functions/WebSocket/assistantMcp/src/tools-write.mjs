@@ -12,12 +12,14 @@
 // tells the user to finish the consent section (enforced here by omission + in the prompt).
 import { z } from "zod";
 import { callApi } from "./helpers.mjs";
-import { QR_ELEMENT_RE, activeOrgRole, makeGuard, normalizePhone, payload, roleAreaDenial, wrap as wrapShared } from "./tool-helpers.mjs";
+import { createOnce } from "./idempotency.mjs";
+import { QR_ELEMENT_RE, activeOrgRole, dateEq, declaredOnly, diffWrite, hexEq, loosenToolSchema, makeGuard, normalizePhone, numberEq, payload, phoneEq, readBackAndCompare, roleAreaDenial, unappliedWrite, verifyGone, wrap as wrapShared, writeNorm } from "./tool-helpers.mjs";
 import { POSTGRID_POSTCARD_API_KEY } from "./env.mjs";
 
 // Shared plumbing (tool-helpers.mjs) with the write-flavored guard tone. The 400/422 branch
 // sanitizes the upstream body before surfacing it (never raw — it can carry internal codes/ids).
-const wrap = (fn) => wrapShared(fn, "write tool");
+// The tool NAME, not a generic tag — see the D5 note on wrap in tool-helpers.
+const wrap = (fn, name) => wrapShared(fn, name ?? "write tool");
 const guard = makeGuard("write");
 
 // ── Referral field canonicalization (bug-bash 2026-07-24) ─────────────────────
@@ -291,40 +293,34 @@ export function flattenReferralUpdate(hoi) {
 // reported separately (`stored_differs`) and does NOT fail verification: server-side
 // canonicalization is legitimate, and conflating the two would manufacture confident
 // "this field can't be changed" messages on writes that fully succeeded.
-const wDigits = (s) => String(s ?? "").replace(/\D+/g, "");
-const wNorm = (s) => String(s ?? "").replace(/\s+/g, " ").trim().toLowerCase();
-const wEmpty = (v) => v === undefined || v === null || (typeof v === "string" && !v.trim());
-// Compare the last 10 digits so a country-code difference ("+12145551234" vs "(214) 555-1234")
-// is not mistaken for a dropped write.
-const wPhoneEq = (a, b) => {
-  const x = wDigits(a).slice(-10);
-  const y = wDigits(b).slice(-10);
-  return !!x && x === y;
-};
+// The comparison engine itself now lives in tool-helpers (diffWrite) and is shared by every write
+// that reads back — this function only declares WHERE each referral field lands in the record. Note
+// `sent` is the FLAT body the tool actually posted (see flattenReferralUpdate), not the model's
+// nested argument: verifying against the raw arg would re-introduce the very mismatch that made the
+// original write silently vanish.
 export function diffReferralWrite(sent, rec) {
-  const not_applied = [];
-  const stored_differs = [];
-  if (!rec || typeof rec !== "object") return { ok: false, unverified: true, not_applied, stored_differs };
-  const hoi = rec.home_owner_info ?? {};
-  const addr = hoi.address ?? {};
-  const jd = rec.job_details ?? {};
-  const check = (field, sentVal, storedVal, eq = (a, b) => wNorm(a) === wNorm(b)) => {
-    if (wEmpty(sentVal)) return;
-    if (wEmpty(storedVal)) { not_applied.push({ field, sent: sentVal, stored: storedVal ?? null }); return; }
-    if (!eq(sentVal, storedVal)) stored_differs.push({ field, sent: sentVal, stored: storedVal });
-  };
-  check("name", sent?.name, hoi.name);
-  check("phone", sent?.phone, hoi.phone, wPhoneEq);
-  check("email", sent?.email, hoi.email);
-  for (const k of ["street_address", "city", "state", "zip", "country"]) {
-    check(`address.${k}`, sent?.address?.[k], addr[k]);
-  }
+  const addrKeys = ["street_address", "city", "state", "zip", "country"];
   const sjd = sent?.job_details ?? {};
-  check("job_details.notes", sjd.notes, jd.notes);
-  check("job_details.value", sjd.value, jd.value, (a, b) => Number(a) === Number(b));
-  check("job_details.job_type", sjd.job_type?.name, jd.job_type?.name);
-  return { ok: not_applied.length === 0, not_applied, stored_differs };
+  return diffWrite([
+    { field: "name", sent: sent?.name, get: (r) => r.home_owner_info?.name },
+    { field: "phone", sent: sent?.phone, get: (r) => r.home_owner_info?.phone, eq: phoneEq },
+    { field: "email", sent: sent?.email, get: (r) => r.home_owner_info?.email },
+    ...addrKeys.map((k) => ({
+      field: `address.${k}`, sent: sent?.address?.[k], get: (r) => r.home_owner_info?.address?.[k],
+    })),
+    { field: "job_details.notes", sent: sjd.notes, get: (r) => r.job_details?.notes },
+    { field: "job_details.value", sent: sjd.value, get: (r) => r.job_details?.value, eq: numberEq },
+    { field: "job_details.job_type", sent: sjd.job_type?.name, get: (r) => r.job_details?.job_type?.name },
+  ], rec);
 }
+
+/**
+ * A design bundle's display name compared against a SIDE template's stored description, which
+ * carries a trailing side token ("QA Dup v2" → "QA Dup v2 Front"). Mirrors the read side's
+ * bundleNameFromDescriptions and the frontend's stripBundleSuffix.
+ */
+export const bundleNameEq = (sent, stored) =>
+  writeNorm(sent) === writeNorm(String(stored ?? "").replace(/\s+(front|back)$/i, ""));
 
 // App-verified caps on SUPPLIED referral fields (bug-bash follow-up 2026-07-28): the app's own
 // forms enforce these limits client-side; the assistant's tools previously passed anything
@@ -385,50 +381,69 @@ function checkJobDetails(jd) {
   return { ok: true };
 }
 
-export function registerWriteTools(server, { userJwt }) {
+export function registerWriteTools(server, { userId, userJwt }) {
   const W = { readOnlyHint: false, destructiveHint: false };
   const D = { readOnlyHint: false, destructiveHint: true };
   // Optional `area` gates the tool by the caller's per-org role (roleAreaDenial) — mirrors the
   // app's menu matrix (technicians: no campaigns/templates; marketers: no template management).
-  const t = (name, description, inputSchema, annotations, handler, area) =>
-    server.registerTool(name, { description, inputSchema, annotations }, wrap(async (a) =>
-      (await roleAreaDenial(userJwt, area)) ?? handler(a)));
+  // D7: ADVERTISE a passthrough schema (so a stray model-added key cannot fail the whole tool call
+  // upstream) but EXECUTE against the declared shape (so no unknown key rides along into an edge
+  // function). See loosenToolSchema / declaredOnly.
+  const t = (name, description, inputSchema, annotations, handler, area) => {
+    const only = declaredOnly(inputSchema);
+    return server.registerTool(name, { description, inputSchema: loosenToolSchema(inputSchema), annotations }, wrap(async (a) =>
+      (await roleAreaDenial(userJwt, area)) ?? handler(only(a)), name));
+  };
 
   // ── Referrals ──────────────────────────────────────────────────────────────
   t("create_referral",
     "Create a new referral. Gather the referrer's details and job info from the user; NEVER fill owner consent or a signature — those are the user's to complete in the app. State may be given as a name or abbreviation ('IL' works); job type is given by NAME and matched to the app's real job-type list (a non-matching name returns the valid options to offer the user). Referrer name must be a first and last name (two words minimum). Phone is OPTIONAL but if given must be a real number, e.g. +17135550123 or (713) 555-0123 — US numbers can omit +1. Job value must be a number > 0 and <= 9,999,999. Notes are optional and must be 250 characters or fewer. Zip must be 5 digits or ZIP+4 (12345 or 12345-6789). The referral is created in DRAFT. Use the returned `missing_to_finalize` list to prompt the user for any still-missing required fields (name, full address, job type, job value), then tell them to complete the consent + signature section in the app to finalize it.",
     { home_owner_info: homeOwnerInfo, job_details: jobDetails },
     W,
-    async (a) => {
-      const body = {};
-      if (a.home_owner_info) {
-        const check = checkHomeOwnerInfo(await canonicalizeAddress(a.home_owner_info, userJwt));
-        if (check.error) return check.error;
-        body.home_owner_info = check.hoi;
-      }
-      if (a.job_details) {
-        const jdCheck = checkJobDetails(a.job_details);
-        if (jdCheck.error) return jdCheck.error;
-        body.job_details = { ...a.job_details };
-        if (a.job_details.job_type) {
-          const jr = await resolveJobType(a.job_details.job_type, userJwt);
-          if (jr.unresolved) return { missing_required: ["job_type"], valid_job_types: jr.unresolved.options, note: jr.unresolved.message };
-          body.job_details.job_type = jr.job_type;
+    // D6: a create is the one mutation whose repeat is not idempotent — an update applied twice is
+    // the same update, but this applied twice is two referrals. The gateway's error retry, an
+    // upstream timeout, and the model re-calling a tool all repeat it, so identical args from the
+    // same user inside the window resolve to the SAME referral. See idempotency.mjs.
+    async (a) => createOnce({
+      userId,
+      tool: "create_referral",
+      args: a,
+      onDuplicate: (r) => ({
+        ...r,
+        duplicate_suppressed: true,
+        note: `This referral was ALREADY created a moment ago — this call did not create a second one. ${r?.note ?? ""} Do not tell the user you created it again.`.trim(),
+      }),
+      fn: async () => {
+        const body = {};
+        if (a.home_owner_info) {
+          const check = checkHomeOwnerInfo(await canonicalizeAddress(a.home_owner_info, userJwt));
+          if (check.error) return check.error;
+          body.home_owner_info = check.hoi;
         }
-      }
-      const res = await callApi("createReferral", "POST", null, userJwt, body);
-      const g = guard(res); if (g) return g;
-      const r = payload(res);
-      const missing = referralMissingToFinalize(body.home_owner_info ?? a.home_owner_info, body.job_details ?? a.job_details);
-      return {
-        id: r?.id,
-        status: r?.status?.name ?? r?.status ?? "Draft",
-        missing_to_finalize: missing,
-        note: missing.length
-          ? `Created as a draft. Still needed to finalize: ${missing.join(", ")}. Ask the user for these. The consent + signature are completed by the user in the app.`
-          : "Created as a draft with all required details. Ask the user to complete the consent + signature section in the app to finalize it.",
-      };
-    });
+        if (a.job_details) {
+          const jdCheck = checkJobDetails(a.job_details);
+          if (jdCheck.error) return jdCheck.error;
+          body.job_details = { ...a.job_details };
+          if (a.job_details.job_type) {
+            const jr = await resolveJobType(a.job_details.job_type, userJwt);
+            if (jr.unresolved) return { missing_required: ["job_type"], valid_job_types: jr.unresolved.options, note: jr.unresolved.message };
+            body.job_details.job_type = jr.job_type;
+          }
+        }
+        const res = await callApi("createReferral", "POST", null, userJwt, body);
+        const g = guard(res); if (g) return g;
+        const r = payload(res);
+        const missing = referralMissingToFinalize(body.home_owner_info ?? a.home_owner_info, body.job_details ?? a.job_details);
+        return {
+          id: r?.id,
+          status: r?.status?.name ?? r?.status ?? "Draft",
+          missing_to_finalize: missing,
+          note: missing.length
+            ? `Created as a draft. Still needed to finalize: ${missing.join(", ")}. Ask the user for these. The consent + signature are completed by the user in the app.`
+            : "Created as a draft with all required details. Ask the user to complete the consent + signature section in the app to finalize it.",
+        };
+      },
+    }));
 
   t("update_referral",
     "Edit an existing referral (referrer details, job info, notes). Notes live in job_details.notes (<= 250 characters). Phone is OPTIONAL but if given must be a real number, e.g. +17135550123 or (713) 555-0123 — US numbers can omit +1. Job value must be a number > 0 and <= 9,999,999. Zip must be 5 digits or ZIP+4 (12345 or 12345-6789). You can NEVER set owner consent, a signature, or the referral's status: the user completes the consent + signature section in the app, and THAT is what turns a draft into a referral usable for a campaign. Pass only the fields being changed. The reply tells you whether the change was VERIFIED against the saved record — if it comes back with fields_not_applied, the change did NOT save and repeating the call will not help. `missing_to_finalize` reflects the referral's CURRENT state after the edit — prompt the user for anything still missing.",
@@ -467,21 +482,7 @@ export function registerWriteTools(server, { userJwt }) {
       const rb = await callApi("getReferralById", "POST", null, userJwt, { id: a.id });
       const rec = rb && !rb.__error ? payload(rb) : null;
       const verdict = diffReferralWrite(body, rec);
-      if (!verdict.ok) {
-        const fields = verdict.not_applied.map((f) => f.field);
-        console.error("[update_referral] write not applied", JSON.stringify({ id: a.id, unverified: !!verdict.unverified, fields }));
-        return {
-          blocked: verdict.unverified ? "write_unverified" : "write_not_applied",
-          id: a.id,
-          verified: false,
-          ...(fields.length ? { fields_not_applied: fields } : {}),
-          retry: false,
-          plain: verdict.unverified
-            ? "I couldn't confirm whether that saved, so I'm not going to tell you it did."
-            : "That didn't save — the referral still shows its previous details.",
-          note: "NOTHING was applied for the listed fields. Do NOT repeat this call — it will behave identically. Tell the user plainly that the change did not save, name what didn't save in plain words, and do NOT claim any of those fields were updated. This is a system fault, not the user's mistake.",
-        };
-      }
+      if (!verdict.ok) return unappliedWrite(verdict, { tool: "update_referral", id: a.id, subject: "referral" });
       const missing = referralMissingToFinalize(rec?.home_owner_info, rec?.job_details);
       const status = rec?.status?.name ?? rec?.status ?? null;
       return {
@@ -568,16 +569,40 @@ export function registerWriteTools(server, { userJwt }) {
       }
 
       const res = await callApi("deleteReferral", "DELETE", null, userJwt, { id: a.id });
-      return guard(res) ?? { id: a.id, deleted: true, campaigns_deleted: rows.length };
+      const gd = guard(res); if (gd) return gd;
+      // D1 (delete): confirm it is actually gone. A 404 on the read-back IS the proof — see
+      // verifyGone, which has the opposite polarity to readBackAndCompare for exactly this reason.
+      const gone = await verifyGone({
+        tool: "delete_referral", id: a.id, subject: "referral",
+        read: () => callApi("getReferralById", "POST", null, userJwt, { id: a.id }),
+        stillThere: (r) => !!r?.id,
+      });
+      if (gone) return gone;
+      return { id: a.id, deleted: true, verified: true, campaigns_deleted: rows.length };
     });
 
   t("delete_referral_image",
-    "Delete one image from a referral's (or the org's) gallery. Irreversible.",
+    "Delete one image from a referral's (or the org's) gallery. Irreversible." +
+    " The reply tells you whether the deletion was VERIFIED — if it comes back `blocked`, it was NOT deleted: say so plainly and do not repeat the call.",
     { id: z.string().describe("gallery image id") },
     D,
     async (a) => {
       const res = await callApi("deleteImage", "DELETE", null, userJwt, { id: a.id });
-      return guard(res) ?? { id: a.id, deleted: true };
+      const g = guard(res); if (g) return g;
+      // D1 (removal): confirm the image is actually gone from the gallery before saying so. This
+      // one also matters for readiness — a referral needs at least one job photo for a campaign, so
+      // a phantom delete would leave the model with the wrong photo count.
+      const { refusal, row } = await readBackAndCompare({
+        tool: "delete_referral_image",
+        id: a.id,
+        expect: [{ field: "image", get: (gal) => (gal.images ?? gal.gallery?.images ?? []).find((i) => i?.id === a.id), absent: true }],
+        read: async () => { const r = await callApi("getPhotoGallery", "POST", null, userJwt, {}); return r && !r.__error ? payload(r) : null; },
+        plain: "That image is still in the gallery, so the delete didn't take effect.",
+        unverifiedPlain: "I couldn't confirm that image was deleted, so I won't tell you it was.",
+      });
+      if (refusal) return refusal;
+      const remaining = (row?.images ?? row?.gallery?.images ?? []).length;
+      return { id: a.id, deleted: true, verified: true, images_remaining: remaining };
     });
 
   // ── Notifications ────────────────────────────────────────────────────────────
@@ -629,42 +654,46 @@ export function registerWriteTools(server, { userJwt }) {
       // full-replaced every optional column, "change our business email" silently blanked the
       // phone, website, industry and registration number while reporting success. The endpoint now
       // merges on key presence; this check is what proves it for any given call.
+      // D1: shares the one comparison engine (diffWrite) with every other verified write. An
+      // explicit null/"" means the user asked to REMOVE that field, so it is checked with `absent`
+      // — the stored value must now be gone, which is the opposite assertion from every other field.
       const row = payload(res);
-      if (!row || typeof row !== "object") {
-        return {
-          blocked: "write_unverified", verified: false, retry: false,
-          plain: "I couldn't confirm those details saved, so I won't tell you they did.",
-          note: "Do NOT repeat this call. Tell the user you could not confirm the change and suggest they check the Settings page.",
-        };
-      }
-      const notApplied = [];   // we sent a value and the saved row has nothing → dropped
-      const differs = [];      // saved value is present but different → server transformed it
-      for (const [k, v] of Object.entries(a)) {
-        if (v === undefined) continue;
-        const stored = row[k];
-        const storedEmpty = stored === null || stored === undefined || String(stored).trim() === "";
-        if (v === null || v === "") { if (!storedEmpty) notApplied.push(k); continue; }
-        if (storedEmpty) { notApplied.push(k); continue; }
-        if (String(stored).trim() !== String(v).trim()) differs.push({ field: k, sent: v, stored });
-      }
-      if (notApplied.length) {
-        console.error("[update_organization] write not applied", JSON.stringify({ fields: notApplied }));
-        return {
-          blocked: "write_not_applied", verified: false, fields_not_applied: notApplied, retry: false,
+      const expect = Object.entries(a)
+        .filter(([, v]) => v !== undefined)
+        .map(([k, v]) => (v === null || v === ""
+          ? { field: k, get: (r) => r[k], absent: true }
+          : { field: k, sent: v, get: (r) => r[k] }));
+      const verdict = diffWrite(expect, row);
+      if (!verdict.ok) {
+        return unappliedWrite(verdict, {
+          tool: "update_organization",
           plain: "Those details didn't save — the account still shows its previous values.",
-          note: "NOTHING was applied for the listed fields. Do NOT repeat this call. Tell the user plainly what did not save, and do not claim any of it was updated.",
-        };
+          unverifiedPlain: "I couldn't confirm those details saved, so I won't tell you they did.",
+        });
       }
-      return { updated: true, verified: true, ...(differs.length ? { stored_differs: differs } : {}) };
+      return { updated: true, verified: true, ...(verdict.stored_differs.length ? { stored_differs: verdict.stored_differs } : {}) };
     });
 
   t("update_profile",
-    "Update the signed-in user's own profile display name. (Cannot change password.)",
+    "Update the signed-in user's own profile display name. (Cannot change password.)" +
+    " The reply tells you whether the change was VERIFIED against the saved record — if it comes back `blocked`, the change did NOT take effect: say so plainly and do not repeat the call.",
     { full_name: z.string().min(1) },
     W,
     async (a) => {
-      const res = await callApi("updateUser", "POST", null, userJwt, { full_name: a.full_name });
-      return guard(res) ?? { updated: true, full_name: a.full_name };
+      const full_name = a.full_name.trim();
+      const res = await callApi("updateUser", "POST", null, userJwt, { full_name });
+      const g = guard(res); if (g) return g;
+      // D1: the old return echoed the ARGUMENT back as the outcome, so the model would tell the user
+      // "your name is now X" on the strength of a 2xx alone.
+      const { refusal, verdict } = await readBackAndCompare({
+        tool: "update_profile",
+        expect: [{ field: "full_name", sent: full_name, get: (u) => u.full_name }],
+        read: async () => { const r = await callApi("getUser", "GET", null, userJwt); return r && !r.__error ? payload(r) : null; },
+        plain: "That didn't save — your profile still shows your previous name.",
+        subject: "profile",
+      });
+      if (refusal) return refusal;
+      return { updated: true, verified: true, full_name, ...(verdict.stored_differs.length ? { stored_differs: verdict.stored_differs } : {}) };
     });
 
   t("set_default_payment_method",
@@ -699,7 +728,21 @@ export function registerWriteTools(server, { userJwt }) {
       campaign_id: z.string().optional().describe("ONLY to resume a draft this tool already created whose design/QR step failed — skips re-creating and retries attaching (both retry steps are safe to re-run)"),
     },
     W,
-    async (a) => {
+    // D6 (see create_referral): identical args from the same user inside the window resolve to the
+    // SAME campaign rather than minting a second draft. The pre-flight gates below return
+    // missing_required / blocked / error, which createOnce does NOT cache — a call that was refused
+    // must stay retryable. Resuming with an explicit campaign_id changes the args, so the existing
+    // resume path is unaffected.
+    async (a) => createOnce({
+      userId,
+      tool: "create_campaign",
+      args: a,
+      onDuplicate: (r) => ({
+        ...r,
+        duplicate_suppressed: true,
+        note: `This campaign was ALREADY created a moment ago — this call did not create a second one. ${r?.note ?? ""} Do not tell the user you created it again.`.trim(),
+      }),
+      fn: async () => {
       // 1. Required-field validation (backstop — the agent should have gathered these).
       const missing = [];
       if (!a.campaign_name?.trim()) missing.push("campaign_name");
@@ -794,10 +837,11 @@ export function registerWriteTools(server, { userJwt }) {
         status: "Draft",
         note: "Campaign created as a draft with its design attached. NEXT: set the mailing audience (map targeting) for it, then the user completes consents + payment to launch in the app. The audience isn't set yet, and it hasn't been launched.",
       };
-    }, "campaigns");
+      },
+    }), "campaigns");
 
   t("update_campaign",
-    "Edit an existing campaign's metadata (name, linked referral, disclaimer, start date, target type). Pass only what changes. Set referral_id to null to unlink a referral. This tool never changes launch status and never charges — launching stays in the app. (Changing the mailing audience is a separate audience-builder step, not here.)",
+    "Edit an existing campaign's metadata (name, linked referral, disclaimer, start date, target type). Pass only what changes. Set referral_id to null to unlink a referral. This tool never changes launch status and never charges — launching stays in the app. (Changing the mailing audience is a separate audience-builder step, not here.) The reply tells you whether the change was VERIFIED against the saved record — if it comes back `blocked`, the change did NOT take effect: say so plainly and do not repeat the call.",
     {
       id: z.string().describe("campaign UUID"),
       campaign_name: z.string().optional().describe("<= 20 characters"),
@@ -818,11 +862,30 @@ export function registerWriteTools(server, { userJwt }) {
       if (a.target_type !== undefined) body.campaign_target_type = a.target_type === "referral" ? "Referrals" : "Location Zone";
       if (Object.keys(body).length === 1) return { error: "Nothing to update — pass at least one field to change." };
       const res = await callApi("editCampaignV2", "POST", null, userJwt, body);
-      return guard(res) ?? { id: a.id, updated: true };
+      const g = guard(res); if (g) return g;
+      // D1: read back rather than relay the 2xx. Note the one thing this CANNOT prove: unlinking
+      // (referral_id: null) is an absence, and an absence is indistinguishable from a field the read
+      // never returns — so it is deliberately not asserted here and the note below does not claim it.
+      const { refusal, verdict } = await readBackAndCompare({
+        tool: "update_campaign",
+        id: a.id,
+        expect: [
+          { field: "campaign_name", sent: body.campaign_name, get: (c) => c.campaign_name },
+          { field: "disclaimer_text", sent: body.disclaimer_text, get: (c) => c.disclaimer_text },
+          { field: "start_date", sent: body.start_date, get: (c) => c.start_date, eq: dateEq },
+          { field: "target_type", sent: body.campaign_target_type, get: (c) => c.campaign_target_type },
+          { field: "referral_id", sent: body.referral_id, get: (c) => c.referral_id },
+        ],
+        read: async () => { const r = await callApi("getCampaignById", "POST", null, userJwt, { id: a.id }); return r && !r.__error ? payload(r) : null; },
+        plain: "That didn't save — the campaign still shows its previous details.",
+        subject: "campaign",
+      });
+      if (refusal) return refusal;
+      return { id: a.id, updated: true, verified: true, ...(verdict.stored_differs.length ? { stored_differs: verdict.stored_differs } : {}) };
     }, "campaigns");
 
   t("delete_campaign",
-    "Delete a campaign permanently. Irreversible — confirm the user really means this campaign. Pass BOTH the id AND the campaign's exact name — the tool verifies they match before deleting (a mismatch deletes nothing). Get the id fresh from list/search in THIS conversation; never reuse a remembered id.",
+    "Delete a campaign permanently. Irreversible — confirm the user really means this campaign. Pass BOTH the id AND the campaign's exact name — the tool verifies they match before deleting (a mismatch deletes nothing). Get the id fresh from list/search in THIS conversation; never reuse a remembered id. The reply tells you whether the deletion was VERIFIED — if it comes back `blocked`, it was NOT deleted: say so plainly and do not repeat the call.",
     { id: z.string().describe("campaign UUID"), name: z.string().optional().describe("REQUIRED — the campaign's exact name, for verification") },
     D,
     async (a) => {
@@ -832,7 +895,14 @@ export function registerWriteTools(server, { userJwt }) {
       const actual = payload(cb)?.campaign_name ?? null;
       const mm = nameMismatch(a.name, actual, "campaign"); if (mm) return mm;
       const res = await callApi("deleteCampaign", "DELETE", null, userJwt, { id: a.id });
-      return guard(res) ?? { id: a.id, name: actual ?? a.name, deleted: true };
+      const gd = guard(res); if (gd) return gd;
+      const gone = await verifyGone({
+        tool: "delete_campaign", id: a.id, subject: "campaign",
+        read: () => callApi("getCampaignById", "POST", null, userJwt, { id: a.id }),
+        stillThere: (c) => !!c?.id,
+      });
+      if (gone) return gone;
+      return { id: a.id, name: actual ?? a.name, deleted: true, verified: true };
     }, "campaigns");
 
   // ── Templates (design bundles) ───────────────────────────────────────────────
@@ -869,7 +939,8 @@ export function registerWriteTools(server, { userJwt }) {
     }, "template_management");
 
   t("update_template_settings",
-    "Update a design bundle's name and/or postcard size. (Editing the artwork/HTML itself is done in the visual editor, not chat.)",
+    "Update a design bundle's name and/or postcard size. (Editing the artwork/HTML itself is done in the visual editor, not chat.)" +
+    " The reply tells you whether the change was VERIFIED against the saved record — if it comes back `blocked`, the change did NOT take effect: say so plainly and do not repeat the call.",
     { bundle_id: z.string(), name: z.string().optional().describe("new name/description"), postcard_size: z.enum(["4x6", "6x9", "6x11"]).optional() },
     W,
     async (a) => {
@@ -878,9 +949,39 @@ export function registerWriteTools(server, { userJwt }) {
       if (a.name) body.description = a.name;
       if (a.postcard_size) body.postcardSize = a.postcard_size;
       const res = await callApi("updateTemplateBundle", "POST", null, userJwt, body);
-      return guard(res) ?? {
+      const g = guard(res); if (g) return g;
+      // D1: read back. A bundle has no name of its own — the display name is the SIDE templates'
+      // description (see the read-side bundleNameFromDescriptions), so verify against either side.
+      const { refusal, verdict } = await readBackAndCompare({
+        tool: "update_template_settings",
+        id: a.bundle_id,
+        expect: [
+          {
+            field: "name",
+            sent: body.description,
+            get: (b) => b.front_template?.description ?? b.back_template?.description,
+            // The stored description carries a side token ("QA Dup v2 Front") that the bundle-level
+            // name we sent does not — the same rule the read side's bundleNameFromDescriptions
+            // applies. Without stripping it, every successful rename would be reported as differing.
+            eq: (sent, stored) => bundleNameEq(sent, stored),
+          },
+          {
+            field: "postcard_size",
+            sent: body.postcardSize,
+            get: (b) => b.front_template?.postcard_size ?? b.front_template?.postcardSize
+              ?? b.back_template?.postcard_size ?? b.back_template?.postcardSize,
+          },
+        ],
+        read: async () => { const r = await callApi("getTemplateBundleById", "POST", null, userJwt, { id: a.bundle_id }); return r && !r.__error ? payload(r) : null; },
+        plain: "That didn't save — the design still shows its previous name and size.",
+        subject: "design",
+      });
+      if (refusal) return refusal;
+      return {
         bundle_id: a.bundle_id,
         updated: true,
+        verified: true,
+        ...(verdict.stored_differs.length ? { stored_differs: verdict.stored_differs } : {}),
         note: `Updated. SHOW the user the design: emit a PostcardPreview block with bundleId "${a.bundle_id}".`,
       };
     }, "template_management");
@@ -1000,7 +1101,7 @@ export function registerWriteTools(server, { userJwt }) {
   // Setting a logo requires a FILE and happens via the ImageUploader card (client-side);
   // removing the company logo and updating the theme are plain JSON writes, so they're tools.
   t("update_branding_theme",
-    "Update the user's branding theme: the three brand colors (hex) and the two font names. These become the defaults used across their postcard designs. All five values are required by the server, so carry over current values for anything the user isn't changing.",
+    "Update the user's branding theme: the three brand colors (hex) and the two font names. These become the defaults used across their postcard designs. All five values are required by the server, so carry over current values for anything the user isn't changing. The reply tells you whether the change was VERIFIED against the saved record — if it comes back `blocked`, the change did NOT take effect: say so plainly and do not repeat the call.",
     {
       primary_color: z.string().regex(/^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/, "hex color like #E17019"),
       secondary_color: z.string().regex(/^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/, "hex color"),
@@ -1034,16 +1135,52 @@ export function registerWriteTools(server, { userJwt }) {
         },
       });
       const g = guard(res); if (g) return g;
-      return { updated: true, verified: true, colors: [a.primary_color, a.secondary_color, a.accent_color], fonts: [a.heading_font, a.body_font] };
+      // D1: this claimed `verified: true` while reporting the ARGUMENTS back — the one thing a
+      // verified flag must never mean. getAppContent is the same source the app renders from, so a
+      // read-back here proves what the user will actually see.
+      const { refusal, verdict } = await readBackAndCompare({
+        tool: "update_branding_theme",
+        expect: [
+          { field: "primary_color", sent: a.primary_color, get: (c) => c.theme?.colors?.primary, eq: hexEq },
+          { field: "secondary_color", sent: a.secondary_color, get: (c) => c.theme?.colors?.secondary, eq: hexEq },
+          { field: "accent_color", sent: a.accent_color, get: (c) => c.theme?.colors?.accent, eq: hexEq },
+          { field: "heading_font", sent: a.heading_font, get: (c) => c.theme?.fonts?.primary?.name },
+          // fonts.body, not fonts.secondary — reading the wrong key is what made the body font
+          // silently revert while the tool reported success (AS4).
+          { field: "body_font", sent: a.body_font, get: (c) => c.theme?.fonts?.body?.name },
+        ],
+        read: async () => { const r = await callApi("getAppContent", "GET", null, userJwt); return r && !r.__error ? payload(r) : null; },
+        plain: "That didn't save — your branding still shows the previous colours and fonts.",
+        subject: "branding",
+      });
+      if (refusal) return refusal;
+      return {
+        updated: true, verified: true,
+        colors: [a.primary_color, a.secondary_color, a.accent_color],
+        fonts: [a.heading_font, a.body_font],
+        ...(verdict.stored_differs.length ? { stored_differs: verdict.stored_differs } : {}),
+      };
     });
 
   t("remove_company_logo",
-    "Remove the organization's company logo. (SETTING a logo needs a file — that's done through the image-upload card, not this tool.)",
+    "Remove the organization's company logo. (SETTING a logo needs a file — that's done through the image-upload card, not this tool.)" +
+    " The reply tells you whether the deletion was VERIFIED — if it comes back `blocked`, it was NOT deleted: say so plainly and do not repeat the call.",
     {},
     D,
     async () => {
       const res = await callApi("updateCompanyLogo", "POST", null, userJwt, { company_logo: null });
-      return guard(res) ?? { removed: true };
+      const g = guard(res); if (g) return g;
+      // D1 (removal): a delete that reports success while the thing is still there is the same
+      // defect as an unapplied write. getOnboardingDetails is the read that carries company_logo.
+      const { refusal } = await readBackAndCompare({
+        tool: "remove_company_logo",
+        expect: [{ field: "company_logo", get: (d) => d.company_logo, absent: true }],
+        read: async () => { const r = await callApi("getOnboardingDetails", "GET", null, userJwt); return r && !r.__error ? payload(r) : null; },
+        plain: "The logo is still showing on the account, so that didn't take effect.",
+        unverifiedPlain: "I couldn't confirm the logo was removed, so I won't tell you it was.",
+      });
+      if (refusal) return refusal;
+      return { removed: true, verified: true };
     });
 
   // ── Agency: team management (3C-3) ──────────────────────────────────────────
@@ -1137,7 +1274,7 @@ export function registerWriteTools(server, { userJwt }) {
 
   // ── Agency: settings + template sharing (3C-3) ───────────────────────────────
   t("update_agency_settings",
-    "Update the agency workspace's details: name, industry, and/or website. At least one field is required. (The agency LOGO needs a file — that's the image-upload card, not this tool.) Requires OWNER/ADMIN of the agency.",
+    "Update the agency workspace's details: name, industry, and/or website. At least one field is required. (The agency LOGO needs a file — that's the image-upload card, not this tool.) Requires OWNER/ADMIN of the agency. The reply tells you whether the change was VERIFIED against the saved record — if it comes back `blocked`, the change did NOT take effect: say so plainly and do not repeat the call.",
     {
       agency_name: z.string().optional(),
       industry: z.string().optional(),
@@ -1152,8 +1289,28 @@ export function registerWriteTools(server, { userJwt }) {
       if (a.website_url !== undefined) body.agency_website_url = a.website_url;
       const res = await callApi("editAgencySettings", "POST", null, userJwt, body);
       const g = guard(res); if (g) return g;
+      // D1: the endpoint returns the saved agency row, so compare against it instead of echoing the
+      // arguments back. (An echo of the response is weaker evidence than an independent read, but it
+      // is the row the server actually persisted — and it is what caught the same class of bug in
+      // update_organization.)
       const ag = payload(res)?.agency ?? payload(res);
-      return { updated: true, agency_name: ag?.agency_name, industry: ag?.industry, website_url: ag?.agency_website_url };
+      const verdict = diffWrite([
+        { field: "agency_name", sent: body.agency_name, get: (r) => r.agency_name },
+        { field: "industry", sent: body.industry, get: (r) => r.industry },
+        { field: "website_url", sent: body.agency_website_url, get: (r) => r.agency_website_url },
+      ], ag);
+      if (!verdict.ok) {
+        return unappliedWrite(verdict, {
+          tool: "update_agency_settings",
+          plain: "Those details didn't save — the agency still shows its previous values.",
+          unverifiedPlain: "I couldn't confirm those details saved, so I won't tell you they did.",
+        });
+      }
+      return {
+        updated: true, verified: true,
+        agency_name: ag?.agency_name, industry: ag?.industry, website_url: ag?.agency_website_url,
+        ...(verdict.stored_differs.length ? { stored_differs: verdict.stored_differs } : {}),
+      };
     });
 
   t("share_agency_template",
@@ -1179,7 +1336,7 @@ export function registerWriteTools(server, { userJwt }) {
     }, "template_management");
 
   t("delete_template_bundle",
-    "Delete a postcard design bundle permanently (removes it from PostGrid too). Irreversible — confirm the user means this design. Pass BOTH the bundle id AND the design's exact name — the tool verifies they match before deleting. Requires OWNER/ADMIN of the design's owning organization.",
+    "Delete a postcard design bundle permanently (removes it from PostGrid too). Irreversible — confirm the user means this design. Pass BOTH the bundle id AND the design's exact name — the tool verifies they match before deleting. Requires OWNER/ADMIN of the design's owning organization. The reply tells you whether the deletion was VERIFIED — if it comes back `blocked`, it was NOT deleted: say so plainly and do not repeat the call.",
     { bundle_id: z.string(), name: z.string().optional().describe("REQUIRED — the design's exact name, for verification") },
     D,
     async (a) => {
@@ -1192,7 +1349,16 @@ export function registerWriteTools(server, { userJwt }) {
       const actual = (p?.front_template?.description ?? p?.back_template?.description ?? "").replace(/\s+(front|back)$/i, "").trim() || null;
       const mm = nameMismatch(a.name, actual, "design"); if (mm) return mm;
       const res = await callApi("deleteTemplateBundle", "POST", null, userJwt, { template_bundle_id: a.bundle_id, postgridApiKey: POSTGRID_POSTCARD_API_KEY });
-      return guard(res) ?? { bundle_id: a.bundle_id, name: actual ?? a.name, deleted: true };
+      const gd = guard(res); if (gd) return gd;
+      // Note the read-back uses the SAME call signature as the pre-delete lookup above (GET with a
+      // bundle_id query, not a POST body) — this endpoint differs from the campaign/referral ones.
+      const gone = await verifyGone({
+        tool: "delete_template_bundle", id: a.bundle_id, subject: "design",
+        read: () => callApi("getTemplateBundleById", "GET", { bundle_id: a.bundle_id }, userJwt),
+        stillThere: (b) => !!(b?.front_template || b?.back_template || b?.id),
+      });
+      if (gone) return gone;
+      return { bundle_id: a.bundle_id, name: actual ?? a.name, deleted: true, verified: true };
     }, "template_management");
 
   // ── Organizations (3C-4) ─────────────────────────────────────────────────────
