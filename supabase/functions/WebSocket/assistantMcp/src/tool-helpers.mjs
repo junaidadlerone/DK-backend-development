@@ -284,9 +284,19 @@ const outcomeOf = (out) => {
   if (out.verified === true) return { outcome: "verified" };
   return { outcome: "ok" };
 };
-/** Correlation id for the current turn, set per request from the gateway's header (see setTurnId). */
+/**
+ * Correlation id for the current turn, read per request from the X-DK-Turn header.
+ *
+ * Accepts a UUID and nothing else. That is deliberate: Flowise substitutes `{{$vars.turnId}}` in the
+ * header, and if the var is absent — the flow edited before the gateway deploy, or a header added to a
+ * flow whose gateway does not send it — the LITERAL "{{$vars.turnId}}" arrives instead. Logging that
+ * as a turn id would be worse than logging nothing, because it looks like a real correlation.
+ */
 let currentTurnId = null;
-export const setTurnId = (id) => { currentTurnId = (typeof id === "string" && id.length <= 64) ? id : null; };
+const TURN_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+export const setTurnId = (id) => { currentTurnId = (typeof id === "string" && TURN_ID_RE.test(id)) ? id : null; };
+/** The accepted turn id, or null. Exported so a test can assert what was accepted. */
+export const getTurnId = () => currentTurnId;
 export const wrap = (fn, tag = "tool") => async (args) => {
   const startedAt = Date.now();
   const line = (fields) => console.log(JSON.stringify({ at: "mcp", event: "tool", tool: tag, turn_id: currentTurnId, ms: Date.now() - startedAt, ...fields }));

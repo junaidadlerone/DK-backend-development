@@ -24,7 +24,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { z } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
-import { declaredOnly, loosenInputSchema, loosenSchema, loosenToolSchema } from "../src/tool-helpers.mjs";
+import { declaredOnly, getTurnId, loosenInputSchema, loosenSchema, loosenToolSchema, setTurnId } from "../src/tool-helpers.mjs";
 import { registerWriteTools } from "../src/tools-write.mjs";
 import { registerReadTools } from "../src/tools-read.mjs";
 
@@ -236,4 +236,18 @@ test("a stray key at any level survives the wire and is stripped before the hand
   assert.ok(!res.isError, "the call must not fail on the stray keys");
   assert.deepEqual(seen, { id: "r1", job_details: { value: 500 } });
   await client.close();
+});
+
+// ── The turn-correlation header (D5) ─────────────────────────────────────────
+// Lives here because setTurnId is part of the same shared plumbing module.
+
+test("setTurnId accepts a UUID and rejects an unsubstituted Flowise variable", () => {
+  // If the flow gets the header before the gateway sends the var, Flowise passes the LITERAL
+  // "{{$vars.turnId}}" through — logging that as a turn id would look like a real correlation.
+  setTurnId("11111111-2222-4333-8444-555555555555");
+  assert.equal(getTurnId(), "11111111-2222-4333-8444-555555555555");
+  for (const bad of ["{{$vars.turnId}}", "", "   ", "not-a-uuid", null, undefined, 42, "1".repeat(200)]) {
+    setTurnId(bad);
+    assert.equal(getTurnId(), null, `${JSON.stringify(bad)} must not be recorded as a turn`);
+  }
 });
