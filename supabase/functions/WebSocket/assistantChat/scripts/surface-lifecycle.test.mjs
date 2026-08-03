@@ -116,6 +116,36 @@ test("re-emitting the surface the user just clicked streams it LOCKED, not re-ar
     `a consumed surface must not be re-persisted; got ${JSON.stringify(upserts)}`);
 });
 
+test("a STALE consumed surface is dropped entirely, not streamed locked", async () => {
+  // REPORTED 2026-08-03: a disabled "upload images" card from a referral step reappeared many turns
+  // later, above the approval card for creating a campaign. The first version of the consumed-surface
+  // fix streamed every consumed re-emit LOCKED, which is right only for the card the user just clicked.
+  // A finished step from earlier resurfacing in the current message reads as unfinished work.
+  mock.reset();
+  mock.setFrames([{ ev: "token", data: "On it." }]);
+  const first = await runTurn(gateway, token, { message: "hi", mode: "manual", context: { page: "/referrals" } });
+  const sessionId = doneFrame(first.frames)?.session_id;
+
+  // Turn 2: the user clicks the uploader, consuming it.
+  mock.reset();
+  mock.setFrames([{ ev: "token", data: "Got the photos." }]);
+  await runTurn(gateway, token, {
+    message: "uploaded", mode: "manual", session_id: sessionId, context: { page: "/referrals" },
+    surface_id: "upload_1", interaction: { action: "send", display: "✓ Images added" },
+  });
+
+  // Turn 3: an UNRELATED turn in which the model re-emits that old uploader card.
+  mock.reset();
+  mock.setUiFrames([card("upload_1")]);
+  mock.setFrames([uiJobReturn()]);
+  const third = await runTurn(gateway, token, {
+    message: "now set up the campaign", mode: "manual", session_id: sessionId, context: { page: "/campaigns" },
+  });
+  const streamed = uiFrames(third.frames).find((f) => f.surface_id === "upload_1");
+  assert.equal(streamed, undefined,
+    "a finished step from an earlier turn must not appear in this message at all, locked or otherwise");
+});
+
 test("a brand-new surface_id in the same session is still fully actionable", async () => {
   mock.reset();
   mock.setFrames([{ ev: "token", data: "On it." }]);

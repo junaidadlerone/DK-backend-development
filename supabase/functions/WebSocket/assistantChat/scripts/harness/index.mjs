@@ -49,6 +49,7 @@ export async function startMockStack({ tools = DEFAULT_TOOLS } = {}) {
 
   const state = {
     failSurfaceSelect: false, // make chat_surfaces SELECTs fail (pre-migration column)
+    consumedSurfaces: new Map(), // surface_id -> interaction, remembered ACROSS turns (see below)
     frames: [],        // upstream SSE frames to replay on the next prediction call
     framesByCall: null, // or an array of frame-arrays, one per successive call (retries/resumes)
     uiFrames: [],      // frames the MCP jobs side channel should hand back
@@ -72,6 +73,27 @@ export async function startMockStack({ tools = DEFAULT_TOOLS } = {}) {
     if (state.failSurfaceSelect && req.method === "GET" && req.path.includes("chat_surfaces")) {
       res.status(400).json({ code: "42703", message: 'column chat_surfaces.state does not exist' });
       return;
+    }
+    // chat_surfaces is the ONE table this mock keeps real state for. The surface lifecycle is
+    // cross-TURN by nature — a card consumed in turn 2 must still read as consumed in turn 9 — and a
+    // canned row cannot express that, so the reported "stale card reappears many turns later" bug was
+    // untestable until this existed. Everything else stays a canned success; persistence is not what
+    // these suites are about.
+    if (req.path.includes("chat_surfaces")) {
+      const eqValue = (key) => {
+        const raw = req.query?.[key];
+        return typeof raw === "string" && raw.startsWith("eq.") ? raw.slice(3) : null;
+      };
+      if (req.method === "PATCH" && req.body?.state === "consumed") {
+        const sid = eqValue("surface_id");
+        if (sid) state.consumedSurfaces.set(sid, req.body.interaction ?? null);
+      }
+      if (req.method === "GET" && eqValue("state") === "consumed") {
+        res.status(200).json([...state.consumedSurfaces].map(([surface_id, interaction]) => ({
+          surface_id, interaction, state: "consumed",
+        })));
+        return;
+      }
     }
     const row = { id: "00000000-0000-4000-8000-000000000001" };
     // supabase-js `.single()` asks for a bare object via Accept; everything else expects an array.
@@ -118,6 +140,8 @@ export async function startMockStack({ tools = DEFAULT_TOOLS } = {}) {
     setFramesByCall(list) { state.framesByCall = list; },
     setUiFrames(frames) { state.uiFrames = frames; },
     reset() { state.frames = []; state.framesByCall = null; state.uiFrames = []; state.predictions.length = 0; state.restCalls.length = 0; state.failSurfaceSelect = false; },
+    /** Surface lifecycle is cross-turn, so reset() deliberately KEEPS it; use this to start clean. */
+    clearConsumedSurfaces() { state.consumedSurfaces.clear(); },
     set failSurfaceSelect(v) { state.failSurfaceSelect = !!v; },
     get failSurfaceSelect() { return state.failSurfaceSelect; },
     async mintToken({ sub = randomUUID(), expiresIn = "10m" } = {}) {
