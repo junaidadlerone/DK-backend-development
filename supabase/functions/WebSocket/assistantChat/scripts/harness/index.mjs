@@ -48,6 +48,7 @@ export async function startMockStack({ tools = DEFAULT_TOOLS } = {}) {
   Object.assign(jwk, { alg: "ES256", use: "sig", kid: "harness" });
 
   const state = {
+    failSurfaceSelect: false, // make chat_surfaces SELECTs fail (pre-migration column)
     frames: [],        // upstream SSE frames to replay on the next prediction call
     framesByCall: null, // or an array of frame-arrays, one per successive call (retries/resumes)
     uiFrames: [],      // frames the MCP jobs side channel should hand back
@@ -65,6 +66,13 @@ export async function startMockStack({ tools = DEFAULT_TOOLS } = {}) {
   // can assert that (say) a surface upsert happened without asserting on its result.
   app.all(/^\/rest\/v1\/.*/, (req, res) => {
     state.restCalls.push({ method: req.method, path: req.path, body: req.body });
+    // Simulate a column the migration has not added yet (D4's chat_surfaces.state): PostgREST answers
+    // 42703 "column does not exist". A deploy that lands ahead of its migration must degrade, not fail,
+    // so that ordering has to be testable.
+    if (state.failSurfaceSelect && req.method === "GET" && req.path.includes("chat_surfaces")) {
+      res.status(400).json({ code: "42703", message: 'column chat_surfaces.state does not exist' });
+      return;
+    }
     const row = { id: "00000000-0000-4000-8000-000000000001" };
     // supabase-js `.single()` asks for a bare object via Accept; everything else expects an array.
     const wantsObject = String(req.headers.accept ?? "").includes("pgrst.object");
@@ -109,7 +117,9 @@ export async function startMockStack({ tools = DEFAULT_TOOLS } = {}) {
     /** Replay a DIFFERENT frame set per successive upstream call — for retries and resumes. */
     setFramesByCall(list) { state.framesByCall = list; },
     setUiFrames(frames) { state.uiFrames = frames; },
-    reset() { state.frames = []; state.framesByCall = null; state.uiFrames = []; state.predictions.length = 0; state.restCalls.length = 0; },
+    reset() { state.frames = []; state.framesByCall = null; state.uiFrames = []; state.predictions.length = 0; state.restCalls.length = 0; state.failSurfaceSelect = false; },
+    set failSurfaceSelect(v) { state.failSurfaceSelect = !!v; },
+    get failSurfaceSelect() { return state.failSurfaceSelect; },
     async mintToken({ sub = randomUUID(), expiresIn = "10m" } = {}) {
       return new SignJWT({ role: "authenticated" })
         .setProtectedHeader({ alg: "ES256", kid: jwk.kid })

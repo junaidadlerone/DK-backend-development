@@ -7,7 +7,7 @@
 // The tool's RETURN value is a tiny ack so the (large) UI payload never re-enters the model's
 // context.
 import { z } from "zod";
-import { asText, roleAreaDenial } from "./tool-helpers.mjs";
+import { asText, loosenToolSchema, roleAreaDenial } from "./tool-helpers.mjs";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
@@ -229,7 +229,15 @@ export function registerGenUiTools(server, { userId, userJwt }) {
       "fixPrompt/GuideSteps.prompt/ChoiceChips.prompt/Button send prompt = the literal user message to receive when clicked. hrefs are in-app paths only (e.g. /campaigns/{id}, /templates/{id}, /targeting/zones, /analytics/overview). " +
       "Build every block from REAL tool data — never invent campaignIds, bundleIds, zoneIds, counts, or statuses. Where the data comes from: CampaignList/CampaignCard from list_campaigns, search_campaigns or get_campaign; StatCards from get_dashboard_analytics or get_summary_analytics; ZoneMap zoneId from get_targeting_summary or get_live_context; PostcardPreview/TemplateList from list_template_bundles or get_template_bundle; ReferralList from list_referrals or search_referrals; DataTable from any tabular read (analytics rows, billing history). " +
       "Don't over-render: a one-line factual answer stays prose. Reach for a block when there's a list, a comparison, something geographic, or a clear next step to click.",
-    inputSchema: {
+    // loosenToolSchema (D7): the per-entry object is strict by default, so it publishes
+    // additionalProperties:false — and Flowise rebuilds a strict zod schema from that, failing the
+    // whole call when the model adds a redundant key to an entry (e.g. both `component` and a stray
+    // `type`). The model then never sees this handler's actionable "has no component/componentType"
+    // message and retries blind. Note this tool needs only the ADVERTISE half of D7, not the
+    // execute-side declaredOnly the read/write registries use: nothing here forwards raw args
+    // onward — normalizeEntry reads four known keys and validateUiFrame rebuilds the frame from
+    // scratch, stripping unknown props against the generated catalog schema on the way.
+    inputSchema: loosenToolSchema({
       surface_id: z.string().describe("Stable id. Re-emit the SAME id to replace/revise the block in place; a new id appends another block."),
       mode: z.enum(["replace"]).optional(),
       root: z.string().describe("id of the component to render as the root"),
@@ -240,7 +248,7 @@ export function registerGenUiTools(server, { userId, userJwt }) {
         properties: z.record(z.any()).optional(),
       })).describe("Flat array; children referenced by id"),
       data_model: z.record(z.any()).optional(),
-    },
+    }),
     annotations: { readOnlyHint: false, destructiveHint: false },
   }, async (a) => {
     const v = validateUiFrame(a);

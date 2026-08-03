@@ -336,12 +336,23 @@ const TOOL_RESOURCES = {
 };
 // A write "succeeded" when its result parses without an error/denial marker. Tool results are
 // compact JSON — an {error}/{missing_required}/{role_restricted} result means nothing changed.
-function toolSucceeded(outText) {
+// Exported for tests: this predicate decides whether a refresh frame is emitted and whether a
+// cut-off retry is considered safe, so a wrong answer here is either a stale screen or a repeated
+// write. Its `blocked` handling matters now that tools return structured refusals.
+export function toolSucceeded(outText) {
+  // `blocked` and `verified: false` were added 2026-07-31 when tools started refusing with a
+  // structured envelope and verifying their writes. Those envelopes carry NO `error` key, so
+  // without them here a refused or unapplied write counted as a SUCCESS: the gateway emitted a
+  // data-refresh frame for a change that never happened and left sawFailedWrite false, which also
+  // feeds the cut-off retry's choice of strategy.
   try {
     const parsed = JSON.parse(outText);
+    if (parsed?.blocked || parsed?.verified === false) return false;
     return !(parsed?.error || parsed?.missing_required || parsed?.role_restricted);
   } catch {
-    return !/"(error|missing_required|role_restricted)"/.test(outText.slice(0, 400));
+    const head = outText.slice(0, 400);
+    if (/"(blocked)"/.test(head) || /"verified"\s*:\s*false/.test(head)) return false;
+    return !/"(error|missing_required|role_restricted)"/.test(head);
   }
 }
 
@@ -516,7 +527,11 @@ const NUDGE_COMMIT_RE = /\b(?:I['’]?ll|I will|I['’]?m going to|I am going to
 // leading \b is load-bearing: unanchored, "budget" supplied "get" and "unchanged" supplied "chang",
 // so "I'll leave the budget as it is." read as a promise to act. Stems still match every
 // inflection ("creat" → creating/created) because the boundary is only at the START.
-const NUDGE_VERB_RE = /\b(?:creat|set up|updat|edit|chang|renam|delet|remov|exclud|launch|send|add|duplicat|shar|invit|upload|generat|build|sav|submit|verif|schedul|mark|clear|switch|convert|pull up|look up|fetch|retriev|list|show|open|find|search|check|get)/i;
+// `set up` allows an intervening object because the natural phrasing is "set it up" / "set that
+// up" / "set the campaign up", none of which contain the literal "set up" — so "I'll set it up."
+// silently failed this test and the promise was never chased (found by the F2 unit tests,
+// 2026-07-31). Same for the other particle verbs below.
+const NUDGE_VERB_RE = /\b(?:creat|set(?:\s+\w+){0,2}\s+up|updat|edit|chang|renam|delet|remov|exclud|launch|send|add|duplicat|shar|invit|upload|generat|build|sav|submit|verif|schedul|mark|clear|switch|convert|pull(?:\s+\w+){0,2}\s+up|look(?:\s+\w+){0,2}\s+up|fetch|retriev|list|show|open|find|search|check|get)/i;
 // Named so a veto can be logged and tuned (see the near-miss warning in the handler).
 // /\bwait/i covers "wait" and "waiting"; the apostrophe classes cover the curly variant.
 const NUDGE_VETOES = [
@@ -722,25 +737,34 @@ function splitAttachmentMarkers(text) {
 // The extras inserts retry WITHOUT the new columns if they fail (e.g. gateway deployed ahead of
 // the migration) — a schema gap must never cost the text history.
 async function persistTurn(sessionId, userMessage, assistantReply, extras = {}) {
-  const { thinking = [], surfaces = [], attachment = null } = extras;
+  const { thinking = [], surfaces = [], attachment = null, turnId = null } = extras;
+  // D5: stamp the turn id on the assistant row so a persisted reply can be joined to the gateway
+  // log lines and the LangSmith/Langfuse trace for the same turn. Additive and nullable — a
+  // deployment running ahead of the migration just inserts without it (see the retry below).
+  const stamp = turnId ? { turn_id: turnId } : {};
   let assistantId = null;
   if (userMessage) {
-    const base = { session_id: sessionId, role: "user", content: userMessage };
+    const base = { session_id: sessionId, role: "user", content: userMessage, ...stamp };
     const { error } = await adminSupabase.from("chat_messages")
       .insert(attachment?.length ? { ...base, attachment } : base);
-    if (error && attachment?.length) {
-      console.error("[/chat] user-row insert with attachment failed (retrying plain):", error.message);
-      await adminSupabase.from("chat_messages").insert(base);
+    if (error) {
+      console.error("[/chat] user-row insert failed (retrying without optional columns):", error.message);
+      await adminSupabase.from("chat_messages").insert({ session_id: sessionId, role: "user", content: userMessage });
     }
   }
   if (assistantReply) {
-    const base = { session_id: sessionId, role: "assistant", content: assistantReply };
+    const base = { session_id: sessionId, role: "assistant", content: assistantReply, ...stamp };
     let { data, error } = await adminSupabase.from("chat_messages")
       .insert(thinking.length ? { ...base, thinking } : base)
       .select("id").single();
-    if (error && thinking.length) {
-      console.error("[/chat] assistant-row insert with thinking failed (retrying plain):", error.message);
-      ({ data } = await adminSupabase.from("chat_messages").insert(base).select("id").single());
+    if (error) {
+      // Fall back through the OPTIONAL columns rather than losing the row: thinking first, then the
+      // turn stamp (which is absent until the 20260803 migration runs). The reply itself is the part
+      // the user reloads, so it must survive either column being unavailable.
+      console.error("[/chat] assistant-row insert failed (retrying without optional columns):", error.message);
+      ({ data } = await adminSupabase.from("chat_messages")
+        .insert({ session_id: sessionId, role: "assistant", content: assistantReply })
+        .select("id").single());
     }
     assistantId = data?.id ?? null;
   }
@@ -759,13 +783,17 @@ async function persistTurn(sessionId, userMessage, assistantReply, extras = {}) 
     if (deduped.length !== surfaces.length) {
       console.warn(`[/chat] collapsed ${surfaces.length - deduped.length} duplicate surface_id row(s) before persisting`);
     }
+    // D4: `interaction` and `state` are DELIBERATELY absent from this payload. They used to be
+    // written as `interaction: null`, so re-emitting a surface_id ERASED the user's recorded Approve
+    // and the reloaded conversation handed them a fresh, actionable copy of a card they had already
+    // acted on. An upsert must only ever replace what this turn actually produced — the frame, its
+    // order and its owning message — never the record of what the USER did with it.
     const rows = deduped.map((s) => ({
       session_id: sessionId,
       message_id: assistantId, // null on a pause-only turn — the frontend interleaves orphans by created_at
       surface_id: s.surface_id,
       frame: s.frame,
       seq: s.seq,
-      interaction: null,
       updated_at: now,
     }));
     const { error } = await adminSupabase.from("chat_surfaces").upsert(rows, { onConflict: "session_id,surface_id" });
@@ -805,6 +833,21 @@ export async function chatHandler(req, res) {
   // On resume there is no page/org context to inject — Flowise just continues the paused node.
   const ctx = isResume ? null : normalizeContext(context);
 
+  // ── D5: one id per TURN ────────────────────────────────────────────────────
+  // Every reported defect had to be reproduced by a person in a browser, because a turn left no
+  // correlatable record: the gateway logs, the LangSmith/Langfuse trace and the persisted row shared
+  // only a session id — and a session is many turns. This id is stamped on all three, so "show me
+  // everything about that turn" becomes one grep and one trace filter.
+  //
+  // Deliberately minted BEFORE session validation, so a turn that fails early still has an id in its
+  // logs. Nothing here logs message bodies or tool arguments — only shapes, names and counts.
+  const turnId = randomUUID();
+  const turnStartedAt = Date.now();
+  /** One structured line per notable event, always carrying the turn id. Never include user data. */
+  const turnLog = (event, fields = {}) => {
+    console.log(JSON.stringify({ at: "chat", turn_id: turnId, event, ...fields }));
+  };
+
   // Session: mint server-side on the first turn; on resume, verify OWNERSHIP
   // (chatKabuki's check — a session id that isn't this user's is a 404, G§4.6).
   let sessionId = session_id;
@@ -841,12 +884,52 @@ export async function chatHandler(req, res) {
           : isResume ? { display: isReject ? "Rejected" : "Approved" } : {}),
         resolved_at: new Date().toISOString(),
       };
-      const { error } = await adminSupabase.from("chat_surfaces")
-        .update({ interaction, updated_at: new Date().toISOString() })
-        .eq("session_id", sessionId).eq("surface_id", clickedSurfaceId);
-      if (error) console.error("[/chat] surface interaction update failed:", error.message);
+      // D4: `state` is the part the browser could not remember. `interaction` records WHAT the user
+      // did; `state: consumed` records THAT the surface is finished — and unlike the per-card React
+      // flag it survives the widget unmounting (panel minimize AND route navigation both unmount it)
+      // and the stream ending, which is what re-armed completed cards.
+      const stamp = { interaction, state: "consumed", updated_at: new Date().toISOString() };
+      let { error } = await adminSupabase.from("chat_surfaces")
+        .update(stamp).eq("session_id", sessionId).eq("surface_id", clickedSurfaceId);
+      if (error) {
+        // The state column arrives with the 20260803 migration; a gateway running ahead of it must
+        // still record the interaction rather than lose the click entirely.
+        console.error("[/chat] surface state update failed (retrying without state):", error.message);
+        ({ error } = await adminSupabase.from("chat_surfaces")
+          .update({ interaction, updated_at: new Date().toISOString() })
+          .eq("session_id", sessionId).eq("surface_id", clickedSurfaceId));
+        if (error) console.error("[/chat] surface interaction update failed:", error.message);
+      }
     })().catch((e) => console.error("[/chat] surface interaction update threw:", e?.message ?? e))
     : null;
+
+  // ── D4: which surfaces in this session are already terminal ────────────────
+  // Read once per turn (indexed on session_id, state) so emitSurface can refuse to re-arm one. The
+  // just-clicked surface is seeded directly rather than read back: the resolution write above runs
+  // CONCURRENTLY with this turn on purpose, so a query could easily miss it — and the one surface we
+  // know for certain is consumed this turn is the one the user just clicked.
+  const consumedSurfaces = new Map(); // surface_id -> display label (or null)
+  if (clickedSurfaceId) {
+    const given = (req.body?.interaction && typeof req.body.interaction === "object") ? req.body.interaction : {};
+    consumedSurfaces.set(clickedSurfaceId, typeof given.display === "string" ? given.display.slice(0, 200)
+      : isResume ? (isReject ? "Rejected" : "Approved") : null);
+  }
+  if (!isNewSession) {
+    const { data: priorSurfaces, error: surfaceLoadError } = await adminSupabase
+      .from("chat_surfaces").select("surface_id, interaction, state")
+      .eq("session_id", sessionId).eq("state", "consumed");
+    if (surfaceLoadError) {
+      // Before the 20260803 migration the column does not exist. Degrade to the just-clicked surface
+      // rather than failing the turn — that is still strictly better than the old behaviour.
+      console.error("[/chat] consumed-surface load failed (continuing without it):", surfaceLoadError.message);
+    } else {
+      for (const row of priorSurfaces ?? []) {
+        if (!consumedSurfaces.has(row.surface_id)) {
+          consumedSurfaces.set(row.surface_id, row.interaction?.display ?? null);
+        }
+      }
+    }
+  }
 
   // SSE response — same headers/framing as namiGateway
   res.writeHead(200, {
@@ -913,17 +996,22 @@ export async function chatHandler(req, res) {
         // sessionId for session grouping, but userId is not automatic — pass it explicitly.
         // LangSmith groups traces into threads via the session_id metadata key (propagated
         // to child runs by RunTree, so the whole turn carries it).
+        // D5 threads turn_id into both providers, so a gateway log line and a trace can be joined.
         analytics: {
-          langFuse: { userId: auth.userId, sessionId },
+          langFuse: { userId: auth.userId, sessionId, metadata: { turn_id: turnId } },
           langSmith: {
-            metadata: { session_id: sessionId, user_id: auth.userId, mode: approvalMode, page: ctx?.page ?? "" },
-            tags: [`mode:${approvalMode}`, ctx?.organization?.id ? `org:${ctx.organization.id}` : "org:none"],
+            metadata: { session_id: sessionId, user_id: auth.userId, turn_id: turnId, mode: approvalMode, page: ctx?.page ?? "" },
+            tags: [`mode:${approvalMode}`, `turn:${turnId}`, ctx?.organization?.id ? `org:${ctx.organization.id}` : "org:none"],
           },
         },
         // vars.userJwt feeds the Flowise customMCP header (Authorization: Bearer
         // {{$vars.userJwt}}); page/ids are available to the system prompt too.
         vars: {
           userJwt: auth.userJwt,
+          // D5: available for the customMCP entries to forward as `X-DK-Turn: {{$vars.turnId}}`, which
+          // is what lets the MCP's per-tool log lines join this turn. Owner-side Flowise change; the
+          // MCP already reads the header and treats its absence as "unknown turn".
+          turnId,
           page: ctx?.page ?? "",
           campaignId: ctx?.campaign_id ?? "",
           templateId: ctx?.template_id ?? "",
@@ -1082,15 +1170,22 @@ export async function chatHandler(req, res) {
         pendingText = pendingText.slice(cut);
       }
     };
+    // Drain the marker holdback ONLY. emitDelta deliberately keeps the tail of the stream back (up
+    // to KEEP_BACK chars, and never cuts mid-word) so clean()/deDash see whole constructs — which
+    // means the tail of one generation is still sitting in pendingText when the next one starts, and
+    // the two get concatenated in this buffer, upstream of every seam. Splitting this out of
+    // flushDeltas lets a mid-turn boundary (D11) flush the text WITHOUT releasing the restatement
+    // hold, since re-announcing after a tool result is exactly what that hold is watching for.
+    const flushPendingText = () => {
+      if (suppressRest || !pendingText) { pendingText = ""; return; }
+      const hit = earliestMarker(pendingText);
+      if (hit !== undefined && pendingText.slice(hit).startsWith("Attempting to use tool")) sawToolLeak = true;
+      const out = clean(hit !== undefined ? pendingText.slice(0, hit).replace(/\s+$/, "") : pendingText);
+      if (out) pushText(out);
+      pendingText = "";
+    };
     const flushDeltas = () => {
-      if (suppressRest || !pendingText) { pendingText = ""; }
-      else {
-        const hit = earliestMarker(pendingText);
-        if (hit !== undefined && pendingText.slice(hit).startsWith("Attempting to use tool")) sawToolLeak = true;
-        const out = clean(hit !== undefined ? pendingText.slice(0, hit).replace(/\s+$/, "") : pendingText);
-        if (out) pushText(out);
-        pendingText = "";
-      }
+      flushPendingText();
       dedupeFlush();
     };
 
@@ -1109,6 +1204,9 @@ export async function chatHandler(req, res) {
     // A write tool RAN and came back error/denied. The cut-off retry must not re-POST after that
     // (the model would narrate a success that never happened, or retry the write).
     let sawFailedWrite = false;
+    // D8: what the model said about how the turn ended, if it called end_task. `null` means it did
+    // not — which is the state every recovery heuristic below is currently forced to guess at.
+    let endTask = null;
     // Shared budget across ALL the recovery re-POSTs below (error retry, toolless-leak retry,
     // cut-off retry, announce nudge). Each guard checked its own "once" flag before, so a
     // pathological turn could stack four extra upstream calls; the budget caps the whole turn.
@@ -1176,14 +1274,28 @@ export async function chatHandler(req, res) {
     const MAX_SURFACE_BYTES = 64 * 1024;
     const emitSurface = (frame) => {
       const cleanFrame = cleanUiFrame(frame);
+      const id = typeof cleanFrame?.surface_id === "string" ? cleanFrame.surface_id : "";
+      // ── D4: a consumed surface never comes back to life ─────────────────────
+      // Once the user has acted on a surface_id it is terminal for the whole session. Re-emitting it
+      // (a recovery re-POST re-running emit_ui, or the model reaching for the same id again) used to
+      // hand the user a fresh, actionable copy of a card they had already used — the re-armed-card
+      // defect. Stream it LOCKED with the outcome the user chose, so their words still line up with
+      // what they see, and leave the recorded row alone: replacing it would overwrite the frame they
+      // actually acted on.
+      if (id && consumedSurfaces.has(id)) {
+        const display = consumedSurfaces.get(id);
+        turnLog("surface_consumed_reemit", { surface_id: id });
+        send({ ...cleanFrame, resolved: { display: display ?? null } });
+        return;
+      }
       send(cleanFrame);
-      if (typeof cleanFrame?.surface_id === "string" && cleanFrame.surface_id) {
+      if (id) {
         let size = 0;
         try { size = JSON.stringify(cleanFrame).length; } catch { size = MAX_SURFACE_BYTES + 1; }
         if (size <= MAX_SURFACE_BYTES) {
-          emittedSurfaces.push({ surface_id: cleanFrame.surface_id, frame: cleanFrame, seq: surfaceSeq++ });
+          emittedSurfaces.push({ surface_id: id, frame: cleanFrame, seq: surfaceSeq++ });
         } else {
-          console.warn(`[/chat] surface ${cleanFrame.surface_id} over persist cap (${size}B) — streamed, not persisted`);
+          console.warn(`[/chat] surface ${id} over persist cap (${size}B) — streamed, not persisted`);
         }
       }
     };
@@ -1211,6 +1323,40 @@ export async function chatHandler(req, res) {
     // stringified output for further scanning.
     const noteToolReturn = (t) => {
       const out = typeof t?.toolOutput === "string" ? t.toolOutput : JSON.stringify(t?.toolOutput ?? "");
+      // ── D8: the model declaring how its turn ended ───────────────────────────
+      // Captured here because noteToolReturn is the single funnel both carriers pass through (the
+      // usedTools event AND each node's agentFlowExecutedData snapshot). The status comes from the
+      // ARGUMENTS, not the tool's own ack: the ack is a constant, while the args are the claim.
+      if (t?.tool === "end_task") {
+        const args = t?.toolInput ?? {};
+        endTask = {
+          status: typeof args.status === "string" ? args.status.slice(0, 40) : null,
+          summary: typeof args.summary === "string" ? args.summary.slice(0, 200) : null,
+        };
+      }
+      // ── D11: the run-on defect is a SEAM, not a typography habit ─────────────
+      // QA reported "…within reach.Let me…" and "…here's what to go:Launch…" in every multi-sentence
+      // reply for four rounds. The model never omitted that space: an agent turn is several separate
+      // generations (one per tool-calling iteration), each streamed as its own `token` frames, and
+      // every one of them lands in the SAME pushText accumulator with nothing inserted between them.
+      // The last character of iteration N abuts the first character of iteration N+1. `**A****B**`
+      // (also reported) is the same boundary with bold markers either side of it.
+      //
+      // The prompt used to ask the model to "always put a space after sentence-ending punctuation",
+      // which it cannot honour — it never saw the join. Fix it where the join happens, in two steps:
+      //   1. flush the marker holdback, because the concatenation actually happens inside
+      //      pendingText (emitDelta keeps the tail back, so iteration N's last words are still
+      //      buffered when N+1 starts and the two are glued there, upstream of every seam);
+      //   2. arm the paragraph seam the retry/nudge/resume paths already use.
+      // Order matters: arming first would put the blank line BEFORE iteration N's own tail.
+      //
+      // This degrades safely in every direction: the seam is consumed by the first NON-whitespace
+      // character that follows (so a turn whose tool returns arrive after all its text is
+      // unaffected), it refuses when nothing has streamed yet (never a leading blank line), and
+      // pushText swallows the continuation's own leading whitespace — so a boundary the model DID
+      // punctuate correctly is normalized to one blank line rather than doubled. The restatement
+      // hold is deliberately NOT released here (see flushPendingText).
+      if (t?.tool) { flushPendingText(); pendingSeam = true; }
       if (!isReject && TOOL_RESOURCES[t?.tool] && !toolSucceeded(out)) sawFailedWrite = true;
       if (!isReject && TOOL_RESOURCES[t?.tool] && toolSucceeded(out)) {
         for (const r of TOOL_RESOURCES[t.tool]) refreshResources.add(r);
@@ -1250,6 +1396,9 @@ export async function chatHandler(req, res) {
     const IDENTITY_EVENTS = new Set(["calledTools", "usedTools", "agentFlowExecutedData", "action"]);
     const FRAME_LOG_MAX = 8;
     const FRAME_CHARS = 4000;
+    // Set by logPause when a pause could not be attributed to a named action (see D2/C2). Part of
+    // the per-turn success metric, not just a diagnostic.
+    let sawUnidentifiedPause = false;
     const frameLog = [];
     const noteFrame = (ev, data) => {
       if (!IDENTITY_EVENTS.has(ev)) return;
@@ -1304,17 +1453,19 @@ export async function chatHandler(req, res) {
     };
     const logPause = (outcome, candidates, chosen) => {
       const identified = !!(chosen && PERM_ACTIONS[chosen.tool]);
-      console.warn("[/chat] pause", JSON.stringify({
-        evt: "hitl_pause",
-        session: sessionId,
-        actionId: lastActionId,
+      // D5: an unidentified pause is one of the four clauses of the per-turn success metric, so it
+      // needs a flag and not just a log line — this is the blank-approval-card defect.
+      if (!identified) sawUnidentifiedPause = true;
+      turnLog("pause", {
+        session_id: sessionId,
+        action_id: lastActionId,
         mode: approvalMode,
         outcome,                                   // "auto-resume" | "card"
-        candidates: candidates.map((c) => c.tool), // names only
+        candidates: candidates.map((c) => c.tool), // names only, never arguments
         chosen: chosen?.tool ?? null,
         identified,                                // false ⇒ the card carries no action name
-        autoResumes,
-      }));
+        auto_resumes: autoResumes,
+      });
       if (outcome === "card" && !identified) {
         console.error("[/chat] pause UNIDENTIFIED — identity-bearing frames preceding this pause:", JSON.stringify(frameLog));
       }
@@ -1500,13 +1651,30 @@ export async function chatHandler(req, res) {
     // a resume — re-sending humanInput could double-execute the approved action. seenJobIds is
     // deliberately KEPT: a retried run mints fresh job ids for its own emit_ui calls, and keeping
     // the old entries prevents re-draining (= re-streaming) a card the first attempt already sent.
+    //
+    // D9 side-effect gate: `!assistantReply` reads as "nothing happened yet", but it only inspects
+    // TEXT. A turn can fail AFTER a write landed or a card shipped, and re-running the model then is
+    // not a retry — it is a second attempt at an action that already took effect once. The three
+    // added conditions are the turn's own record of having had an effect:
+    //   refreshResources — a write tool returned successfully (see noteToolReturn)
+    //   seenJobIds       — an emit_ui frame was drained onto this stream
+    //   sawPermission    — an approval card is on screen; the turn's continuation is the user's click
+    // Nothing is lost by declining: the error still reaches the user as a sentence plus Retry, which
+    // is the honest outcome — a silent second write is not.
     if (turnError && !assistantReply && !isResume && extraAttempts < MAX_EXTRA_ATTEMPTS
+        && refreshResources.size === 0 && seenJobIds.size === 0 && !sawPermission
         && !upstreamAbort.signal.aborted) {
       console.warn("[/chat] recoverable turn error — retrying once");
       turnError = null;
       beginAttempt({ discardBuffer: true });
       extraAttempts += 1;
       await runAttempt();
+    } else if (turnError && !assistantReply && !isResume && !upstreamAbort.signal.aborted
+        && (refreshResources.size > 0 || seenJobIds.size > 0 || sawPermission)) {
+      // Not a silent skip: say WHY the safe path was taken, so a turn that ends on an error after a
+      // successful write is diagnosable from the logs instead of looking like the retry never ran.
+      console.warn("[/chat] turn error after a side effect — NOT retrying:",
+        JSON.stringify({ writes: [...refreshResources], uiJobs: seenJobIds.size, sawPermission, turnError }));
     }
 
     // Toolless-turn recovery: the model wrote its tool calls as TEXT ("Attempting to use
@@ -1700,6 +1868,37 @@ export async function chatHandler(req, res) {
       logPause("card-backstop", orphanCandidates, chooseCandidate(orphanCandidates));
     }
 
+    // ── D9: no silent turns ───────────────────────────────────────────────────
+    // Last line of defence. Every recovery above is guarded, and each guard is there for a reason —
+    // but when they all decline, the turn ends with no text, no card, no UI and no error, and the
+    // user is left watching a stopped spinner with no idea whether anything happened. That is the
+    // single most-reported symptom across eight QA rounds, and it is also how a FAILED write became
+    // invisible: sawFailedWrite gated the recoveries and was never itself surfaced anywhere.
+    //
+    // Each branch says only what the turn's own record supports. In particular the failed-write line
+    // does NOT claim the data is unchanged (the tool reported a failure; it did not report a
+    // rollback) and the success line does not invent what changed.
+    if (!assistantReply && !turnError && !sawUi && !sawPermission && !isReject
+        && !upstreamAbort.signal.aborted) {
+      const reason = sawFailedWrite ? "failed-write" : refreshResources.size > 0 ? "silent-write" : "empty";
+      console.warn("[/chat] turn produced nothing user-visible — standing in a line:",
+        JSON.stringify({ reason, writes: [...refreshResources], sawToolActivity, sawToolLeak, autoResumes, extraAttempts, endTask }));
+      // D8: when the model DID declare an ending, its own summary is a better stand-in than any of
+      // these generic lines — it knows what it was doing. Only for the non-failure statuses: a
+      // `failed`/`blocked` summary is not something to present as the whole reply, and a failed write
+      // is reported from the tool's evidence rather than the model's account of it.
+      const declared = !sawFailedWrite && endTask?.summary
+        && (endTask.status === "complete" || endTask.status === "needs_user_in_app")
+        ? endTask.summary
+        : null;
+      assistantReply = declared ?? (sawFailedWrite
+        ? "I wasn't able to complete that — the change didn't go through, so please check it before relying on it. Want me to try again?"
+        : refreshResources.size > 0
+          ? "That's done. Let me know what you'd like to do next."
+          : "Sorry — I didn't manage to put a reply together for that. Could you ask me again?");
+      send({ delta: assistantReply });
+    }
+
     // Surface a turn error as one friendly line. Skip when the client aborted (stop button /
     // unmount): they stopped it deliberately, never saw an error, and send() would no-op anyway.
     let errorLine = null;
@@ -1728,11 +1927,53 @@ export async function chatHandler(req, res) {
       thinking: thinkingLabels,
       surfaces: emittedSurfaces,
       attachment,
+      turnId,
     });
     // Data-change signal: tell the widget which app resources this turn's writes dirtied.
     if (refreshResources.size) {
       send({ type: "refresh", resources: [...refreshResources], ...(Object.keys(refreshIds).length ? { ids: refreshIds } : {}) });
     }
+    // ── D5: one summary line per turn, and the per-turn success metric ────────
+    // There was no definition of "a turn worked" anywhere in this system, so there was no way to
+    // tell whether a fix helped — every judgement came from someone's impression of a browser
+    // session. This is that definition, in code, emitted for every turn:
+    //
+    //   ok = no turn error, no recovery fired, no failed write, no unidentified pause
+    //
+    // Each clause is a defect QA actually reported. `recovered` is deliberately NOT success: a turn
+    // that needed a retry or a nudge produced the right answer the second time, which is precisely
+    // the flakiness the owner described ("sometimes it works and sometimes it doesn't"). Counting
+    // those as passes is how eight rounds of green ended with the same bugs still live.
+    const turnOk = !turnError && extraAttempts === 0 && !sawFailedWrite
+      && !sawUnidentifiedPause && !sawToolLeak;
+    turnLog("turn", {
+      ok: turnOk,
+      ms: Date.now() - turnStartedAt,
+      session_id: sessionId,
+      mode: approvalMode,
+      resume: isResume ? (isReject ? "reject" : "approve") : null,
+      page: ctx?.page ?? null,
+      // What the turn produced.
+      outcome: assistantReply ? "text" : errorLine ? "error" : sawUi ? "ui" : sawPermission ? "approval" : "none",
+      reply_chars: assistantReply.length,
+      surfaces: emittedSurfaces.length,
+      ui_jobs: seenJobIds.size,
+      // What it did.
+      writes: [...refreshResources],
+      tool_activity: sawToolActivity,
+      failed_write: sawFailedWrite,
+      // How hard it had to work to get there — the flakiness signal.
+      extra_attempts: extraAttempts,
+      auto_resumes: autoResumes,
+      tool_leak: sawToolLeak,
+      unidentified_pause: sawUnidentifiedPause,
+      // D8: null means the model did NOT declare how the turn ended. That number, measured over real
+      // turns, is what decides whether any recovery heuristic can be retired — none are touched yet.
+      end_task: endTask?.status ?? null,
+      aborted: upstreamAbort.signal.aborted,
+      error: turnError ? String(turnError).slice(0, 200) : null,
+    });
+
     // The click-resolution write MUST land before this instance can be frozen at res.end().
     if (surfaceUpdatePromise) await surfaceUpdatePromise;
     send({
@@ -1743,6 +1984,7 @@ export async function chatHandler(req, res) {
     });
     res.end();
   } catch (e) {
+    turnLog("turn", { ok: false, ms: Date.now() - turnStartedAt, session_id: sessionId, outcome: "crash", error: String(e?.message ?? e).slice(0, 200) });
     console.error("[/chat] error:", e.message);
     try {
       if (surfaceUpdatePromise) await surfaceUpdatePromise;

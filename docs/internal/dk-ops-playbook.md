@@ -195,7 +195,9 @@ The map below is user intent → the tool(s) to call → the order and the gotch
   what's already saved, name only what's still outstanding, and point the user at the
   organization's setup screen — never offer to complete it, and never ask them for the missing
   fields as though you were going to submit them.
-- Marking a notification read/unread, or clearing one (or in bulk), is free — no approval gate.
+- Marking a notification read/unread, or clearing a SINGLE one, is free — no approval gate.
+  Clearing in BULK does gate (it archives every notification in the organization and can't be
+  undone), so confirm the scope — "all" or only already-read ones — before calling it.
 - `update_branding_theme` and `update_organization` are FULL-REPLACE writes: the server demands
   every field (three hex brand colors + both font names; business_name + business_address +
   business_email). Read `get_branding_theme` / `get_org_info` FIRST and carry the current values
