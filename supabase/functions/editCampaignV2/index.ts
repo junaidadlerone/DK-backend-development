@@ -223,12 +223,13 @@ Deno.serve(async (req) => {
               .eq("id", existingCampaign.referral_id);
           }
 
-          // Link NEW referral
+          // Link NEW referral — status untouched (2026-07-31). This previously forced "Ready"
+          // "as per create logic"; the create paths no longer do it either, because linking an
+          // unfinished referral is not evidence that the homeowner consented. See createCampaignV2.
           const { error: linkError } = await supabase
             .from("referrals")
             .update({
               campaign_id: campaign_id,
-              status: { id: "4d1ca79a-1a0a-4c9f-a183-6c5bebd13336", name: "Ready" } // Set to Ready as per create logic
             })
             .eq("id", referral_id);
 

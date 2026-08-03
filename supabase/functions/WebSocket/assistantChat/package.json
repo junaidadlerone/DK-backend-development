@@ -6,7 +6,8 @@
   "main": "src/index.mjs",
   "scripts": {
     "start": "node src/index.mjs",
-    "sync:local": "node scripts/run-sync-local.mjs"
+    "sync:local": "node scripts/run-sync-local.mjs",
+    "test": "node --test scripts/*.test.mjs"
   },
   "engines": {
     "node": ">=22"

@@ -103,17 +103,38 @@ Deno.serve(async (req) => {
     const organization_id = await getUserOrganizationId(supabase, user.id); 
 
     // Update the organization
+    // MERGE, don't full-replace (2026-07-31). This used to write every optional column with
+    // `value || null`, so ANY caller that omitted a field silently erased it:
+    //   - the app's own Settings form never sends registration_number at all, so every manual
+    //     Save wiped it;
+    //   - the assistant sends only the fields the user mentioned, so "change our business email"
+    //     blanked the phone number, website, industry and registration number — with no warning,
+    //     and (being a non-destructive tool) with no confirmation card.
+    // Rule now: a field is only written when the caller actually sent the key. An explicit `null`
+    // still clears it, so deliberate "remove my website" continues to work — callers that clear a
+    // field must send null rather than omitting it (the app does; see OrganizationTab).
+    const updates: Record<string, unknown> = {
+      business_name,
+      business_address,
+      business_email,
+    };
+    const optionalFields = [
+      "registration_number",
+      "industry",
+      "phone_number",
+      "website_url",
+    ] as const;
+    const sent = body as unknown as Record<string, unknown>;
+    for (const field of optionalFields) {
+      if (!(field in sent)) continue;                 // not sent → leave the stored value alone
+      const value = sent[field];
+      if (value === undefined) continue;              // sent as undefined → same as not sent
+      updates[field] = value === null || value === "" ? null : value;
+    }
+
     const { data: updatedOrg, error: updateError } = await supabase
       .from("organizations")
-      .update({ 
-        business_name,
-        registration_number: registration_number || null,
-        industry: industry || null,
-        business_address,
-        business_email,
-        phone_number: phone_number || null,
-        website_url: website_url || null,
-      })
+      .update(updates)
       .eq("id", organization_id)
       .select()
       .single();

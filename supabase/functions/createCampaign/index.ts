@@ -275,13 +275,14 @@ async function handleStep1(supabase: any, body: any, organizationId: string, use
     }
   }
 
-  // Link new referral with campaign_id and set status to "Ready" only if referral_id was provided
+  // Link the referral to the campaign — WITHOUT touching its status (2026-07-31). Forcing
+  // `{ name: "Ready" }` here marked unfinished draft referrals as ready, erasing the app's own
+  // signal that consent + signature were still missing. See the note in createCampaignV2.
   if (referral_id) {
     const { error: updateReferralError } = await supabase
       .from("referrals")
       .update({
         campaign_id: campaign.id,
-        status: { id: "4d1ca79a-1a0a-4c9f-a183-6c5bebd13336", name: "Ready" }
       })
       .eq("id", referral_id);
 

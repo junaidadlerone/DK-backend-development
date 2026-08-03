@@ -296,12 +296,20 @@ Deno.serve(async (req) => {
           .eq("organization_id", organizationId);
       }
 
-      // Update branding settings and set onboarding=true in profiles
+      // Update branding settings and set onboarding=true in profiles.
+      // MERGE, don't replace (2026-07-31): this used to assign `branding_settings: { theme }`,
+      // which discarded every OTHER key already stored under branding_settings (e.g. a logo) —
+      // the same silent-overwrite class as saveOrganization's former full replace.
       if (theme) {
-         await supabase
+        const { data: curProfile } = await supabase
+          .from("profiles")
+          .select("branding_settings")
+          .eq("id", user.userId)
+          .single();
+        await supabase
           .from("profiles")
           .update({
-            branding_settings: { theme },
+            branding_settings: { ...(curProfile?.branding_settings || {}), theme },
             onboarding: true,
             updated_at: new Date().toISOString()
           })
