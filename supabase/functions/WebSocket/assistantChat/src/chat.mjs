@@ -1294,12 +1294,29 @@ export async function chatHandler(req, res) {
       const id = typeof cleanFrame?.surface_id === "string" ? cleanFrame.surface_id : "";
       // ── D4: a consumed surface never comes back to life ─────────────────────
       // Once the user has acted on a surface_id it is terminal for the whole session. Re-emitting it
-      // (a recovery re-POST re-running emit_ui, or the model reaching for the same id again) used to
-      // hand the user a fresh, actionable copy of a card they had already used — the re-armed-card
-      // defect. Stream it LOCKED with the outcome the user chose, so their words still line up with
-      // what they see, and leave the recorded row alone: replacing it would overwrite the frame they
-      // actually acted on.
+      // used to hand them a fresh, actionable copy of a card they had already used.
+      //
+      // TWO KINDS of re-emit, and they need opposite treatment (reported 2026-08-03):
+      //
+      //  * the surface the user clicked THIS turn — stream it LOCKED. The turn exists because they
+      //    clicked it, and the reply's own words refer to it, so it belongs on screen showing the
+      //    outcome they chose.
+      //
+      //  * any OTHER consumed surface — DROP it. The first version of this streamed those locked too,
+      //    which produced the reported bug: a disabled "upload images" card from a referral step
+      //    reappearing many turns later, above the approval card for creating a campaign. Same shape
+      //    as a disabled template-selector tagging along above the audience map. The card was inert,
+      //    but a finished step from earlier in the conversation resurfacing in the current message
+      //    reads as unfinished work — and it is pure noise: the user already did it, the transcript
+      //    already shows it where it happened.
+      //
+      // The model re-emitting a completed step's card is not a signal worth honouring; the record of
+      // that step lives with the turn it belongs to.
       if (id && consumedSurfaces.has(id)) {
+        if (id !== clickedSurfaceId) {
+          turnLog("surface_stale_reemit_dropped", { surface_id: id });
+          return;
+        }
         const display = consumedSurfaces.get(id);
         turnLog("surface_consumed_reemit", { surface_id: id });
         send({ ...cleanFrame, resolved: { display: display ?? null } });

@@ -127,6 +127,44 @@ function validateComponentProps(type, props) {
   return { ok: false, error: formatErrors(validate.errors) };
 }
 
+// ── opacity is a PERCENTAGE, and the model writes CSS fractions (2026-08-03) ───
+// REPORTED LIVE, twice: asked to put a semi-transparent band behind text so it would read against the
+// photos, the agent said it had ("every text element now sits on a 55%-opacity dark band") and the
+// design looked unchanged. The trace showed it had done the job properly — a dark #1D1D20 rectangle
+// before each text element, correct paint order, correct geometry — and written `opacity: 0.55`.
+//
+// The schema is `{minimum: 0, maximum: 100}`: a PERCENTAGE. So 0.55 validated, meaning 0.55%, and the
+// generator emitted `opacity: 0.0055`. Three invisible bands. The model used the CSS 0-1 convention and
+// nothing objected, because the wrong value sits comfortably inside the right range.
+//
+// This was never a false claim — the intent was exactly right and the units disagreed silently, which
+// no amount of "verify what you assert" would have caught. It needs a check on the VALUE.
+//
+// NORMALISE rather than refuse. Every value in (0, 1] is meaningless as a percentage: 1% opacity is
+// already invisible, so nobody has ever wanted 0.55%. Reading it as a fraction is unambiguous, and it
+// is what the author meant. `opacity: 1` is treated as fully opaque for the same reason — 1% would make
+// an element vanish, and 100 is the default anyway. Refusing instead would cost the user a turn to fix
+// something we can already read correctly; the tool result names the correction so the model learns.
+const OPACITY_HOSTS = ["front", "back"];
+/** Rewrite fractional opacities in place. Returns the labels of the elements it corrected. */
+export function normalizeSpecOpacity(spec) {
+  const fixed = [];
+  if (!spec || typeof spec !== "object") return fixed;
+  for (const side of OPACITY_HOSTS) {
+    const els = spec[side]?.elements;
+    if (!Array.isArray(els)) continue;
+    els.forEach((el, i) => {
+      const o = el?.opacity;
+      if (typeof o !== "number" || !Number.isFinite(o) || o <= 0 || o > 1) return;
+      // Rounded to 2dp: 0.55 * 100 is 55.00000000000001 in binary floating point, and that would ride
+      // into the spec and out into the generated CSS. Two decimals is finer than any display can show.
+      el.opacity = Math.round(o * 10000) / 100;
+      fixed.push(`${side}[${i}] ${el.type ?? "element"}: ${o} → ${el.opacity}`);
+    });
+  }
+  return fixed;
+}
+
 // Normalize both accepted wire forms into { id, type, props }.
 function normalizeEntry(entry) {
   if (!entry || typeof entry !== "object") return null;
@@ -263,6 +301,13 @@ export function validateUiFrame(input) {
   }
   if (!byId.has(root)) return { ok: false, error: `root "${root}" is not among the components` };
 
+  // Fractional opacities are corrected BEFORE prop validation, so the fixed value is what gets
+  // validated, streamed, previewed and eventually baked into the saved HTML.
+  const opacityFixes = [];
+  for (const n of normalized) {
+    if (n.type === "TemplateProposal") opacityFixes.push(...normalizeSpecOpacity(n.props));
+  }
+
   // Per-component prop validation against the catalog schema (strip-parity with the frontend:
   // unknown extra properties are removed, not fatal — see validateComponentProps).
   for (const n of normalized) {
@@ -303,6 +348,9 @@ export function validateUiFrame(input) {
 
   return {
     ok: true,
+    // Reported back through the tool result so the model sees the correction rather than repeating it
+    // next turn (and does not describe a band as 55% when it wrote 0.55).
+    ...(opacityFixes.length ? { opacityFixes } : {}),
     frame: {
       type: "ui",
       surface_id,
@@ -328,7 +376,8 @@ export function registerGenUiTools(server, { userId, userJwt }) {
       "DataTable{title?,columns[](max 8),rows[][](max 50 rows; string|number cells)}, StatCards{items[](max 8):{label,value,hint?,trend?(up|down|flat)}}, " +
       "Checklist{title,subtitle?,items[]:{label,status(pass|warn|fail),note?,fixPrompt?}}, GuideSteps{title,subtitle?,steps[]:{title,detail?,prompt,state(done|active|todo)}}, " +
       "ChoiceChips{choices[]:{label,prompt}}, NavButton{label,href(/path)}, " +
-      "Text{text,variant?(title|subtitle|body|caption)}, Row{children[ids],gap?}, Column{children[ids],gap?}, Card{title?,children[ids]}, " +
+      "Text{text,variant?(title|subtitle|body|caption)}, Row{children[ids],gap?}, Column{children[ids],gap?}, Card{title?,children[ids]}, "
+      + "NOTE on postcard designs: element `opacity` is a PERCENTAGE 0-100 (55 means 55%), never a 0-1 fraction — 0.55 means 0.55% and renders invisible. Colours are plain 6-digit hex with no alpha. Elements paint in the order listed, so a band must come BEFORE the text it sits behind. " +
       "Button{label,action,tone?(primary|neutral|ghost)}, Divider{}, Image{url(https),alt?}. " +
       "Button.action = {type:'send',prompt,display?} | {type:'navigate',href:'/path'}. NEVER {type:'openUrl'} — you cannot know this app's web addresses, so any url you write will be wrong; it is refused. " +
       "fixPrompt/GuideSteps.prompt/ChoiceChips.prompt/Button send prompt = the literal user message to receive when clicked. "
@@ -375,6 +424,18 @@ export function registerGenUiTools(server, { userId, userJwt }) {
     const job = createJob(userId, "emit_ui");
     jobEmit(job, v.frame);
     jobComplete(job, { surface_id: v.frame.surface_id });
-    return { content: [{ type: "text", text: JSON.stringify({ ok: true, surface_id: v.frame.surface_id, ui_job_id: job.id, rendered: a.components.length }) }] };
+    return asText({
+      ok: true,
+      surface_id: v.frame.surface_id,
+      ui_job_id: job.id,
+      rendered: a.components.length,
+      // A silently-wrong unit is worth telling the model about: it wrote a CSS 0-1 fraction where the
+      // spec takes a 0-100 percentage, which validated and rendered invisible. Corrected here, but it
+      // must not describe the result using the number it sent.
+      ...(v.opacityFixes?.length ? {
+        corrected_opacity: v.opacityFixes,
+        note: "`opacity` is a PERCENTAGE (0-100), not a 0-1 fraction. The values listed in corrected_opacity were rewritten for you — at the value you sent they would have been invisible. Use 55 (not 0.55) for a 55% band, and describe the design by the corrected values.",
+      } : {}),
+    });
   });
 }
