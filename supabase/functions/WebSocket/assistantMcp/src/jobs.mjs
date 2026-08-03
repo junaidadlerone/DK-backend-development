@@ -105,7 +105,18 @@ export async function jobEventsHandler(req, res) {
     if (job.userId !== req.auth.userId) { res.status(403).json({ error: "Forbidden" }); return; }
     sseHead();
     for (const frame of job.events) send(frame); // replay
-    if (job.status !== "running") { res.end(); return; }
+    if (job.status !== "running") {
+      res.end();
+      // CONSUME ON DRAIN (2026-07-31). This used to return without deleting, so a FINISHED job's
+      // frames stayed replayable for the life of the process — and because the gateway harvests
+      // ui_job_ids with a regex over the whole upstream payload, a job id that reappeared in a later
+      // turn's node snapshot re-rendered an old card into a new turn (the delete-a-campaign turn
+      // that came back with a live audience builder and two launch buttons). The DB path already
+      // deletes on read; this is the same single-use contract for the in-memory path.
+      // Only finished jobs are consumed — a client reconnecting mid-stream still gets its replay.
+      jobs.delete(req.params.id);
+      return;
+    }
     job.listeners.add(send);
     const done = (frame) => { if (frame.type === "completed" || frame.type === "error") res.end(); };
     job.listeners.add(done);

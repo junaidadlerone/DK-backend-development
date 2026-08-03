@@ -131,14 +131,17 @@ export interface Organization {
 }
 
 // Save organization request
+// Optional fields are `string | null`: an OMITTED key leaves the stored value untouched, while an
+// explicit null (or "") clears it. Before 2026-07-31 every optional was written as `value || null`,
+// so omitting a field erased it — see the merge note in saveOrganization/index.ts.
 export interface SaveOrganizationRequest {
   business_name: string;
-  registration_number?: string;
-  industry?: string;
+  registration_number?: string | null;
+  industry?: string | null;
   business_address: string;
   business_email: string;
-  phone_number?: string;
-  website_url?: string;
+  phone_number?: string | null;
+  website_url?: string | null;
 }
 
 // Get organization response

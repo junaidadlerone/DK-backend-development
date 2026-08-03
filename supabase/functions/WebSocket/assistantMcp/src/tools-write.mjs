@@ -12,7 +12,7 @@
 // tells the user to finish the consent section (enforced here by omission + in the prompt).
 import { z } from "zod";
 import { callApi } from "./helpers.mjs";
-import { QR_ELEMENT_RE, makeGuard, normalizePhone, payload, roleAreaDenial, wrap as wrapShared } from "./tool-helpers.mjs";
+import { QR_ELEMENT_RE, activeOrgRole, makeGuard, normalizePhone, payload, roleAreaDenial, wrap as wrapShared } from "./tool-helpers.mjs";
 import { POSTGRID_POSTCARD_API_KEY } from "./env.mjs";
 
 // Shared plumbing (tool-helpers.mjs) with the write-flavored guard tone. The 400/422 branch
@@ -34,6 +34,46 @@ async function cachedList(key, fetcher) {
   const list = await fetcher();
   if (list) optionCache.set(key, { list, expiresAt: Date.now() + 10 * 60_000 });
   return list ?? hit?.list ?? null;
+}
+async function countryList(userJwt) {
+  return cachedList("countries", async () => {
+    const res = await callApi("getAllCountries", "GET", null, userJwt);
+    const list = res && !res.__error ? payload(res) : null;
+    return Array.isArray(list) ? list : null; // [{ name, code }]
+  });
+}
+// The canonical country name the app stores is the world_countries `name` — for the US that is
+// "United States of America". The assistant naturally writes "United States", and that value does
+// TWO kinds of damage: it lands in the record as a non-canonical string (so the app's country
+// dropdown renders empty), and `getAllStatesV2?country_name=United States` returns 404
+// "Country not found", so statesForCountry yields null and the STATE is never canonicalized
+// either. Both were live: a probe confirmed the 404 and the canonical spelling.
+// Exported for tests — no network, so the matching rules are pinned directly.
+const COUNTRY_ALIASES = new Map([
+  ["us", "United States of America"],
+  ["usa", "United States of America"],
+  ["unitedstates", "United States of America"],
+  ["unitedstatesofamerica", "United States of America"],
+  ["america", "United States of America"],
+]);
+export function resolveCountryName(input, list) {
+  const raw = String(input ?? "").trim();
+  if (!raw) return null;
+  const lower = raw.toLowerCase();
+  const compact = lower.replace(/[^a-z]/g, "");
+  if (!Array.isArray(list) || !list.length) return COUNTRY_ALIASES.get(compact) ?? null;
+  const byName = list.find((c) => c?.name?.toLowerCase() === lower);
+  if (byName) return byName.name;
+  const byCode = list.find((c) => c?.code?.toLowerCase() === lower);
+  if (byCode) return byCode.name;
+  const alias = COUNTRY_ALIASES.get(compact);
+  if (alias) {
+    const hit = list.find((c) => c?.name === alias);
+    if (hit) return hit.name;
+  }
+  // Punctuation/spacing differences only ("u.s.a.", "unitedstatesofamerica").
+  const byCompact = list.find((c) => c?.name?.toLowerCase().replace(/[^a-z]/g, "") === compact);
+  return byCompact ? byCompact.name : null;
 }
 async function statesForCountry(country, userJwt) {
   return cachedList(`states:${country.toLowerCase()}`, async () => {
@@ -57,6 +97,11 @@ async function canonicalizeAddress(hoi, userJwt) {
   const address = { ...hoi.address };
   if (!address.country?.trim() && (address.state || address.city || address.street_address)) {
     address.country = DEFAULT_COUNTRY;
+  } else if (address.country?.trim()) {
+    // Canonicalize a SUPPLIED country too — not just the empty case. "United States" is stored
+    // verbatim (blank dropdown) AND 404s the state lookup below, so it quietly broke both fields.
+    const resolved = resolveCountryName(address.country, await countryList(userJwt));
+    if (resolved) address.country = resolved;
   }
   if (address.state?.trim() && address.country?.trim()) {
     const states = await statesForCountry(address.country.trim(), userJwt);
@@ -142,6 +187,143 @@ function referralMissingToFinalize(hoi, jd) {
   if (!(jd?.job_type && (jd.job_type.id || jd.job_type.name))) miss.push("job_type");
   if (!(typeof jd?.value === "number" && jd.value > 0)) miss.push("job_value");
   return miss;
+}
+
+// ── Referral readiness for CAMPAIGN USE (2026-07-31) ─────────────────────────
+// QA: the assistant happily built a referral campaign on a DRAFT referral — no consent, no
+// signature, missing address. The rule existed, but only as one clause in a similarity-retrieved
+// playbook, so it was advisory. It is enforced here instead, at the tool boundary.
+//
+// TWO sources of truth, deliberately:
+//   * the SERVER's status ("Ready") — the only thing that proves the USER completed the consent +
+//     signature section. That is theirs to do and the assistant must never fake it (it cannot: no
+//     tool accepts hasOwnerConsent or signature_id, and update_referral no longer sends `status`).
+//   * at least one JOB PHOTO — the app marks "Upload Job Images" required and the campaign's
+//     printed image is literally the referral's first gallery photo, yet the server's Ready
+//     computation omits photos entirely. Owner decision: enforce agent-side only, and do NOT touch
+//     the server computation (existing Ready referrals must not silently flip back to Draft).
+//
+// The three buckets matter more than the list: they tell the model who can fix what, which is the
+// difference between a useful ask and a dead end.
+const FIELD_ENGLISH = {
+  referrer_name: "the referrer's name",
+  street_address: "the property's street address",
+  city: "the city",
+  state: "the state",
+  zip: "the ZIP code",
+  country: "the country",
+  job_type: "the type of job",
+  job_value: "the job value",
+  job_photo: "at least one job photo",
+  owner_consent: "the homeowner's consent",
+  owner_signature: "their signature",
+};
+export function referralCampaignBlockers(rec, photoCount) {
+  const hoi = rec?.home_owner_info ?? {};
+  const addr = hoi.address ?? {};
+  const jd = rec?.job_details ?? {};
+  const statusName = rec?.status?.name ?? (typeof rec?.status === "string" ? rec.status : null);
+
+  // What the assistant can fill itself, with the user's own values.
+  const youCanFill = [];
+  if (!hoi.name?.trim()) youCanFill.push("referrer_name");
+  if (!addr.street_address?.toString().trim()) youCanFill.push("street_address");
+  if (!addr.city?.toString().trim()) youCanFill.push("city");
+  if (!addr.state?.toString().trim()) youCanFill.push("state");
+  if (!addr.zip?.toString().trim()) youCanFill.push("zip");
+  if (!addr.country?.toString().trim()) youCanFill.push("country");
+  if (!(jd.job_type && (jd.job_type.id || jd.job_type.name))) youCanFill.push("job_type");
+  if (!(typeof jd.value === "number" && jd.value > 0)) youCanFill.push("job_value");
+
+  // What the assistant can only OFFER (it has no add-image tool — the uploader card does it).
+  const agentCanOffer = Number(photoCount) > 0 ? [] : ["job_photo"];
+
+  // What only the user can do, in the app. Inferred from the server's own status: if it says Ready
+  // then consent + signature are on file, and if it does not we cannot tell which of the two is
+  // missing without guessing — so name both and let the user see what their form shows.
+  const userCompletes = statusName === "Ready" || statusName === "In Use"
+    ? []
+    : ["owner_consent", "owner_signature"];
+
+  const missing = [...youCanFill, ...agentCanOffer, ...userCompletes];
+  return {
+    ok: missing.length === 0,
+    status: statusName,
+    missing,
+    you_can_fill: youCanFill,
+    agent_can_offer: agentCanOffer,
+    user_completes_in_app: userCompletes,
+    plain: missing.length
+      ? `This referral isn't ready to use for a campaign yet — it still needs ${missing.map((f) => FIELD_ENGLISH[f] ?? f).join(", ")}.`
+      : null,
+  };
+}
+
+// ── update_referral: payload shape + post-write verification (2026-07-31) ─────
+// The two referral endpoints genuinely disagree about their contract: createReferral accepts ONLY
+// the nested { home_owner_info, job_details } shape (its whitelist 400s on flat keys), while
+// updateReferralById accepts ONLY FLAT top-level keys and has no branch for `home_owner_info` at
+// all. This tool used to send the nested create shape to the update endpoint, so the key matched
+// nothing, every homeowner/address field was discarded, and the endpoint still returned HTTP 200
+// {status:"success"} — which this tool reported as `updated: true`. Confirmed against the real
+// record: five consecutive assistant edits produced history entries reading only "auto-updated
+// status to Draft" with no field changes, while each reported success, so the model kept retrying.
+// Flatten HERE rather than changing the edge function, which the app depends on and calls with the
+// flat shape itself.
+//
+// `address` goes as ONE OBJECT deliberately: the endpoint's object branch merges it over the stored
+// address (so a zip-only edit preserves the rest), whereas its split-flat-keys branch assigns
+// through a shallow copy and throws on any row whose home_owner_info has no address yet.
+export function flattenReferralUpdate(hoi) {
+  const out = {};
+  if (!hoi || typeof hoi !== "object") return out;
+  for (const k of ["name", "phone", "email"]) {
+    if (hoi[k] !== undefined) out[k] = hoi[k];
+  }
+  if (hoi.address && typeof hoi.address === "object" && Object.keys(hoi.address).length) {
+    out.address = { ...hoi.address };
+  }
+  return out;
+}
+// Compare what we SENT against the record read back afterwards, so the tool can never author a
+// success claim from its own input. Only the fields actually sent are checked.
+// An ABSENT stored value is the proof a write was dropped. A DIFFERENT non-empty stored value is
+// reported separately (`stored_differs`) and does NOT fail verification: server-side
+// canonicalization is legitimate, and conflating the two would manufacture confident
+// "this field can't be changed" messages on writes that fully succeeded.
+const wDigits = (s) => String(s ?? "").replace(/\D+/g, "");
+const wNorm = (s) => String(s ?? "").replace(/\s+/g, " ").trim().toLowerCase();
+const wEmpty = (v) => v === undefined || v === null || (typeof v === "string" && !v.trim());
+// Compare the last 10 digits so a country-code difference ("+12145551234" vs "(214) 555-1234")
+// is not mistaken for a dropped write.
+const wPhoneEq = (a, b) => {
+  const x = wDigits(a).slice(-10);
+  const y = wDigits(b).slice(-10);
+  return !!x && x === y;
+};
+export function diffReferralWrite(sent, rec) {
+  const not_applied = [];
+  const stored_differs = [];
+  if (!rec || typeof rec !== "object") return { ok: false, unverified: true, not_applied, stored_differs };
+  const hoi = rec.home_owner_info ?? {};
+  const addr = hoi.address ?? {};
+  const jd = rec.job_details ?? {};
+  const check = (field, sentVal, storedVal, eq = (a, b) => wNorm(a) === wNorm(b)) => {
+    if (wEmpty(sentVal)) return;
+    if (wEmpty(storedVal)) { not_applied.push({ field, sent: sentVal, stored: storedVal ?? null }); return; }
+    if (!eq(sentVal, storedVal)) stored_differs.push({ field, sent: sentVal, stored: storedVal });
+  };
+  check("name", sent?.name, hoi.name);
+  check("phone", sent?.phone, hoi.phone, wPhoneEq);
+  check("email", sent?.email, hoi.email);
+  for (const k of ["street_address", "city", "state", "zip", "country"]) {
+    check(`address.${k}`, sent?.address?.[k], addr[k]);
+  }
+  const sjd = sent?.job_details ?? {};
+  check("job_details.notes", sjd.notes, jd.notes);
+  check("job_details.value", sjd.value, jd.value, (a, b) => Number(a) === Number(b));
+  check("job_details.job_type", sjd.job_type?.name, jd.job_type?.name);
+  return { ok: not_applied.length === 0, not_applied, stored_differs };
 }
 
 // App-verified caps on SUPPLIED referral fields (bug-bash follow-up 2026-07-28): the app's own
@@ -249,15 +431,18 @@ export function registerWriteTools(server, { userJwt }) {
     });
 
   t("update_referral",
-    "Edit an existing referral (referrer details, job info, notes, or status). Notes live in job_details.notes (<= 250 characters). Phone is OPTIONAL but if given must be a real number, e.g. +17135550123 or (713) 555-0123 — US numbers can omit +1. Job value must be a number > 0 and <= 9,999,999. Zip must be 5 digits or ZIP+4 (12345 or 12345-6789). NEVER set owner consent or a signature. Pass only the fields being changed. The returned `missing_to_finalize` reflects the referral's CURRENT state after the edit — prompt the user for anything still missing.",
-    { id: z.string().describe("referral UUID"), home_owner_info: homeOwnerInfo, job_details: jobDetails, status: z.string().optional().describe("e.g. Draft, Ready — only if the user explicitly asks to change status") },
+    "Edit an existing referral (referrer details, job info, notes). Notes live in job_details.notes (<= 250 characters). Phone is OPTIONAL but if given must be a real number, e.g. +17135550123 or (713) 555-0123 — US numbers can omit +1. Job value must be a number > 0 and <= 9,999,999. Zip must be 5 digits or ZIP+4 (12345 or 12345-6789). You can NEVER set owner consent, a signature, or the referral's status: the user completes the consent + signature section in the app, and THAT is what turns a draft into a referral usable for a campaign. Pass only the fields being changed. The reply tells you whether the change was VERIFIED against the saved record — if it comes back with fields_not_applied, the change did NOT save and repeating the call will not help. `missing_to_finalize` reflects the referral's CURRENT state after the edit — prompt the user for anything still missing.",
+    { id: z.string().describe("referral UUID"), home_owner_info: homeOwnerInfo, job_details: jobDetails },
     W,
     async (a) => {
       const body = { id: a.id };
       if (a.home_owner_info) {
         const check = checkHomeOwnerInfo(await canonicalizeAddress(a.home_owner_info, userJwt));
         if (check.error) return check.error;
-        body.home_owner_info = check.hoi;
+        // FLAT keys, and `address` as one object — updateReferralById has no `home_owner_info`
+        // branch at all, so the nested create-shape used to be discarded in full. See
+        // flattenReferralUpdate for the full contract note.
+        Object.assign(body, flattenReferralUpdate(check.hoi));
       }
       if (a.job_details) {
         const jdCheck = checkJobDetails(a.job_details);
@@ -269,18 +454,45 @@ export function registerWriteTools(server, { userJwt }) {
           body.job_details.job_type = jr.job_type;
         }
       }
-      if (a.status) body.status = a.status;
+      // No `status` is ever sent. Passing one makes updateReferralById SKIP its readiness
+      // recomputation entirely, which is how the assistant could mark a referral Ready with no
+      // consent and no signature. Readiness is the server's computation over the user's own
+      // consent + signature — never ours.
       const res = await callApi("updateReferralById", "PATCH", null, userJwt, body);
       const g = guard(res); if (g) return g;
-      // Read back the full record so missing_to_finalize reflects the merged state, not just this
-      // turn's partial edit.
-      let missing;
+      // Read back the full record — for missing_to_finalize (which must reflect the merged state,
+      // not just this turn's partial edit) AND to VERIFY the write. The endpoint returns
+      // 200 {status:"success"} even when it ignored the entire payload, so its own response proves
+      // nothing; only the re-read record does.
       const rb = await callApi("getReferralById", "POST", null, userJwt, { id: a.id });
-      if (!rb?.__error) { const rec = payload(rb); missing = referralMissingToFinalize(rec?.home_owner_info, rec?.job_details); }
+      const rec = rb && !rb.__error ? payload(rb) : null;
+      const verdict = diffReferralWrite(body, rec);
+      if (!verdict.ok) {
+        const fields = verdict.not_applied.map((f) => f.field);
+        console.error("[update_referral] write not applied", JSON.stringify({ id: a.id, unverified: !!verdict.unverified, fields }));
+        return {
+          blocked: verdict.unverified ? "write_unverified" : "write_not_applied",
+          id: a.id,
+          verified: false,
+          ...(fields.length ? { fields_not_applied: fields } : {}),
+          retry: false,
+          plain: verdict.unverified
+            ? "I couldn't confirm whether that saved, so I'm not going to tell you it did."
+            : "That didn't save — the referral still shows its previous details.",
+          note: "NOTHING was applied for the listed fields. Do NOT repeat this call — it will behave identically. Tell the user plainly that the change did not save, name what didn't save in plain words, and do NOT claim any of those fields were updated. This is a system fault, not the user's mistake.",
+        };
+      }
+      const missing = referralMissingToFinalize(rec?.home_owner_info, rec?.job_details);
+      const status = rec?.status?.name ?? rec?.status ?? null;
       return {
-        id: a.id, updated: true,
-        ...(missing ? { missing_to_finalize: missing } : {}),
-        note: missing?.length ? `Updated. Still needed to finalize: ${missing.join(", ")}.` : "Updated.",
+        id: a.id, verified: true, updated: true, status,
+        ...(verdict.stored_differs.length ? { stored_differs: verdict.stored_differs } : {}),
+        missing_to_finalize: missing,
+        note: missing.length
+          ? `Saved and verified. Still needed to finalize: ${missing.join(", ")}. The consent + signature are completed by the user in the app.`
+          : status === "Ready"
+            ? "Saved and verified. That completed the referral — it is now Ready to use for a campaign."
+            : "Saved and verified. All details are in; the user completes the consent + signature section in the app to finalize it.",
       };
     });
 
@@ -298,8 +510,12 @@ export function registerWriteTools(server, { userJwt }) {
   };
 
   t("delete_referral",
-    "Delete a referral permanently (also removes its gallery images). Irreversible. Pass BOTH the id AND the referrer's exact name — the tool verifies they match before deleting (a mismatch deletes nothing).",
-    { id: z.string().describe("referral UUID"), referrer_name: z.string().optional().describe("REQUIRED — the referral's referrer name, for verification") },
+    "Delete a referral permanently. This CASCADES: it also deletes every campaign linked to this referral, along with those campaigns' targeting zones, analytics and postcard-send history, plus the referral's gallery images. Irreversible. Pass BOTH the id AND the referrer's exact name — the tool verifies they match before deleting (a mismatch deletes nothing). If any campaigns are linked, the tool refuses the first time and tells you what would be destroyed; only call it again with confirm_delete_campaigns set to that exact count once the user has agreed. A referral whose campaign is already live or has mailed cannot be deleted here at all.",
+    {
+      id: z.string().describe("referral UUID"),
+      referrer_name: z.string().optional().describe("REQUIRED — the referral's referrer name, for verification"),
+      confirm_delete_campaigns: z.number().optional().describe("The exact number of linked campaigns the user has agreed to lose. Only after they have been told and said yes."),
+    },
     D,
     async (a) => {
       if (!a.referrer_name?.trim()) return { missing_required: ["referrer_name"], note: "Pass the referrer's exact name with the id — it's verified against the record before deleting." };
@@ -307,8 +523,52 @@ export function registerWriteTools(server, { userJwt }) {
       const gr = guard(rb); if (gr) return gr;
       const actual = payload(rb)?.home_owner_info?.name ?? null;
       const mm = nameMismatch(a.referrer_name, actual, "referral"); if (mm) return mm;
+
+      // CASCADE DISCLOSURE (2026-07-31). `campaigns.referral_id` is ON DELETE CASCADE, which chains
+      // on to location_zones, detailed_analytics, postcard_sends and campaign history — so deleting
+      // one referral can silently destroy live campaigns and their mailing records. The approval
+      // card is built from these ARGS, so requiring an acknowledged count is also what lets the card
+      // state the real blast radius instead of just "Deleting referral X".
+      const ci = await callApi("getCampaignInformationByReferralId", "POST", null, userJwt, { id: a.id });
+      const linked = ci && !ci.__error
+        ? (() => { const p = payload(ci); return Array.isArray(p) ? p : (Array.isArray(p?.campaigns) ? p.campaigns : []); })()
+        : [];
+      const describe = (c) => ({
+        campaign_name: c?.campaign_name ?? c?.name ?? null,
+        status: c?.status?.name ?? c?.status ?? null,
+        postcards_sent: typeof c?.postcards_sent === "number" ? c.postcards_sent : 0,
+      });
+      const rows = linked.map(describe);
+      // Owner rule: a campaign that is live or has already mailed is NEVER deletable from chat.
+      // Destroying mailing records, analytics and payment-linked history is not a conversational
+      // action; the app's own delete remains available to anyone who truly intends it.
+      const protectedRows = rows.filter((c) => c.status === "Active" || c.postcards_sent > 0);
+      if (protectedRows.length) {
+        return {
+          blocked: "campaign_live_or_mailed",
+          id: a.id,
+          referral_name: actual,
+          campaigns: protectedRows,
+          retry: false,
+          plain: `That referral can't be deleted here — ${protectedRows.length === 1 ? "a campaign" : `${protectedRows.length} campaigns`} using it ${protectedRows.length === 1 ? "is" : "are"} already live or has already sent postcards, and deleting the referral would destroy those records.`,
+          note: "NOTHING was deleted and this cannot be overridden from chat. Tell the user plainly, name the campaign(s), and say that if they really want this they can delete it from the campaign page in the app. Do NOT offer to try again and do NOT call this tool again for this referral.",
+        };
+      }
+      if (rows.length && a.confirm_delete_campaigns !== rows.length) {
+        return {
+          blocked: "confirm_cascade",
+          id: a.id,
+          referral_name: actual,
+          campaigns_to_be_deleted: rows,
+          confirm_delete_campaigns_required: rows.length,
+          retry: false,
+          plain: `Deleting this referral will also permanently delete ${rows.length === 1 ? "its campaign" : `its ${rows.length} campaigns`}${rows.some((c) => c.campaign_name) ? ` (${rows.map((c) => c.campaign_name).filter(Boolean).join(", ")})` : ""}, along with their targeting, analytics and send history.`,
+          note: "NOTHING was deleted. Tell the user exactly what would be lost, using `plain`, and ask them to confirm. ONLY if they clearly agree, call this tool again with the same id and name plus confirm_delete_campaigns set to the number in confirm_delete_campaigns_required. Never set that number yourself without them having said yes.",
+        };
+      }
+
       const res = await callApi("deleteReferral", "DELETE", null, userJwt, { id: a.id });
-      return guard(res) ?? { id: a.id, deleted: true };
+      return guard(res) ?? { id: a.id, deleted: true, campaigns_deleted: rows.length };
     });
 
   t("delete_referral_image",
@@ -350,20 +610,52 @@ export function registerWriteTools(server, { userJwt }) {
 
   // ── Settings ───────────────────────────────────────────────────────────────
   t("update_organization",
-    "Update the organization's business details. business_name, business_address and business_email are ALL required by the server, so carry over the current values (from get_org_info) for any field the user isn't changing.",
+    "Update the organization's business details. business_name, business_address and business_email are always required by the server — read them with get_org_info and pass the current values through unchanged for any of those three the user isn't changing. EVERY OTHER field is merged: leave it out and it keeps its current value. Pass a field only when the user asked to change it, and pass null ONLY when they explicitly asked to remove it. The reply tells you whether the change was VERIFIED against the saved record.",
     {
       business_name: z.string().min(1),
       business_address: z.string().min(1),
       business_email: z.string().email(),
-      phone_number: z.string().optional(),
-      industry: z.string().optional(),
-      website_url: z.string().optional(),
-      registration_number: z.string().optional(),
+      phone_number: z.string().nullable().optional(),
+      industry: z.string().nullable().optional(),
+      website_url: z.string().nullable().optional(),
+      registration_number: z.string().nullable().optional(),
     },
     W,
     async (a) => {
       const res = await callApi("saveOrganization", "POST", null, userJwt, a);
-      return guard(res) ?? { updated: true };
+      const g = guard(res); if (g) return g;
+      // saveOrganization returns the updated row, so verify against it instead of asserting
+      // success. This tool used to return a hardcoded {updated:true} — and because the endpoint
+      // full-replaced every optional column, "change our business email" silently blanked the
+      // phone, website, industry and registration number while reporting success. The endpoint now
+      // merges on key presence; this check is what proves it for any given call.
+      const row = payload(res);
+      if (!row || typeof row !== "object") {
+        return {
+          blocked: "write_unverified", verified: false, retry: false,
+          plain: "I couldn't confirm those details saved, so I won't tell you they did.",
+          note: "Do NOT repeat this call. Tell the user you could not confirm the change and suggest they check the Settings page.",
+        };
+      }
+      const notApplied = [];   // we sent a value and the saved row has nothing → dropped
+      const differs = [];      // saved value is present but different → server transformed it
+      for (const [k, v] of Object.entries(a)) {
+        if (v === undefined) continue;
+        const stored = row[k];
+        const storedEmpty = stored === null || stored === undefined || String(stored).trim() === "";
+        if (v === null || v === "") { if (!storedEmpty) notApplied.push(k); continue; }
+        if (storedEmpty) { notApplied.push(k); continue; }
+        if (String(stored).trim() !== String(v).trim()) differs.push({ field: k, sent: v, stored });
+      }
+      if (notApplied.length) {
+        console.error("[update_organization] write not applied", JSON.stringify({ fields: notApplied }));
+        return {
+          blocked: "write_not_applied", verified: false, fields_not_applied: notApplied, retry: false,
+          plain: "Those details didn't save — the account still shows its previous values.",
+          note: "NOTHING was applied for the listed fields. Do NOT repeat this call. Tell the user plainly what did not save, and do not claim any of it was updated.",
+        };
+      }
+      return { updated: true, verified: true, ...(differs.length ? { stored_differs: differs } : {}) };
     });
 
   t("update_profile",
@@ -419,6 +711,45 @@ export function registerWriteTools(server, { userJwt }) {
       if (a.campaign_name.trim().length > 20) return { error: "Campaign name must be 20 characters or fewer." };
       if (a.disclaimer_text.length > 500) return { error: "Disclaimer text must be 500 characters or fewer." };
       if (a.qr_url && !/^https:\/\//i.test(a.qr_url)) return { error: "The QR landing-page URL must start with https://." };
+
+      // 1b. REFERRAL READINESS GATE (2026-07-31). Refuse before anything is created: a campaign
+      //     built on an unfinished referral has no signed consent behind the homeowner's photo,
+      //     and because linking used to force the referral to "Ready" it also erased the evidence
+      //     that it was incomplete. Same shape as the QR gate below — block early, name what's
+      //     missing, create nothing. Skipped when resuming a draft this tool already created.
+      if (a.target_type === "referral" && a.referral_id && !a.campaign_id) {
+        const rb = await callApi("getReferralById", "POST", null, userJwt, { id: a.referral_id });
+        const rg = guard(rb); if (rg) return rg;
+        const rec = payload(rb);
+        // Photo count is agent-side only: the app marks job images required but enforces it
+        // nowhere, and the campaign's printed image IS the referral's first gallery photo.
+        const gal = await callApi("getPhotoGallery", "POST", null, userJwt, { referral_id: a.referral_id });
+        const photos = gal && !gal.__error ? payload(gal) : null;
+        const photoCount = (photos?.images ?? photos?.gallery?.images ?? []).length;
+        const readiness = referralCampaignBlockers(rec, photoCount);
+        if (!readiness.ok) {
+          return {
+            blocked: "referral_not_ready",
+            referral_id: a.referral_id,
+            referral_name: rec?.home_owner_info?.name ?? null,
+            status: readiness.status,
+            missing_required: readiness.missing,
+            you_can_fill: readiness.you_can_fill,
+            agent_can_offer: readiness.agent_can_offer,
+            user_completes_in_app: readiness.user_completes_in_app,
+            retry: false,
+            plain: readiness.plain,
+            note: [
+              "NOTHING was created. Do NOT call this tool again with this referral — the same call will be refused.",
+              "Tell the user in your own words that this referral isn't finished yet and name exactly what's missing, using `plain` as your guide. Never mention statuses, field names, tools, or validation.",
+              "Anything in `you_can_fill` you can add with update_referral — but ONLY with values the user gives you in this conversation. Never invent an address, geocode one, or copy it from another referral.",
+              "Anything in `agent_can_offer` you can help with by showing the image uploader.",
+              "Anything in `user_completes_in_app` only they can do, in the app's referral form.",
+              "If you suggest a different referral instead, name which one and get an explicit yes first.",
+            ].join(" "),
+          };
+        }
+      }
 
       // 2. QR gate — inspect the chosen design's HTML; block early (no partial campaign) if it has
       //    a QR element but no qr_url was supplied.
@@ -679,13 +1010,31 @@ export function registerWriteTools(server, { userJwt }) {
     },
     W,
     async (a) => {
+      // The theme every member SEES is the organisation OWNER's, because getAppContent reads
+      // `profiles.branding_settings` of `organizations.owner_id`. updateBrandingSettings, however,
+      // writes the CALLER's own profile row — so when a non-owner admin changes the theme the write
+      // succeeds and nothing anywhere changes. That used to be reported as `updated: true`.
+      // Refuse up front instead of reporting a phantom success. (Deliberately NOT changing which
+      // row is written: moving brand identity to the organisation is a product decision, not a
+      // bugfix — logged separately.)
+      const role = await activeOrgRole(userJwt);
+      if (role && role !== "OWNER") {
+        return {
+          blocked: "not_theme_owner",
+          verified: false,
+          retry: false,
+          plain: "Brand colours and fonts are shared across the whole organisation and only the owner's settings are used, so a change from this account wouldn't take effect anywhere.",
+          note: "NOTHING was changed. Do NOT call this tool again for this user. Tell them the organisation owner needs to make this change in Settings → Branding. Never mention roles as permissions the user should argue with — just say the owner has to do it.",
+        };
+      }
       const res = await callApi("updateBrandingSettings", "POST", null, userJwt, {
         theme: {
           colors: { primary: a.primary_color, secondary: a.secondary_color, accent: a.accent_color },
           fonts: { primary: { name: a.heading_font }, body: { name: a.body_font } },
         },
       });
-      return guard(res) ?? { updated: true, colors: [a.primary_color, a.secondary_color, a.accent_color], fonts: [a.heading_font, a.body_font] };
+      const g = guard(res); if (g) return g;
+      return { updated: true, verified: true, colors: [a.primary_color, a.secondary_color, a.accent_color], fonts: [a.heading_font, a.body_font] };
     });
 
   t("remove_company_logo",
@@ -760,7 +1109,30 @@ export function registerWriteTools(server, { userJwt }) {
         return g;
       }
       const r = payload(res);
-      return { user_id: a.user_id, results: r?.results ?? [], skipped_agency_orgs: r?.dropped_agency_organization_ids ?? [] };
+      // The endpoint now reports which organisations were ACTUALLY revoked and which writes failed.
+      // Surface a partial failure instead of returning a results array the model reads as a clean
+      // success (it previously reported membership-before-the-write as the outcome).
+      const failedOrgs = Array.isArray(r?.failed_organization_ids) ? r.failed_organization_ids : [];
+      const revokedOrgs = Array.isArray(r?.revoked_organization_ids) ? r.revoked_organization_ids : [];
+      if (failedOrgs.length) {
+        return {
+          blocked: "partially_applied",
+          user_id: a.user_id,
+          verified: false,
+          revoked_count: revokedOrgs.length,
+          failed_count: failedOrgs.length,
+          retry: false,
+          plain: `Access was removed for ${revokedOrgs.length} organisation(s), but ${failedOrgs.length} could not be updated.`,
+          note: "Do NOT repeat this call — the successful removals would not be undone and the failures will behave identically. Tell the user exactly how many succeeded and how many did not, and that the remaining ones need to be done from the team page.",
+        };
+      }
+      return {
+        user_id: a.user_id,
+        verified: true,
+        results: r?.results ?? [],
+        revoked_organization_ids: revokedOrgs,
+        skipped_agency_orgs: r?.dropped_agency_organization_ids ?? [],
+      };
     });
 
   // ── Agency: settings + template sharing (3C-3) ───────────────────────────────
@@ -824,101 +1196,26 @@ export function registerWriteTools(server, { userJwt }) {
     }, "template_management");
 
   // ── Organizations (3C-4) ─────────────────────────────────────────────────────
-  // createOrganization inserts a BLANK org; the V1 completeOnboarding step-dispatch fn (accepts
-  // organization_id on every step — no org switch needed) fills it. Step 4 MUST always run (even
-  // with no invites) — it sets team_onboarding_completed, the only thing that marks the org
-  // complete; without it the org is a "Setup N of 4" artifact that traps users in the wizard.
-  // The logo is REQUIRED (mirrors the onboarding UI) and must be a URL (gallery/https) — the
-  // JSON path; never multipart (that branch has a latent backend bug). theme is deliberately
-  // NEVER sent: V1 step 3 would write it to the CALLER's user-level branding_settings.
-  const ZIP_RE = /^\d{5}(-\d{4})?$/;
-  const orgOnboardingFields = {
-    business_name: z.string().optional().describe("REQUIRED"),
-    industry: z.string().optional().describe("REQUIRED"),
-    country: z.string().optional().describe("REQUIRED (e.g. United States of America)"),
-    street_address: z.string().optional().describe("REQUIRED"),
-    city: z.string().optional().describe("REQUIRED"),
-    state: z.string().optional().describe("REQUIRED"),
-    zip: z.string().optional().describe("REQUIRED, ##### or #####-####"),
-    logo_url: z.string().optional().describe("REQUIRED — an https:// image URL (upload via the image card or pick from the gallery)"),
-    business_email: z.string().optional(),
-    phone: z.string().optional(),
-    website: z.string().optional(),
-    invite_emails: z.array(z.object({ email: z.string().email(), role: memberRole.optional() })).optional().describe("teammates to invite during setup (optional)"),
-  };
-  const onboardingStepCalls = {
-    1: (a, orgId) => callApi("completeOnboarding", "POST", null, userJwt, {
-      step: 1, organization_id: orgId, business_name: a.business_name, industry: a.industry,
-      ...(a.phone ? { business_phone_number: a.phone } : {}),
-      ...(a.business_email ? { business_email: a.business_email } : {}),
-      ...(a.website ? { website_url: a.website } : {}),
-    }),
-    2: (a, orgId) => callApi("completeOnboarding", "POST", null, userJwt, {
-      step: 2, organization_id: orgId, country: a.country, street_address: a.street_address, city: a.city, state: a.state, zip: a.zip,
-    }),
-    3: (a, orgId) => callApi("completeOnboarding", "POST", null, userJwt, { step: 3, organization_id: orgId, company_logo: a.logo_url }),
-    4: (a, orgId) => callApi("completeOnboarding", "POST", null, userJwt, { step: 4, organization_id: orgId, team_member_ids: [], invite_emails: a.invite_emails ?? [] }),
-  };
-  const STEP_REQUIREMENTS = { 1: ["business_name", "industry"], 2: ["country", "street_address", "city", "state", "zip"], 3: ["logo_url"], 4: [] };
-  const missingForSteps = (a, steps) => {
-    const miss = [];
-    for (const s of steps) for (const f of STEP_REQUIREMENTS[s]) if (!a[f]?.trim?.() && !a[f]) miss.push(f);
-    if (steps.includes(2) && a.zip && !ZIP_RE.test(a.zip)) miss.push("zip (format #####)");
-    if (steps.includes(3) && a.logo_url && !/^https?:\/\//i.test(a.logo_url)) miss.push("logo_url (must be an http(s) URL)");
-    return [...new Set(miss)];
-  };
-  const runOnboardingSteps = async (a, orgId, steps) => {
-    for (const s of steps) {
-      const res = await onboardingStepCalls[s](a, orgId);
-      const g = guard(res);
-      if (g) return { ...g, organization_id: orgId, failed_step: s, note: `The organization exists but onboarding stopped at step ${s}. Fix the issue and use complete_org_onboarding to finish it.` };
-    }
-    return null;
-  };
-
-  t("create_client_organization",
-    "Create a NEW client organization and complete its full setup in one step (agency owners/admins only). GATHER everything first: business name, industry, full address (country/street/city/state/zip), and a LOGO (an image URL — have the user upload one via the image card or pick a gallery image). Optional: business email, phone, website, and teammates to invite. Returns `missing_required` for anything absent. After success, offer to switch into the new organization. Do NOT claim the organization is ready until this returns success.",
-    orgOnboardingFields,
-    W,
-    async (a) => {
-      const missing = missingForSteps(a, [1, 2, 3, 4]);
-      if (missing.length) return { missing_required: missing, note: "Ask the user for these, then call create_client_organization again. The logo can come from the image-upload card or their gallery." };
-      const created = await callApi("createOrganization", "POST", null, userJwt, {});
-      const gc = guard(created);
-      if (gc) {
-        if (/MULTI_ORG_NOT_ENABLED|FORBIDDEN/i.test(created.body ?? "")) return { error: "Creating organizations needs an agency account. If they want multiple organizations, they can switch their account to an agency first." };
-        return gc;
-      }
-      const orgId = payload(created)?.organization_id ?? created?.organization_id;
-      if (!orgId) return { error: "Could not create the organization (no id returned)." };
-      const failed = await runOnboardingSteps(a, orgId, [1, 2, 3, 4]);
-      if (failed) return failed;
-      return {
-        organization_id: orgId,
-        business_name: a.business_name.trim(),
-        onboarding_complete: true,
-        invites_sent: (a.invite_emails ?? []).map((i) => i.email),
-        note: "The organization is fully set up (details, address, logo, team step). Offer the user a switch button to start working in it.",
-      };
-    });
-
-  t("complete_org_onboarding",
-    "Finish the setup of an organization that's stuck mid-onboarding ('Setup N of 4'). Pass the organization id plus whatever fields its REMAINING steps need — the tool checks what's missing, runs only the unfinished steps, and always completes the final team step. Use when the user's organization list shows an org that isn't fully set up.",
-    { organization_id: z.string(), ...orgOnboardingFields },
-    W,
-    async (a) => {
-      const stepRes = await callApi("getOnboardingStep", "GET", { organization_id: a.organization_id }, userJwt);
-      const gs = guard(stepRes); if (gs) return gs;
-      const sp = payload(stepRes);
-      const completed = sp?.completed_step ?? 0;
-      if (completed >= 4) return { organization_id: a.organization_id, onboarding_complete: true, note: "This organization's setup is already complete." };
-      const steps = [1, 2, 3, 4].filter((s) => s > completed);
-      const missing = missingForSteps(a, steps);
-      if (missing.length) return { missing_required: missing, note: `Setup is at step ${completed} of 4 — the remaining steps need these fields. Ask the user, then call again.` };
-      const failed = await runOnboardingSteps(a, a.organization_id, steps);
-      if (failed) return failed;
-      return { organization_id: a.organization_id, onboarding_complete: true, steps_run: steps, note: "Setup finished. Offer the user a switch button if they want to work in it now." };
-    });
+  // SCOPE DECISION (owner, 2026-07-31): the assistant no longer creates or onboards
+  // organizations. `create_client_organization` and `complete_org_onboarding` are REMOVED, along
+  // with the onboarding step-dispatch machinery they exclusively used.
+  //
+  // Why: finishing an organization's setup only makes sense if the user then WORKS in it, and that
+  // requires switching the active organization — which the assistant is deliberately not allowed to
+  // do on its own. Both removed tools ended by telling the model to "offer to switch into the new
+  // organization", i.e. the flow was designed around a step the assistant must not take. Creating a
+  // half-usable organization from chat and handing back a dead end is worse than not offering it.
+  //
+  // What the assistant CAN still do here: enable an agency account (switch_to_agency_account, on the
+  // user's explicit request only), read the organization list and onboarding progress, and update an
+  // existing organization's details. Creating and onboarding a NEW organization is the app's job.
+  //
+  // Removing these also retires two real hazards found in the audit: onboarding step 4 granted every
+  // invitee access to the CALLER's main organization as well (an undisclosed cross-org grant), and
+  // both tools sent live invitation emails from a non-destructive, auto-approvable tool.
+  //
+  // NOTE for the owner: these two names must also be removed from the Flowise agent's GATED
+  // customMCP `mcpActions` allowlist, or the flow will keep advertising tools that no longer exist.
 
   t("switch_to_agency_account",
     "Convert the user's account to an AGENCY account. IRREVERSIBLE (only support can undo it) and allowed once per account. What happens: a NEW agency organization is created, the user's current business becomes its first client (all its data and members untouched), and the user gains agency-wide admin powers. BEFORE calling this, you MUST have told the user, in plain words: it can't be undone, a new agency workspace is created, their business becomes its first client, and one account can only ever have one agency. Requires the agency's name and a logo (image URL). NEVER suggest this conversion yourself — only act on the user's explicit request.",

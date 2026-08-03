@@ -117,13 +117,21 @@ Deno.serve(async (req) => {
     }
 
     // All checks passed — apply revocations.
-    const results: Array<{ organization_id: string; was_member: boolean }> = [];
+    // `was_member` describes the state BEFORE the write, so it must never be the thing we report as
+    // the outcome (2026-07-31). It used to be pushed into `results` whether the update succeeded or
+    // failed — the failure branch's own comment said "report this as an issue" and nothing did — so
+    // a failed revoke came back as a successful one. `revoked` is the actual outcome; `failed`
+    // collects the organisations whose write did not land.
+    const results: Array<{ organization_id: string; was_member: boolean; revoked: boolean }> = [];
+    const failed: string[] = [];
+    const revokedOrgIds: string[] = [];
 
     for (const orgId of effectiveOrgIds) {
       const org = orgsById.get(orgId);
       const members = Array.isArray(org.organization_members) ? org.organization_members : [];
       const updatedMembers = members.filter((m: any) => m?.member_uid !== user_id);
       const was_member = updatedMembers.length !== members.length;
+      let revoked = false;
 
       if (was_member) {
         const { error: updErr } = await supabase
@@ -132,8 +140,10 @@ Deno.serve(async (req) => {
           .eq("id", orgId);
         if (updErr) {
           console.error(`revokeUserAccessV3: failed to update org ${orgId}`, updErr);
-          // Continue with other orgs; report this as an issue.
+          failed.push(orgId);
         } else {
+          revoked = true;
+          revokedOrgIds.push(orgId);
           try {
             await createNotification({
               supabase,
@@ -150,27 +160,42 @@ Deno.serve(async (req) => {
         }
       }
 
-      results.push({ organization_id: orgId, was_member });
+      results.push({ organization_id: orgId, was_member, revoked });
     }
 
-    // Clear active_organization_id if it pointed at one of the revoked orgs.
+    // Clear active_organization_id only if it pointed at an org we ACTUALLY revoked. Keying this
+    // off the requested list meant a failed revoke still kicked the user out of their active
+    // organisation while leaving them a member of it.
     const { data: targetProfile } = await supabase
       .from("profiles")
       .select("active_organization_id")
       .eq("id", user_id)
       .maybeSingle();
-    if (targetProfile?.active_organization_id && effectiveOrgIds.includes(targetProfile.active_organization_id)) {
+    if (targetProfile?.active_organization_id && revokedOrgIds.includes(targetProfile.active_organization_id)) {
       await supabase
         .from("profiles")
         .update({ active_organization_id: null })
         .eq("id", user_id);
     }
 
+    // Nothing landed at all → this is a failure, not a success with a note.
+    if (failed.length > 0 && revokedOrgIds.length === 0) {
+      return errorResponse(
+        "REVOKE_FAILED",
+        `Could not revoke access for ${failed.length} organization(s). No access was changed.`,
+        500,
+      );
+    }
+
     return successResponse({
       status: "success",
-      message: `User access revoked from ${results.filter((r) => r.was_member).length} organization(s)`,
+      message: failed.length > 0
+        ? `User access revoked from ${revokedOrgIds.length} organization(s); ${failed.length} could not be updated`
+        : `User access revoked from ${revokedOrgIds.length} organization(s)`,
       user_id,
       results,
+      revoked_organization_ids: revokedOrgIds,
+      failed_organization_ids: failed,
       dropped_agency_organization_ids: droppedAgencyOrgIds,
     }, 200);
   } catch (error) {

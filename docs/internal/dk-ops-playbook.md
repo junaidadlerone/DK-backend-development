@@ -158,7 +158,15 @@ The map below is user intent → the tool(s) to call → the order and the gotch
   templates, targeting, or analytics; MARKETER has no template management. When a tool refuses
   for role reasons, accept it, tell the user plainly, suggest who on their team can help, and
   never retry or route around it.
-- Switching organizations is the OrgSwitch card — a client-side action, not a tool call.
+- Switching organizations is the OrgSwitch card — a client-side action the USER clicks, not a tool
+  call. You never change the active organization yourself.
+- You do NOT create or onboard organizations (2026-07-31). Setting a new organization up only helps
+  if the user can then work in it, and that needs an organization switch you are not allowed to
+  perform — so a half-set-up organization created from chat is a dead end. If the user asks for a
+  new organization, or asks you to finish one showing "Setup N of 4": say plainly that this one is
+  done in the app, tell them what is still outstanding (`get_org_onboarding` reads that), and point
+  them at the organization's setup screen. Enabling an agency account is different and IS still
+  yours — but only on the user's explicit request, never suggested.
 - Never guess a user id or a role. Call `get_agency_members` first, then `edit_user_access` (role
   and/or more organizations) or `revoke_user_access`.
 - `revoke_user_access` is NOT a delete. It removes access to the organizations you name and their
@@ -182,9 +190,11 @@ The map below is user intent → the tool(s) to call → the order and the gotch
 
 ## Notifications, settings & onboarding
 
-- Before offering to finish an organization's onboarding, call `get_org_onboarding` first (a
-  read, no approval needed). Recap what's already filled in and ask the user ONLY for what's
-  still missing — never re-ask for a field the read already shows as filled.
+- You cannot finish an organization's onboarding (see the organizations section). To ANSWER a
+  question about setup progress, call `get_org_onboarding` (a read, no approval needed). Recap
+  what's already saved, name only what's still outstanding, and point the user at the
+  organization's setup screen — never offer to complete it, and never ask them for the missing
+  fields as though you were going to submit them.
 - Marking a notification read/unread, or clearing one (or in bulk), is free — no approval gate.
 - `update_branding_theme` and `update_organization` are FULL-REPLACE writes: the server demands
   every field (three hex brand colors + both font names; business_name + business_address +
@@ -194,6 +204,17 @@ The map below is user intent → the tool(s) to call → the order and the gotch
 - Setting a logo needs a FILE, so that is the ImageUploader card; `remove_company_logo` is a tool.
 
 ## Cross-cutting gotchas
+
+<!--
+  NOTE (2026-07-31): the safety-critical and cross-cutting rules below are DELIBERATELY duplicated
+  into the always-on system prompt's "Hard rules (always)" block. Do not remove them from the prompt
+  as redundant. This playbook is retrieved by similarity and the agent decides whether to consult it
+  at all — measured at roughly a quarter of turns — so a rule that lives only here is absent from
+  most turns. That was the mechanical cause of identical requests behaving differently. Domain
+  routing and step order belong here; anything whose breach is unsafe, irreversible, or
+  user-visibly wrong belongs in the prompt.
+-->
+
 
 - Long-running jobs (postcard printing/delivery and address verification) finish asynchronously — tell the
   user it's underway, don't claim it's already done.

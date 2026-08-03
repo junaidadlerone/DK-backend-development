@@ -201,8 +201,9 @@ const THINKING_LABELS = {
   share_agency_template: "Sharing the design…",
   unshare_agency_template: "Unsharing the design…",
   delete_template_bundle: "Deleting the design…",
-  create_client_organization: "Setting up the new organization…",
-  complete_org_onboarding: "Finishing the organization's setup…",
+  // create_client_organization / complete_org_onboarding removed 2026-07-31 — the assistant no
+  // longer creates or onboards organizations (it would need to switch the active org, which it must
+  // not do on its own). Labels dropped with the tools.
   switch_to_agency_account: "Converting to an agency account…",
 };
 // Fallback is deliberately generic — never expose a raw tool name for an unmapped/new tool.
@@ -232,7 +233,26 @@ const HITL_REJECT = "__dk_hitl_reject__";
 // BELT (owner rule, not annotation-derived): ANY delete_* tool cards in BOTH modes, whatever the
 // MCP's annotations say. Deletion is the one class of action a wrong auto-approve cannot undo, so
 // it does not get to depend on a remote annotation staying correct.
-const ALWAYS_CONFIRM = new Set(["set_default_payment_method", "invite_user", "edit_user_access"]);
+// Added 2026-07-31 after the agency/settings audit — each of these matches the rule above
+// ("side effects that leave the account") yet was annotated non-destructive, so auto mode ran it
+// with no card at all:
+//   share_agency_template / unshare_agency_template — change what OTHER organizations can see.
+//   set_verification_skip — flips a paid address-verification decision the user made deliberately.
+//   remove_invalid_addresses / remove_duplicate_addresses — permanently prune a PAID mailing list
+//     (owner decision 2026-07-31: always card, rather than auto with a receipt).
+// The other two invitation-email tools that belonged here — create_client_organization and
+// complete_org_onboarding — were REMOVED from the assistant entirely instead (same date), so they
+// need no gate. invite_user / edit_user_access below remain the email-sending tools that stay.
+const ALWAYS_CONFIRM = new Set([
+  "set_default_payment_method",
+  "invite_user",
+  "edit_user_access",
+  "share_agency_template",
+  "unshare_agency_template",
+  "set_verification_skip",
+  "remove_invalid_addresses",
+  "remove_duplicate_addresses",
+]);
 const MAX_AUTO_RESUMES = 5; // per turn — runaway-loop backstop
 let toolSafetyCache = null; // Map<tool, "auto"|"confirm">
 let toolSafetyFetchedAt = 0;
@@ -306,9 +326,13 @@ const TOOL_RESOURCES = {
   edit_user_access: ["team"],
   revoke_user_access: ["team"],
   update_agency_settings: ["organization"],
-  create_client_organization: ["organization"],
-  complete_org_onboarding: ["organization"],
-  switch_to_agency_account: ["organization"],
+  // `agency_enabled` is a DEDICATED signal, not just an org refetch: converting to an agency flips
+  // active_organization_id, multi_org_enabled and is_super_admin server-side, and the app must run
+  // the same post-switch sequence it runs for its own sidesheet (rehydrate auth → refresh
+  // appContent → land on the agency overview). A generic "organization" refetch would leave the
+  // user on a business-menu page whose active org no longer exists. See
+  // AgencyEnabledCoordinator on the frontend.
+  switch_to_agency_account: ["organization", "agency_enabled"],
 };
 // A write "succeeded" when its result parses without an error/denial marker. Tool results are
 // compact JSON — an {error}/{missing_required}/{role_restricted} result means nothing changed.
@@ -368,8 +392,6 @@ const PERM_ACTIONS = {
   edit_user_access: { t: "Changing access for", b: "Changing this member's access" },
   revoke_user_access: { t: "Removing access for", b: "Removing this member's access" },
   update_agency_settings: { b: "Updating your agency settings" },
-  create_client_organization: { t: "Creating organization", b: "Creating the new organization" },
-  complete_org_onboarding: { t: "Finishing setup for", b: "Finishing this organization's setup" },
   switch_to_agency_account: { b: "Converting your account to an agency" },
 };
 // The human-readable TARGET of a pending action, pulled from the tool args the model sent.
@@ -419,24 +441,56 @@ const labelWithTarget = (tool, args) => {
 // Plain Approve/Reject card for non-charging writes (charging actions get a cost+checkbox
 // variant in Phase 3B). Rendered through the same GenUI catalog the read tools use, so the
 // frontend's existing perm_-surface handling (retract on click, exclude from history) applies.
+// A card must state consequences the title cannot carry. `delete_referral` cascades to every
+// campaign linked to the referral (campaigns.referral_id is ON DELETE CASCADE, which chains on to
+// targeting zones, analytics and postcard-send history), and the tool now requires the agent to
+// acknowledge that count in its ARGS — so the card can state it deterministically instead of relying
+// on the model to have mentioned it. Previously this card read only "Deleting referral <name>".
+const permissionConsequence = (tool, args) => {
+  if (tool === "delete_referral") {
+    const n = Number(args?.confirm_delete_campaigns ?? 0);
+    if (Number.isFinite(n) && n > 0) {
+      return `This also permanently deletes ${n} linked campaign${n === 1 ? "" : "s"}, including their targeting, analytics and postcard-send history.`;
+    }
+  }
+  return null;
+};
 const buildApprovalCard = (actionId, sessionId, tool, args, otherTitles = []) => {
   // More than one write was still pending when Flowise paused — name the others so approving
   // this card is never a blind yes to something the user can't see.
   const others = (otherTitles ?? []).filter((s) => typeof s === "string" && s.trim());
   const alsoLine = others.length ? `Also pending: ${others.join("; ")}.` : null;
+  // NO IDENTITY → NO APPROVE (owner rule, 2026-07-31). A card that cannot name what it is asking
+  // about must never carry an Approve button: the user was being asked to authorise a write the
+  // gateway itself could not identify, which is consent in name only. The card is still shown —
+  // `sawPermission` drives `awaiting_approval`, so returning nothing would lock the composer with
+  // an empty screen — but its only action is to cancel, and the model is told to re-declare.
+  const identified = !!(tool && PERM_ACTIONS[tool]);
+  const consequence = identified ? permissionConsequence(tool, args) : null;
+  const title = identified ? permissionTitle(tool, args) : "I couldn't confirm what this would change";
+  const caption = identified
+    ? "Approve to run it, or reject to cancel."
+    : "Nothing has run. Cancel this and ask me again, and I'll re-check before doing anything.";
   return cleanUiFrame({
     type: "ui",
-    surface_id: `perm_${actionId ?? sessionId}`,
+    // A fresh id when Flowise omits its action id — NEVER the session id. Falling back to the
+    // session made every approval card in a conversation share one chat_surfaces row, so card #2's
+    // persist overwrote card #1's recorded Approve/Reject and a reload re-armed a decision the user
+    // had already made (which, per the resume path's own warning, risks double-executing it).
+    surface_id: `perm_${actionId ?? randomUUID()}`,
     mode: "replace",
     root: "perm-card",
     components: [
-      { id: "perm-card", component: { Card: { title: "Approval needed", children: ["perm-title", "perm-cap", ...(alsoLine ? ["perm-others"] : []), "perm-row"] } } },
-      { id: "perm-title", component: { Text: { text: permissionTitle(tool, args), variant: "subtitle" } } },
-      { id: "perm-cap", component: { Text: { text: "Approve to run it, or reject to cancel.", variant: "caption" } } },
+      { id: "perm-card", component: { Card: { title: identified ? "Approval needed" : "Cancelled for safety", children: ["perm-title", ...(consequence ? ["perm-consequence"] : []), "perm-cap", ...(alsoLine ? ["perm-others"] : []), "perm-row"] } } },
+      { id: "perm-title", component: { Text: { text: title, variant: "subtitle" } } },
+      ...(consequence ? [{ id: "perm-consequence", component: { Text: { text: consequence } } }] : []),
+      { id: "perm-cap", component: { Text: { text: caption, variant: "caption" } } },
       ...(alsoLine ? [{ id: "perm-others", component: { Text: { text: alsoLine, variant: "caption" } } }] : []),
-      { id: "perm-row", component: { Row: { children: ["perm-approve", "perm-reject"], gap: "sm" } } },
-      { id: "perm-approve", component: { Button: { label: "Approve", tone: "primary", action: { type: "send", display: "Approved", prompt: HITL_PROCEED } } } },
-      { id: "perm-reject", component: { Button: { label: "Reject", tone: "ghost", action: { type: "send", display: "Rejected", prompt: HITL_REJECT } } } },
+      { id: "perm-row", component: { Row: { children: [...(identified ? ["perm-approve"] : []), "perm-reject"], gap: "sm" } } },
+      ...(identified
+        ? [{ id: "perm-approve", component: { Button: { label: "Approve", tone: "primary", action: { type: "send", display: "Approved", prompt: HITL_PROCEED } } } }]
+        : []),
+      { id: "perm-reject", component: { Button: { label: identified ? "Reject" : "Cancel", tone: "ghost", action: { type: "send", display: identified ? "Rejected" : "Cancelled", prompt: HITL_REJECT } } } },
     ],
     data_model: {},
   });
@@ -692,7 +746,20 @@ async function persistTurn(sessionId, userMessage, assistantReply, extras = {}) 
   }
   if (surfaces.length) {
     const now = new Date().toISOString();
-    const rows = surfaces.map((s) => ({
+    // DEDUPE BY surface_id, keeping the LAST emission (2026-07-31). One turn can legitimately emit
+    // the same surface_id twice — a recovery re-POST re-running emit_ui, or a revised card replacing
+    // its earlier render. Passing both to one bulk upsert is a hard Postgres error (SQLSTATE 21000,
+    // "ON CONFLICT DO UPDATE command cannot affect row a second time"), which aborts the ENTIRE
+    // statement: every card from that turn silently vanishes on reload, with nothing but a
+    // "surface persist failed" line to show for it. Last-wins matches what the user was left
+    // looking at.
+    const bySurface = new Map();
+    for (const s of surfaces) bySurface.set(s.surface_id, s);
+    const deduped = [...bySurface.values()];
+    if (deduped.length !== surfaces.length) {
+      console.warn(`[/chat] collapsed ${surfaces.length - deduped.length} duplicate surface_id row(s) before persisting`);
+    }
+    const rows = deduped.map((s) => ({
       session_id: sessionId,
       message_id: assistantId, // null on a pause-only turn — the frontend interleaves orphans by created_at
       surface_id: s.surface_id,
@@ -1170,7 +1237,90 @@ export async function chatHandler(req, res) {
       const others = candidates.filter((c) => c !== chosen && PERM_ACTIONS[c.tool]).map((c) => permissionTitle(c.tool, c.args));
       emitSurface(buildApprovalCard(lastActionId, sessionId, chosen?.tool, chosen?.args, others));
     };
+    // ── Pause diagnostics (C1) ────────────────────────────────────────────────
+    // The pause identity is INFERRED from `outstanding`, and when that map is empty the card ships
+    // with no action name at all — the owner's "Confirming this action" screenshot, where the user
+    // was asked to approve an action nobody could name. Flowise DOES carry the truth, on the frames
+    // that arrive immediately BEFORE `action`: `agentFlowExecutedData[].data.output.calledTools` and
+    // the "Attempting to use tool: ```json …```" block inside `output.content`. Keep a small rolling
+    // buffer of the identity-bearing frames and dump it whenever a pause turns out unidentified, so
+    // the replay fixtures are cut from a real occurrence instead of guessed at.
+    // Diagnostics ONLY — nothing here changes behaviour. Frames are truncated; request bodies and
+    // tool ARGUMENTS are never logged (args can carry customer PII), only tool names.
+    const IDENTITY_EVENTS = new Set(["calledTools", "usedTools", "agentFlowExecutedData", "action"]);
+    const FRAME_LOG_MAX = 8;
+    const FRAME_CHARS = 4000;
+    const frameLog = [];
+    const noteFrame = (ev, data) => {
+      if (!IDENTITY_EVENTS.has(ev)) return;
+      let json;
+      try { json = JSON.stringify(data); } catch { json = "<unserializable>"; }
+      frameLog.push({ ev, chars: json?.length ?? 0, head: (json ?? "").slice(0, FRAME_CHARS) });
+      if (frameLog.length > FRAME_LOG_MAX) frameLog.shift();
+      // Local fixture capture. OFF by default and never enabled in production: these frames are
+      // untruncated and can contain tool arguments (PII). Run the gateway with DK_TRACE_FRAMES=1
+      // against a test account to cut replay fixtures from real Flowise event ordering — the whole
+      // HITL defect lives in the ORDER of these frames, so guessed fixtures prove nothing.
+      if (process.env.DK_TRACE_FRAMES === "1") {
+        console.log(`[/chat] frame ${JSON.stringify({ ev, data })}`);
+      }
+    };
+    // ── Authoritative pause identity (2026-07-31) ─────────────────────────────
+    // Flowise's `action` payload is anonymous — verified against captured production frames, it
+    // carries only { id, mapping, elements, data:{nodeId, nodeLabel, input} }. The identity IS on
+    // the wire, on the `agentFlowExecutedData` frame that arrives immediately BEFORE the pause:
+    //   * `output.calledTools` — the paused node's own tool calls, in LangChain {name, args} shape
+    //   * `output.content`     — with the gated call appended as an "Attempting to use tool:" block
+    // Reading those removes the whole race the old approach had: `outstanding` is keyed by tool
+    // NAME and the same frame's CUMULATIVE `usedTools` retires it, so a tool called twice in one
+    // turn had its pending call deleted microseconds before the card was built — zero candidates,
+    // and a generic "Confirming this action" card with a live Approve.
+    let pauseRecord = null;
+    const ATTEMPT_JSON_RE = /Attempting to use tool:?\s*```json\s*([\s\S]*?)```/g;
+    const gatedFromContent = (content) => {
+      if (typeof content !== "string") return null;
+      let last = null;
+      for (const m of content.matchAll(ATTEMPT_JSON_RE)) last = m[1]; // the LAST block is the gated one
+      if (!last) return null;
+      try {
+        const o = JSON.parse(last);
+        const tool = o?.name ?? o?.tool ?? null;
+        return tool ? { tool, args: o?.args ?? o?.toolInput ?? {} } : null;
+      } catch { return null; }
+    };
+    const notePauseNode = (output) => {
+      if (output?.isWaitingForHumanInput !== true) return;
+      const batch = (Array.isArray(output.calledTools) ? output.calledTools : [])
+        .map((t) => ({ tool: t?.name ?? t?.tool ?? null, args: t?.args ?? t?.toolInput ?? {} }))
+        .filter((c) => c.tool);
+      const gated = gatedFromContent(output.content);
+      // The gated call leads so the card is titled from what Flowise actually stopped on, but the
+      // WHOLE batch is kept: one Approve executes every tool call in the iteration, so the policy
+      // must judge all of them, not just the one it paused on.
+      const ordered = gated
+        ? [gated, ...batch.filter((c) => c.tool !== gated.tool)]
+        : batch;
+      if (ordered.length) pauseRecord = { ordered };
+    };
+    const logPause = (outcome, candidates, chosen) => {
+      const identified = !!(chosen && PERM_ACTIONS[chosen.tool]);
+      console.warn("[/chat] pause", JSON.stringify({
+        evt: "hitl_pause",
+        session: sessionId,
+        actionId: lastActionId,
+        mode: approvalMode,
+        outcome,                                   // "auto-resume" | "card"
+        candidates: candidates.map((c) => c.tool), // names only
+        chosen: chosen?.tool ?? null,
+        identified,                                // false ⇒ the card carries no action name
+        autoResumes,
+      }));
+      if (outcome === "card" && !identified) {
+        console.error("[/chat] pause UNIDENTIFIED — identity-bearing frames preceding this pause:", JSON.stringify(frameLog));
+      }
+    };
     const handleEvent = async (ev, data) => {
+      noteFrame(ev, data);
       switch (ev) {
         // On a reject resume the model tends to emit unreliable filler; suppress it and let the
         // deterministic "cancelled" line (below) stand in.
@@ -1209,7 +1359,9 @@ export async function chatHandler(req, res) {
           // is spent) the answer cannot change the outcome, and resolving it would put the
           // tool-safety fetch's 5s timeout in front of every approval card.
           lastActionId = data?.id ?? null;
-          const candidates = [...outstanding.values()];
+          // Prefer what the pause frame ACTUALLY said over what we inferred from the stream.
+          // `outstanding` remains the fallback for any Flowise build that omits the node snapshot.
+          const candidates = pauseRecord?.ordered?.length ? pauseRecord.ordered : [...outstanding.values()];
           const mayAutoResume = approvalMode === "auto" && autoResumes < MAX_AUTO_RESUMES;
           let autoOk = NEVER_AUTO;
           if (mayAutoResume && candidates.length) {
@@ -1227,9 +1379,11 @@ export async function chatHandler(req, res) {
               send({ type: "thinking", delta: label });
               noteThinking(label);
             }
+            logPause("auto-resume", candidates, null);
           } else {
             sawPermission = true;
             emitApprovalCard(candidates, autoOk);
+            logPause("card", candidates, chooseCandidate(candidates, autoOk));
           }
           break;
         }
@@ -1255,6 +1409,9 @@ export async function chatHandler(req, res) {
           for (const nodeExec of (Array.isArray(data) ? data : [])) {
             const output = nodeExec?.data?.output;
             if (!output) continue;
+            // Capture the pause identity BEFORE the retirement loop below — it reads the node's own
+            // calledTools/content, so the cumulative usedTools retirement can no longer erase it.
+            notePauseNode(output);
             const laterToolReturns = Array.isArray(output.usedTools) ? output.usedTools : [];
             for (const t of laterToolReturns) {
               if (t?.tool) sawToolActivity = true;
@@ -1406,12 +1563,25 @@ export async function chatHandler(req, res) {
     // "Auto-approved: …" for an action that never ran. autoResumes/MAX_AUTO_RESUMES still bound
     // the total, so re-calling this cannot widen the loop budget.
     const drainAutoResumes = async () => {
+      if (!pendingAutoResume) return;
+      // AUTO/MANUAL PARITY (2026-07-31). A manual resume sends question "proceed" (see the resume
+      // branch above) and lets humanInput carry the decision. This loop used to leave the ORIGINAL
+      // user message in `question`, so after an auto-approved pause the model was handed its entire
+      // task again and could redo work it had already done — QA's "auto mode is worse than manual".
+      // Send the identical signal, and restore the question afterwards so any later recovery branch
+      // still sees the real turn text.
+      const questionBeforeResume = predictionBody.question;
       while (pendingAutoResume && !turnError && !upstreamAbort.signal.aborted) {
         pendingAutoResume = false;
         beginAttempt();
+        predictionBody.question = "proceed";
         predictionBody.humanInput = { type: "proceed", startNodeId: AGENT_NODE_ID };
+        // Arm the separator like every other attempt seam, so the resumed text can't be glued onto
+        // the pre-pause sentence (the missing-space run-on this loop was the last one not doing).
+        pendingSeam = true;
         await runAttempt();
       }
+      predictionBody.question = questionBeforeResume;
     };
     await drainAutoResumes();
 
@@ -1525,7 +1695,9 @@ export async function chatHandler(req, res) {
       console.warn("[/chat] auto-approved pause left undrained — falling back to an approval card");
       pendingAutoResume = false;
       sawPermission = true;
-      emitApprovalCard([...outstanding.values()]);
+      const orphanCandidates = [...outstanding.values()];
+      emitApprovalCard(orphanCandidates);
+      logPause("card-backstop", orphanCandidates, chooseCandidate(orphanCandidates));
     }
 
     // Surface a turn error as one friendly line. Skip when the client aborted (stop button /

@@ -134,7 +134,7 @@ const ROLE_DENIED_AREAS = {
   MARKETER: new Set(["template_management"]),
 };
 const roleCache = new Map(); // userJwt -> { role, expiresAt }
-async function activeOrgRole(userJwt) {
+export async function activeOrgRole(userJwt) {
   const hit = roleCache.get(userJwt);
   if (hit && hit.expiresAt > Date.now()) return hit.role;
   let role = null;

@@ -24,14 +24,24 @@ const campaignRow = (c) => ({
   total_spent: c.total_spent ?? c.total_spent_display ?? null,
   start_date: c.start_date ?? null,
 });
-const referralRow = (r) => ({
-  id: r.id,
-  referrer: r.home_owner_info?.name ?? r.home_owner_info?.referrer_name ?? null,
-  job_type: r.job_details?.job_type ?? null,
-  value: r.job_details?.value_display ?? r.job_details?.value ?? null,
-  status: r.status?.name ?? r.status ?? null,
-  campaign_id: r.campaign_id ?? null,
-});
+const referralRow = (r) => {
+  const status = r.status?.name ?? r.status ?? null;
+  return {
+    id: r.id,
+    referrer: r.home_owner_info?.name ?? r.home_owner_info?.referrer_name ?? null,
+    job_type: r.job_details?.job_type ?? null,
+    value: r.job_details?.value_display ?? r.job_details?.value ?? null,
+    status,
+    // Explicit so the model never has to interpret a status string to decide whether a referral can
+    // carry a campaign. A draft is not usable: the consent + signature section is the USER's to
+    // complete, and create_campaign refuses anything else. Without this the model was handed a list
+    // of equally-selectable options and picked a draft (QA, 2026-07-31).
+    // NOTE: a campaign also needs at least one job photo, which this list payload does not carry —
+    // create_campaign checks that at the point of use.
+    usable_for_campaign: status === "Ready" || status === "In Use",
+    campaign_id: r.campaign_id ?? null,
+  };
+};
 // A bundle has NO name of its own anywhere in the schema — the display name lives in the
 // side templates' description with a trailing side token, e.g. "QA Dup v2 Back" → "QA Dup v2"
 // (owner-confirmed rule; matches the frontend's stripBundleSuffix).
@@ -199,8 +209,9 @@ export function registerReadTools(server, { userId, userJwt }) {
     }, "analytics");
 
   // ── Referrals ─────────────────────────────────────────────────────────────────
-  t("list_referrals", "List the user's referrals/jobs (referrer, job type, value, status). Paginated.",
-    { page: z.number().optional(), limit: z.number().optional(), showOnlyActive: z.boolean().optional() },
+  t("list_referrals",
+    "List the user's referrals/jobs (referrer, job type, value, status). Paginated. A referral can only be used for a campaign once the USER has finished it — they complete the consent + signature section in the app, which is what turns it from a draft into a usable referral. When you are looking for a referral to build a campaign on, pass showOnlyActive:true so drafts are excluded; each row also carries usable_for_campaign. Never propose a referral whose usable_for_campaign is false.",
+    { page: z.number().optional(), limit: z.number().optional(), showOnlyActive: z.boolean().optional().describe("true = only referrals that are finished and usable for a campaign") },
     async (a) => {
       const res = await callApi("getAllReferrals", "POST", { page: a.page ?? 1, limit: a.limit ?? 10 }, userJwt, { showOnlyActive: a.showOnlyActive });
       const g = guard(res); if (g) return g;
@@ -250,12 +261,13 @@ export function registerReadTools(server, { userId, userJwt }) {
       return guard(res) ?? { organizations: payload(res)?.organizations ?? payload(res) ?? [] };
     });
 
-  // WS3 (Tier 3.5): setup-progress read. Before this existed the agent could only learn an
-  // org's onboarding state as a side effect of calling complete_org_onboarding (a write, so it
-  // carded for approval just to LOOK). The step numbers here mirror the wizard: 1 business,
+  // WS3 (Tier 3.5): setup-progress read. The step numbers mirror the wizard: 1 business,
   // 2 address, 3 logo, 4 team (team_onboarding_completed is what marks the org done).
+  // 2026-07-31: this is now a REPORTING read only. The assistant no longer creates or onboards
+  // organizations (that needed an org switch it must not perform), so this answers "what's left?"
+  // and points the user at the app — it never precedes a write.
   t("get_org_onboarding",
-    "An organization's setup/onboarding progress: which of the 4 setup steps are done, what's already filled in (business details, address, logo), and exactly which required fields are still needed. Use when an organization shows as 'Setup N of 4' or before offering complete_org_onboarding — recap what's already saved and ask the user ONLY for what's missing.",
+    "An organization's setup/onboarding progress: which of the 4 setup steps are done, what's already filled in (business details, address, logo), and exactly which required fields are still needed. Use this to ANSWER a question about setup progress — e.g. when an organization shows as 'Setup N of 4'. You cannot finish an organization's setup yourself: tell the user what's outstanding and that they can complete it on the organization's setup screen in the app.",
     { organization_id: z.string().optional().describe("defaults to the user's active organization") },
     async (a) => {
       const q = a.organization_id ? { organization_id: a.organization_id } : null;
@@ -285,7 +297,7 @@ export function registerReadTools(server, { userId, userJwt }) {
       if (completed >= 4) {
         return { completed_step: 4, onboarding_complete: true, filled, note: "This organization's setup is fully complete." };
       }
-      // Required fields for the steps that haven't run yet (mirrors complete_org_onboarding).
+      // Required fields for the steps that haven't run yet — mirrors the app's onboarding wizard.
       const STEP_FIELDS = {
         1: [["business_name", filled.business_name], ["industry", filled.industry]],
         2: [["country", filled.address.country], ["street_address", filled.address.street_address], ["city", filled.address.city], ["state", filled.address.state], ["zip", filled.address.zip]],
@@ -301,8 +313,8 @@ export function registerReadTools(server, { userId, userJwt }) {
         filled,
         still_needed,
         note: still_needed.length
-          ? `Setup is at step ${completed} of 4. Everything in \`filled\` is already saved — ask the user only for: ${still_needed.join(", ")}. Then use complete_org_onboarding.`
-          : `Setup is at step ${completed} of 4 but every required field is already saved — complete_org_onboarding can finish it (it always runs the final team step).`,
+          ? `Setup is at step ${completed} of 4. Everything in \`filled\` is already saved; what's still outstanding is: ${still_needed.join(", ")}. Tell the user that, in plain words, and that they can finish it on the organization's setup screen — you cannot complete setup for them.`
+          : `Setup is at step ${completed} of 4 and every required field is already saved — only the final confirmation step remains, which the user does on the organization's setup screen. You cannot complete it for them.`,
       };
     });
 

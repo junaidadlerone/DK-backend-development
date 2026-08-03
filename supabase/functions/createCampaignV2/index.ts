@@ -232,13 +232,19 @@ async function handleStep1(supabase: any, body: any, organizationId: string, use
 
   const campaign = newCampaign;
 
-  // Link referral with campaign_id and set status to "Ready" only if referral_id was provided
+  // Link the referral to the campaign. Deliberately does NOT touch the referral's status
+  // (2026-07-31): this used to force `{ name: "Ready" }` unconditionally, which meant linking an
+  // unfinished DRAFT referral silently marked it Ready — destroying the one signal the app itself
+  // uses to show the referral is incomplete, and making the problem invisible afterwards. Readiness
+  // is computed from the referral's own fields (createReferral / updateReferralById) and depends on
+  // the homeowner's consent + signature, which only the user can provide; linking is not evidence
+  // of either. Note deleteCampaign does not reset the status, so a forced Ready also outlived the
+  // campaign that caused it.
   if (referral_id) {
     const { error: updateReferralError } = await supabase
       .from("referrals")
       .update({
         campaign_id: campaign.id,
-        status: { id: "4d1ca79a-1a0a-4c9f-a183-6c5bebd13336", name: "Ready" }
       })
       .eq("id", referral_id);
 

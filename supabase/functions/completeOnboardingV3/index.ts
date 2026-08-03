@@ -396,7 +396,7 @@ Deno.serve(async (req) => {
 
       const { data: curOrg } = await supabase
         .from("organizations")
-        .select("branding_settings")
+        .select("owner_id, branding_settings")
         .eq("id", primaryOrgId)
         .single();
 
@@ -409,6 +409,31 @@ Deno.serve(async (req) => {
         .update({ branding_settings: nextBranding, updated_at: new Date().toISOString() })
         .eq("id", primaryOrgId);
       if (orgErr5) throw orgErr5;
+
+      // The theme must ALSO land on the org OWNER's profile row (2026-07-31 fix).
+      // getAppContent — the endpoint that actually serves branding to the app — reads the theme
+      // from `profiles.branding_settings` of `organizations.owner_id`, NOT from
+      // `organizations.branding_settings`. Writing only the organization row meant a theme chosen
+      // during onboarding was stored but never rendered anywhere, so the user's branding looked as
+      // though it had not saved at all. Merge rather than replace, so an existing profile-level
+      // logo/other keys survive.
+      if (theme) {
+        const ownerId = curOrg?.owner_id ?? user.userId;
+        const { data: ownerProfile } = await supabase
+          .from("profiles")
+          .select("branding_settings")
+          .eq("id", ownerId)
+          .single();
+        const { error: brandErr } = await supabase
+          .from("profiles")
+          .update({
+            branding_settings: { ...(ownerProfile?.branding_settings || {}), theme },
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", ownerId);
+        // Fail loudly: silently swallowing this is exactly how the branding loss went unnoticed.
+        if (brandErr) throw brandErr;
+      }
 
       if (logoUrl) {
         await supabase

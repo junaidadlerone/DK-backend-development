@@ -44,23 +44,12 @@ Deno.serve(async (req) => {
 
     const existingLogoUrl: string | null = onboardingData?.company_logo ?? null;
 
-    // ── 2. Delete old file from storage (always, before replacement) ────────
-    if (existingLogoUrl) {
-      try {
-        // Extract storage path: everything after "/CompanyLogos/"
-        const marker = "/CompanyLogos/";
-        const markerIdx = existingLogoUrl.indexOf(marker);
-        if (markerIdx !== -1) {
-          const storagePath = existingLogoUrl.substring(markerIdx + marker.length);
-          // Decode URI components in case path was encoded
-          const decodedPath = decodeURIComponent(storagePath);
-          await supabase.storage.from("CompanyLogos").remove([decodedPath]);
-        }
-      } catch (deleteErr) {
-        // Non-fatal — log and continue; the file may already be gone
-        console.warn("Could not delete old logo from storage:", deleteErr);
-      }
-    }
+    // ── 2. (moved) Old-file deletion now happens LAST — see step 5 ──────────
+    // This used to delete the existing logo from storage HERE, before the request had even been
+    // parsed. Any subsequent failure — no file field, a >25MB file, a failed upload, a failed DB
+    // update — therefore returned an error with the old logo already destroyed, leaving the stored
+    // record pointing at a deleted object (a permanently broken logo). The delete is only safe once
+    // the replacement is committed.
 
     // ── 3. Handle new logo or removal ───────────────────────────────────────
     let newLogoUrl: string | null = null;
@@ -134,6 +123,23 @@ Deno.serve(async (req) => {
     if (updateError) {
       console.error("Failed to update onboarding:", updateError);
       return errorResponse("UPDATE_FAILED", "Failed to update company logo record", 500);
+    }
+
+    // ── 5. Only NOW delete the old file ─────────────────────────────────────
+    // The replacement (or the deliberate removal) is committed, so the old object is genuinely
+    // orphaned. Best-effort: a failure here leaves a stray file, which is harmless, whereas doing
+    // this any earlier risked destroying a logo the record still referenced.
+    if (existingLogoUrl && existingLogoUrl !== newLogoUrl) {
+      try {
+        const marker = "/CompanyLogos/";
+        const markerIdx = existingLogoUrl.indexOf(marker);
+        if (markerIdx !== -1) {
+          const decodedPath = decodeURIComponent(existingLogoUrl.substring(markerIdx + marker.length));
+          await supabase.storage.from("CompanyLogos").remove([decodedPath]);
+        }
+      } catch (deleteErr) {
+        console.warn("Could not delete old logo from storage (new logo is already saved):", deleteErr);
+      }
     }
 
     return successResponse({
