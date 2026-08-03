@@ -24,9 +24,22 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { z } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
-import { declaredOnly, getTurnId, loosenInputSchema, loosenSchema, loosenToolSchema, setTurnId } from "../src/tool-helpers.mjs";
-import { registerWriteTools } from "../src/tools-write.mjs";
-import { registerReadTools } from "../src/tools-read.mjs";
+
+// ENV BEFORE ANY src IMPORT. env.mjs snapshots process.env at ITS module load, and static imports
+// hoist above every assignment in this file — so tool-helpers (which reaches env.mjs → supabase.mjs)
+// must be imported DYNAMICALLY, after these lines. Deliberately not loading .env: CI has none, and a
+// test that needs real credentials to run is a test that does not run.
+process.env.SUPABASE_URL ??= "http://127.0.0.1:9999";
+process.env.SUPABASE_SERVICE_ROLE_KEY ??= "test-service-role-key";
+process.env.SUPABASE_SERVICE_KEY ??= "test-service-role-key";
+process.env.SUPABASE_ANON_KEY ??= "test-anon-key";
+
+const { declaredOnly, getTurnId, loosenInputSchema, loosenSchema, loosenToolSchema, setTurnId } =
+  await import("../src/tool-helpers.mjs");
+const { registerWriteTools } = await import("../src/tools-write.mjs");
+const { registerReadTools } = await import("../src/tools-read.mjs");
+const { registerGenUiTools } = await import("../src/tools-genui.mjs");
+const { registerControlTools } = await import("../src/tools-control.mjs");
 
 /** The shape the SDK publishes for a tool: it wraps the raw `{key: ZodType}` shape in z.object(). */
 const published = (shape) => zodToJsonSchema(z.object(shape));
@@ -189,10 +202,19 @@ function publishedSchemas(register) {
   return found;
 }
 
-for (const [label, register] of [["write", registerWriteTools], ["read", registerReadTools]]) {
+// EVERY registry, not just read+write. The original version of this test covered those two only, and
+// that gap let `end_task` ship to production as the single strict tool of 64 — found by querying the
+// deployed tools/list, which is a check no test was making. A registry missing from this list is
+// invisible to the guard, so the list is the thing that matters here.
+for (const [label, register] of [
+  ["write", registerWriteTools],
+  ["read", registerReadTools],
+  ["genui", registerGenUiTools],
+  ["control", registerControlTools],
+]) {
   test(`every ${label} tool advertises additionalProperties:true at every level`, () => {
     const schemas = publishedSchemas(register);
-    assert.ok(schemas.size >= 20, `expected the ${label} registry to register many tools, got ${schemas.size}`);
+    assert.ok(schemas.size >= 1, `the ${label} registry registered nothing — the guard would pass vacuously`);
     const offenders = [];
     for (const [name, schema] of schemas) {
       // A registry that regressed to a raw shape would fail here too: zodToJsonSchema needs a
