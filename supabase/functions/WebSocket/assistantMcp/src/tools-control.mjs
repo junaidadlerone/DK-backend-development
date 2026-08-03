@@ -27,6 +27,7 @@
 // not to assume. The gateway records what it receives (see the per-turn log's `end_task` field); the
 // heuristics get retired on evidence, not on argument.
 import { z } from "zod";
+import { loosenToolSchema } from "./tool-helpers.mjs";
 
 const asText = (obj) => ({ content: [{ type: "text", text: JSON.stringify(obj) }] });
 
@@ -39,7 +40,11 @@ export function registerControlTools(server, _auth) {
       + "• \"blocked\" — you cannot continue without a decision or a piece of information only the user can give you. Ask for it in your reply, then call this.\n"
       + "• \"failed\" — something went wrong and the user's request did NOT happen. Never use \"complete\" for this.\n"
       + "This does NOT replace your reply — write your normal answer first, then call this. Do not call it in the middle of a turn: if a step is still doable now, do it instead of ending.",
-    inputSchema: {
+    // D7 applies here MORE than anywhere else: prompt rule 13 has the model calling this on EVERY
+    // turn, so a strict schema turns its habitual stray key into a lost completion signal — and the
+    // gateway then falls back to the very guessing this tool exists to replace. Missed in the original
+    // change and caught by querying the DEPLOYED tools/list (it was the only strict tool of 64).
+    inputSchema: loosenToolSchema({
       status: z
         .enum(["complete", "needs_user_in_app", "blocked", "failed"])
         .describe("complete = nothing outstanding; needs_user_in_app = the rest is the user's to do in the app; blocked = you need something from the user; failed = it did not happen"),
@@ -48,7 +53,7 @@ export function registerControlTools(server, _auth) {
         .max(200)
         .optional()
         .describe("one short line: what got done, what the user needs to do, or what went wrong"),
-    },
+    }),
     // readOnlyHint so nothing treats this as a mutation. It never reaches the auto-approve policy
     // anyway: it lives in the UNGATED bundle, so Flowise does not pause on it.
     annotations: { readOnlyHint: true, destructiveHint: false },
