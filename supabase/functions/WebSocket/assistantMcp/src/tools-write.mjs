@@ -177,7 +177,7 @@ const jobDetails = z.object({
 // Which finalize-required referral fields (per the frontend CreateReferral form) are still
 // missing, so the agent can prompt for exactly those. Consent + signature are NOT here — they are
 // the user's to complete in the app and the agent never fills them.
-function referralMissingToFinalize(hoi, jd) {
+export function referralMissingToFinalize(hoi, jd, photoCount) {
   const addr = hoi?.address ?? {};
   const miss = [];
   if (!hoi?.name) miss.push("referrer_name");
@@ -188,8 +188,42 @@ function referralMissingToFinalize(hoi, jd) {
   if (!addr.zip) miss.push("zip");
   if (!(jd?.job_type && (jd.job_type.id || jd.job_type.name))) miss.push("job_type");
   if (!(typeof jd?.value === "number" && jd.value > 0)) miss.push("job_value");
+  // A JOB PHOTO is required too (2026-08-03). Reported live: the agent created a referral with every
+  // field filled and told the user "all required details" — so it never mentioned a photo, and the
+  // user only found out when a campaign later refused the referral. The photo requirement was
+  // implemented in referralCampaignBlockers (the campaign gate) but never in the referral's OWN
+  // completeness report, which is what the agent reads right after creating one.
+  //
+  // The prompt tells the model to render ImageUploader when the user WANTS to add photos — reactive,
+  // so nothing triggered it. This is the trigger: a deterministic "still outstanding" the agent gets
+  // on every create and every edit.
+  //
+  // `photoCount` undefined means the caller did not look, so nothing is claimed either way — the one
+  // thing this must never do is assert a photo state it did not observe.
+  if (photoCount !== undefined && Number(photoCount) === 0) miss.push("job_photo");
   return miss;
 }
+
+/**
+ * How many images a referral has. Best-effort: on a failed read it returns undefined, which
+ * referralMissingToFinalize treats as "unknown" rather than "none" — reporting a missing photo the
+ * user has actually uploaded would send them round a loop they cannot exit.
+ */
+async function referralPhotoCount(referralId, userJwt) {
+  if (!referralId) return undefined;
+  const res = await callApi("getPhotoGallery", "POST", null, userJwt, { referral_id: referralId });
+  if (!res || res.__error) return undefined;
+  const gal = payload(res);
+  const images = gal?.images ?? gal?.gallery?.images ?? null;
+  return Array.isArray(images) ? images.length : undefined;
+}
+
+/**
+ * The note for a referral whose only outstanding item is a photo, or which needs one alongside other
+ * fields. Kept beside the check so the wording and the list cannot drift apart.
+ */
+const PHOTO_OFFER_NOTE = (referralId) =>
+  `A job photo is REQUIRED and this referral has none. Render the ImageUploader card now — target "referral_gallery", referral_id "${referralId}" — and ask the user for a photo of the job. You cannot upload it yourself and you must NOT call the referral complete until the card reports an image.`;
 
 // ── Referral readiness for CAMPAIGN USE (2026-07-31) ─────────────────────────
 // QA: the assistant happily built a referral campaign on a DRAFT referral — no consent, no
@@ -397,7 +431,7 @@ export function registerWriteTools(server, { userId, userJwt }) {
 
   // ── Referrals ──────────────────────────────────────────────────────────────
   t("create_referral",
-    "Create a new referral. Gather the referrer's details and job info from the user; NEVER fill owner consent or a signature — those are the user's to complete in the app. State may be given as a name or abbreviation ('IL' works); job type is given by NAME and matched to the app's real job-type list (a non-matching name returns the valid options to offer the user). Referrer name must be a first and last name (two words minimum). Phone is OPTIONAL but if given must be a real number, e.g. +17135550123 or (713) 555-0123 — US numbers can omit +1. Job value must be a number > 0 and <= 9,999,999. Notes are optional and must be 250 characters or fewer. Zip must be 5 digits or ZIP+4 (12345 or 12345-6789). The referral is created in DRAFT. Use the returned `missing_to_finalize` list to prompt the user for any still-missing required fields (name, full address, job type, job value), then tell them to complete the consent + signature section in the app to finalize it.",
+    "Create a new referral. Gather the referrer's details and job info from the user; NEVER fill owner consent or a signature — those are the user's to complete in the app. State may be given as a name or abbreviation ('IL' works); job type is given by NAME and matched to the app's real job-type list (a non-matching name returns the valid options to offer the user). Referrer name must be a first and last name (two words minimum). Phone is OPTIONAL but if given must be a real number, e.g. +17135550123 or (713) 555-0123 — US numbers can omit +1. Job value must be a number > 0 and <= 9,999,999. Notes are optional and must be 250 characters or fewer. Zip must be 5 digits or ZIP+4 (12345 or 12345-6789). The referral is created in DRAFT. Use the returned `missing_to_finalize` list to prompt the user for any still-missing required fields (name, full address, job type, job value), then tell them to complete the consent + signature section in the app to finalize it. A JOB PHOTO is also required and a new referral never has one: the reply lists `job_photo` under `agent_can_offer`, which means you must render the ImageUploader card (target 'referral_gallery') for it — you cannot supply a photo yourself, and you must not describe the referral as complete until the card reports an image.",
     { home_owner_info: homeOwnerInfo, job_details: jobDetails },
     W,
     // D6: a create is the one mutation whose repeat is not idempotent — an update applied twice is
@@ -433,14 +467,25 @@ export function registerWriteTools(server, { userId, userJwt }) {
         const res = await callApi("createReferral", "POST", null, userJwt, body);
         const g = guard(res); if (g) return g;
         const r = payload(res);
-        const missing = referralMissingToFinalize(body.home_owner_info ?? a.home_owner_info, body.job_details ?? a.job_details);
+        // A referral this tool just created has NO images yet, so the count is 0 without a read.
+        const missing = referralMissingToFinalize(body.home_owner_info ?? a.home_owner_info, body.job_details ?? a.job_details, 0);
+        const fields = missing.filter((m) => m !== "job_photo");
         return {
           id: r?.id,
           status: r?.status?.name ?? r?.status ?? "Draft",
           missing_to_finalize: missing,
-          note: missing.length
-            ? `Created as a draft. Still needed to finalize: ${missing.join(", ")}. Ask the user for these. The consent + signature are completed by the user in the app.`
-            : "Created as a draft with all required details. Ask the user to complete the consent + signature section in the app to finalize it.",
+          // Split so the model can see WHO does what. A photo is neither something it can ask for in
+          // words nor something it can write — it must render the uploader card.
+          ...(fields.length ? { you_can_fill: fields } : {}),
+          agent_can_offer: ["job_photo"],
+          user_completes_in_app: ["owner_consent", "owner_signature"],
+          note: [
+            fields.length
+              ? `Created as a draft. Still needed from the user: ${fields.join(", ")}.`
+              : "Created as a draft with the details you supplied.",
+            PHOTO_OFFER_NOTE(r?.id),
+            "The consent + signature are completed by the user in the app.",
+          ].join(" "),
         };
       },
     }));
@@ -483,17 +528,32 @@ export function registerWriteTools(server, { userId, userJwt }) {
       const rec = rb && !rb.__error ? payload(rb) : null;
       const verdict = diffReferralWrite(body, rec);
       if (!verdict.ok) return unappliedWrite(verdict, { tool: "update_referral", id: a.id, subject: "referral" });
-      const missing = referralMissingToFinalize(rec?.home_owner_info, rec?.job_details);
+      // The count is READ, not assumed: the user may have uploaded a photo in the app since the
+      // referral was created, and telling them a photo is missing when it is not sends them round a
+      // loop they cannot exit. An unreadable gallery yields undefined, which claims nothing.
+      const photoCount = await referralPhotoCount(a.id, userJwt);
+      const missing = referralMissingToFinalize(rec?.home_owner_info, rec?.job_details, photoCount);
       const status = rec?.status?.name ?? rec?.status ?? null;
       return {
         id: a.id, verified: true, updated: true, status,
         ...(verdict.stored_differs.length ? { stored_differs: verdict.stored_differs } : {}),
         missing_to_finalize: missing,
-        note: missing.length
-          ? `Saved and verified. Still needed to finalize: ${missing.join(", ")}. The consent + signature are completed by the user in the app.`
-          : status === "Ready"
-            ? "Saved and verified. That completed the referral — it is now Ready to use for a campaign."
-            : "Saved and verified. All details are in; the user completes the consent + signature section in the app to finalize it.",
+        ...(missing.includes("job_photo") ? { agent_can_offer: ["job_photo"] } : {}),
+        note: (() => {
+          const fields = missing.filter((m) => m !== "job_photo");
+          const needsPhoto = missing.includes("job_photo");
+          const parts = ["Saved and verified."];
+          if (fields.length) parts.push(`Still needed from the user: ${fields.join(", ")}.`);
+          if (needsPhoto) parts.push(PHOTO_OFFER_NOTE(a.id));
+          if (!fields.length && !needsPhoto) {
+            parts.push(status === "Ready"
+              ? "That completed the referral — it is now Ready to use for a campaign."
+              : "All details are in; the user completes the consent + signature section in the app to finalize it.");
+          } else {
+            parts.push("The consent + signature are completed by the user in the app.");
+          }
+          return parts.join(" ");
+        })(),
       };
     });
 

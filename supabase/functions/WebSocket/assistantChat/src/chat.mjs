@@ -280,8 +280,25 @@ async function refreshToolSafety() {
     console.warn("[/chat] tool-safety fetch failed (failing closed to manual):", e.message);
   }
 }
+// ── Control tools: never carded, in EITHER mode (2026-08-03) ──────────────────
+// These change no data and there is nothing for a user to authorise, so a pause on one has no
+// question to ask. Proven live, auto-approve on: the model created a referral (which auto-resumed and
+// SUCCEEDED), then called end_task{status:"needs_user_in_app"} exactly as prompt rule 13 asks — and
+// Flowise emitted it as a human-input pause. The pause carried a tool with no PERM_ACTIONS copy, so
+// the card rendered "Cancelled for safety / I couldn't confirm what this would change" over a turn
+// that had in fact worked perfectly.
+//
+// The immediate cause is Flowise configuration (end_task belongs ONLY in the ungated customMCP entry).
+// This is the belt: the tool-safety policy classifies by `readOnlyHint === false && destructiveHint
+// === false`, so a READ-ONLY tool falls through to "confirm" — the right default for an unknown write,
+// and wrong for a control tool. Rather than loosen that rule for everything read-only, name the
+// control tools. They are the only tools where a pause is definitionally answerable without the user.
+const CONTROL_TOOLS = new Set(["end_task"]);
+
 async function isAutoApprovable(tool) {
-  if (!tool || ALWAYS_CONFIRM.has(tool)) return false;
+  if (!tool) return false;
+  if (CONTROL_TOOLS.has(tool)) return true;
+  if (ALWAYS_CONFIRM.has(tool)) return false;
   if (/^delete_/.test(tool)) return false; // deletes always card, in BOTH modes (belt, see above)
   const stale = Date.now() - toolSafetyFetchedAt > TOOL_SAFETY_TTL_MS;
   if ((!toolSafetyCache || stale) && ASSISTANT_MCP_URL) {
@@ -1513,7 +1530,11 @@ export async function chatHandler(req, res) {
           // Prefer what the pause frame ACTUALLY said over what we inferred from the stream.
           // `outstanding` remains the fallback for any Flowise build that omits the node snapshot.
           const candidates = pauseRecord?.ordered?.length ? pauseRecord.ordered : [...outstanding.values()];
-          const mayAutoResume = approvalMode === "auto" && autoResumes < MAX_AUTO_RESUMES;
+          // A pause carrying ONLY control tools is resumed in manual mode too: there is no action to
+          // approve, so showing a card would ask the user to authorise "end the turn" — and with no
+          // approval copy for it, the card cannot even name what it is asking about.
+          const controlOnly = candidates.length > 0 && candidates.every((c) => CONTROL_TOOLS.has(c.tool));
+          const mayAutoResume = (approvalMode === "auto" || controlOnly) && autoResumes < MAX_AUTO_RESUMES;
           let autoOk = NEVER_AUTO;
           if (mayAutoResume && candidates.length) {
             const autoFlags = new Map();
