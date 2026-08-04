@@ -127,6 +127,57 @@ function validateComponentProps(type, props) {
   return { ok: false, error: formatErrors(validate.errors) };
 }
 
+// ── the model must not choose a singleton card's surface_id (2026-08-04) ──────
+// REPORTED LIVE: the audience builder appeared twice in one conversation. The trace showed two
+// create_campaign calls with IDENTICAL arguments producing two campaigns, and an emit_ui for each:
+//   turn A   surface_id "audience-location-zone"          campaign_id 951d214a…
+//   turn B   surface_id "audience_builder_location_zone"  campaign_id 97e650fa…
+// The duplicate campaign is a separate defect. What belongs here is the second half: the model chose
+// the surface_id both times, from memory of what it had used before, and PARAPHRASED itself. Since
+// upsertSurface (frontend) and the consumed-surface lifecycle (D4, gateway) both key on surface_id, a
+// paraphrase is a brand-new surface — so the same logical card renders twice instead of replacing
+// itself in place. That is true even for a single campaign: any revise can duplicate a card this way.
+//
+// The fix is to remove the discretion. These components are SINGLETONS: exactly one audience builder
+// exists per campaign, one uploader per referral gallery, one switch per organisation. Their identity
+// is fully determined by (component type + the thing they act on), so the id is derived here and the
+// model's is ignored. Two emits for the same target now collide by construction, which is what
+// "re-emit to revise in place" was always supposed to mean.
+//
+// Deliberately NOT applied to the generic blocks (Text, DataTable, StatCards, CampaignList…). A
+// campaign list and a chart are genuinely different surfaces even in the same conversation, and the
+// model choosing ids there is correct — there is nothing intrinsic to derive from.
+const SINGLETON_SURFACES = {
+  AudienceBuilder: (p) => p?.campaign_id,
+  LaunchButton: (p) => p?.campaign_id,
+  VerifyAddressesButton: (p) => p?.campaign_id,
+  AddressListUploader: (p) => p?.campaign_id,
+  OrgSwitchButton: (p) => p?.organization_id,
+  // A referral gallery is per referral; the org logo/gallery targets are one apiece.
+  ImageUploader: (p) => (p?.referral_id ? `${p.target}:${p.referral_id}` : p?.target),
+  // A proposal for a campaign replaces in place. A LIBRARY proposal has no target id, so it keeps the
+  // model's id: the user may well be shown several candidate designs side by side.
+  TemplateProposal: (p) => p?.campaign_id,
+};
+
+/**
+ * The surface_id a frame must use, or null to keep the model's.
+ *
+ * Applies when the frame contains EXACTLY ONE singleton component — the shape these cards always take.
+ * A frame mixing two of them has no single identity, so it keeps the model's id rather than being
+ * forced into one of them arbitrarily.
+ */
+export function derivedSurfaceId(components) {
+  const hits = [];
+  for (const n of components ?? []) {
+    const keyOf = SINGLETON_SURFACES[n?.type];
+    if (!keyOf) continue;
+    const target = keyOf(n.props);
+    if (typeof target === "string" && target.trim()) hits.push(`${n.type}:${target.trim()}`);
+  }
+  return hits.length === 1 ? hits[0] : null;
+}
+
 // ── opacity is a PERCENTAGE, and the model writes CSS fractions (2026-08-03) ───
 // REPORTED LIVE, twice: asked to put a semi-transparent band behind text so it would read against the
 // photos, the agent said it had ("every text element now sits on a 55%-opacity dark band") and the
@@ -324,6 +375,11 @@ export function validateUiFrame(input) {
   const linkError = checkLinks(normalized);
   if (linkError) return { ok: false, error: linkError };
 
+  // A singleton card's id is derived from what it acts on, not from what the model typed (see
+  // SINGLETON_SURFACES). Computed after prop validation so the identifying props are the normalized ones.
+  const derivedId = derivedSurfaceId(normalized);
+  const effectiveSurfaceId = derivedId ?? surface_id;
+
   // Referential integrity + depth + cycle check from root.
   const walk = (id, depth, path) => {
     if (depth > MAX_DEPTH) return `nesting exceeds ${MAX_DEPTH} at "${id}"`;
@@ -351,9 +407,10 @@ export function validateUiFrame(input) {
     // Reported back through the tool result so the model sees the correction rather than repeating it
     // next turn (and does not describe a band as 55% when it wrote 0.55).
     ...(opacityFixes.length ? { opacityFixes } : {}),
+    ...(derivedId && derivedId !== surface_id ? { derivedSurfaceId: derivedId, requestedSurfaceId: surface_id } : {}),
     frame: {
       type: "ui",
-      surface_id,
+      surface_id: effectiveSurfaceId,
       mode: "replace",
       root,
       // Always emit the canonical/preferred wire form {id, component:{Type:props}}
@@ -394,7 +451,7 @@ export function registerGenUiTools(server, { userId, userJwt }) {
     // onward — normalizeEntry reads four known keys and validateUiFrame rebuilds the frame from
     // scratch, stripping unknown props against the generated catalog schema on the way.
     inputSchema: loosenToolSchema({
-      surface_id: z.string().describe("Stable id. Re-emit the SAME id to replace/revise the block in place; a new id appends another block."),
+      surface_id: z.string().describe("Stable id. Re-emit the SAME id to replace/revise the block in place; a new id appends another block. For the interactive cards (AudienceBuilder, LaunchButton, VerifyAddressesButton, AddressListUploader, ImageUploader, OrgSwitchButton, and a campaign TemplateProposal) the id is DERIVED from what the card acts on and yours is ignored — one card per campaign/referral/organization, so re-emitting always replaces in place."),
       mode: z.enum(["replace"]).optional(),
       root: z.string().describe("id of the component to render as the root"),
       components: z.array(z.object({
@@ -432,6 +489,10 @@ export function registerGenUiTools(server, { userId, userJwt }) {
       // A silently-wrong unit is worth telling the model about: it wrote a CSS 0-1 fraction where the
       // spec takes a 0-100 percentage, which validated and rendered invisible. Corrected here, but it
       // must not describe the result using the number it sent.
+      // The model should see that it does not own this id, so it stops trying to remember one.
+      ...(v.derivedSurfaceId ? {
+        surface_id_note: `This card's surface_id is derived from what it acts on, so yours ("${v.requestedSurfaceId}") was replaced with "${v.derivedSurfaceId}". Re-emitting for the same target always replaces the card in place — you never need to remember the id.`,
+      } : {}),
       ...(v.opacityFixes?.length ? {
         corrected_opacity: v.opacityFixes,
         note: "`opacity` is a PERCENTAGE (0-100), not a 0-1 fraction. The values listed in corrected_opacity were rewritten for you — at the value you sent they would have been invisible. Use 55 (not 0.55) for a 55% band, and describe the design by the corrected values.",
