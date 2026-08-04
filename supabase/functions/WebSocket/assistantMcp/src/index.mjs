@@ -20,8 +20,14 @@ import { registerWriteTools } from "./tools-write.mjs";
 import { registerGenUiTools } from "./tools-genui.mjs";
 import { registerControlTools } from "./tools-control.mjs";
 import { setTurnId } from "./tool-helpers.mjs";
+// Create-once records live in the DB, not process memory: this service is stateless per request, so
+// a repeated create easily lands on a different instance than the original (D6 follow-up).
+import { setIdempotencyStore, supabaseIdempotencyStore } from "./idempotency.mjs";
+import { adminSupabase } from "./supabase.mjs";
 import { jobEventsHandler } from "./jobs.mjs";
 import { loadActiveContext, buildContextPrompt, buildLiveState } from "./context.mjs";
+
+setIdempotencyStore(supabaseIdempotencyStore(adminSupabase));
 
 const app = express();
 

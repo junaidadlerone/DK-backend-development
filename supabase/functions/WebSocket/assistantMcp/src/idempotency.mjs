@@ -15,20 +15,78 @@
 // Failures are deliberately NOT recorded: retrying something that did not work is a legitimate
 // retry, and suppressing it would strand the user.
 //
-// WHAT THIS IS NOT. It is per-process, so it does not survive a restart and does not coordinate
-// across instances (the MCP runs pinned to one instance; jobs.mjs carries the same caveat and its own
-// DB fallback). It is a duplicate-suppression window, not a distributed transaction — which is why
-// the window is short and the key is exact. Deliberately NOT implemented: "refuse anything similar in
-// the last 60s", which trades a duplicate for the worse bug of refusing a genuine second referral for
-// the same homeowner.
+// TWO LAYERS, because the first one was not enough (2026-08-04). Originally this was process memory
+// with a 120-second window, and it failed in production exactly as its own caveat predicted: two
+// campaigns created from identical arguments, minutes apart in one conversation. A repeat can arrive
+// after the user has paused to look at what they made, and on a different instance — this service is
+// stateless per request by design. So a DB-backed record now sits in front of the in-memory one:
+//   durable  — catches the repeat whenever and wherever it lands (see supabaseIdempotencyStore)
+//   memory   — still joins a genuinely CONCURRENT duplicate on this instance, which the DB cannot,
+//              and saves a round trip on the common path
+//
+// WHAT THIS IS STILL NOT: a distributed transaction. Two truly simultaneous creates on two instances
+// can both miss the record and both proceed. Closing that needs an insert-to-claim protocol, which is
+// not built — the reported failure is sequential, and a claim protocol can refuse a create when the
+// claim write fails, trading a rare duplicate for a routine outage. Recorded honestly rather than
+// papered over. Deliberately NOT implemented either: "refuse anything similar in the last 60s", which
+// trades a duplicate for the worse bug of refusing a genuine second referral for the same homeowner.
 import { createHash } from "node:crypto";
 
-/** How long a successful create suppresses an identical repeat. */
-export const IDEMPOTENCY_TTL_MS = 120_000;
+/**
+ * How long a successful create suppresses an identical repeat.
+ *
+ * Was 120 s, in memory only. Reported live: two campaigns from identical arguments, minutes apart, in
+ * one conversation — the window could not span a user pausing to look at what they had just made, and
+ * the record did not survive an instance change either.
+ *
+ * Hours rather than seconds is safe BECAUSE the key is the exact canonicalized arguments. Two creates
+ * agreeing on every field are a repeat, not a second thing someone wants: nobody deliberately makes two
+ * campaigns with the same name, template, disclaimer and QR link. And if they genuinely do want another,
+ * changing anything — a different name — is a different key, which is a better conversation than
+ * silently creating two.
+ */
+export const IDEMPOTENCY_TTL_MS = 24 * 60 * 60 * 1000;
 const MAX_ENTRIES = 2000;
 
 const inflight = new Map(); // key -> Promise<result>
 const recent = new Map();   // key -> { result, expiresAt }
+
+/**
+ * The durable layer. In-memory alone cannot work here: the MCP is stateless per request by design, so a
+ * repeat can easily land on a different instance from the original.
+ *
+ * Injected rather than imported so the tests exercise the real logic against a fake store — an
+ * idempotency guard whose tests need a database is a guard that goes untested.
+ *
+ * `null` disables it, and everything degrades to the in-memory behaviour. That is deliberate: a store
+ * outage must not stop creates from working, it just narrows the window it can catch.
+ */
+let store = null;
+export function setIdempotencyStore(s) { store = s; }
+
+/**
+ * Supabase-backed store. `read` returns the recorded result or null; `write` is BEST-EFFORT — a failure
+ * to record leaves the guard weaker for that call, which is far better than failing a create that
+ * already succeeded upstream.
+ */
+export function supabaseIdempotencyStore(client, { table = "assistant_idempotency" } = {}) {
+  return {
+    async read(key, ttlMs, nowMs) {
+      const { data, error } = await client.from(table)
+        .select("result, created_at").eq("key", key).maybeSingle();
+      if (error || !data) return null;
+      const age = nowMs - new Date(data.created_at).getTime();
+      if (!Number.isFinite(age) || age > ttlMs) return null;
+      return data.result ?? null;
+    },
+    async write(key, { userId, tool, result }) {
+      // onConflict ignore: whoever recorded it first wins, and the loser's caller has the same result.
+      const { error } = await client.from(table)
+        .upsert({ key, user_id: userId, tool, result }, { onConflict: "key", ignoreDuplicates: true });
+      if (error) console.warn(`[idempotency] could not record ${tool}:`, error.message);
+    },
+  };
+}
 
 /**
  * Stable JSON: object keys sorted at every depth, so `{a:1,b:2}` and `{b:2,a:1}` hash the same. The
@@ -92,6 +150,20 @@ export async function createOnce({ userId, tool, args, fn, isSuccess, onDuplicat
     return onDuplicate ? onDuplicate(hit.result) : hit.result;
   }
 
+  // The durable check comes before the in-flight one because it is the case memory cannot cover: the
+  // repeat arriving on a different instance, or after this one restarted. A read failure is treated as
+  // "no record" — never as a reason to refuse a create.
+  if (store) {
+    let recorded = null;
+    try { recorded = await store.read(key, ttlMs, t); }
+    catch (e) { console.warn(`[idempotency] store read failed for ${tool}:`, e?.message ?? e); }
+    if (recorded) {
+      console.log(JSON.stringify({ at: "mcp", event: "idempotent_duplicate", tool, phase: "durable" }));
+      recent.set(key, { result: recorded, expiresAt: t + ttlMs }); // save the next read
+      return onDuplicate ? onDuplicate(recorded) : recorded;
+    }
+  }
+
   const running = inflight.get(key);
   if (running) {
     console.log(JSON.stringify({ at: "mcp", event: "idempotent_duplicate", tool, phase: "inflight" }));
@@ -105,7 +177,15 @@ export async function createOnce({ userId, tool, args, fn, isSuccess, onDuplicat
     const result = await promise;
     const ok = isSuccess ? isSuccess(result) : !!(result && typeof result === "object" && !result.error && !result.blocked);
     // Only a SUCCESS is remembered. A failed create must stay retryable.
-    if (ok) recent.set(key, { result, expiresAt: now() + ttlMs });
+    if (ok) {
+      recent.set(key, { result, expiresAt: now() + ttlMs });
+      if (store) {
+        // Awaited, so the record exists before the caller can act on the result and a fast repeat cannot
+        // race past it. Best-effort inside: a write failure warns and does not fail the create.
+        try { await store.write(key, { userId, tool, result }); }
+        catch (e) { console.warn(`[idempotency] store write failed for ${tool}:`, e?.message ?? e); }
+      }
+    }
     return result;
   } finally {
     inflight.delete(key);
@@ -116,4 +196,5 @@ export async function createOnce({ userId, tool, args, fn, isSuccess, onDuplicat
 export function __resetIdempotency() {
   inflight.clear();
   recent.clear();
+  store = null;
 }
