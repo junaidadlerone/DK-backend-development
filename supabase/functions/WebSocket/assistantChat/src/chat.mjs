@@ -1955,7 +1955,26 @@ export async function chatHandler(req, res) {
     const assistantOutcome = assistantReply || errorLine
       || (sawUi ? UI_SURFACE_NOTE : null)
       || (sawPermission ? APPROVAL_NOTE : null);
-    const { text: userText, attachment } = splitAttachmentMarkers(message ?? null);
+    const { text: userText, attachment: markerAttachment } = splitAttachmentMarkers(message ?? null);
+    // A CARD-driven upload has no text marker: the composer never saw the file, the card uploaded it
+    // straight from the browser. Reported as "not showing the file name … won't show the file in the
+    // chat" — the chips render from this column, so with nothing here they vanished on reload. Sanitised
+    // hard because it arrives from the client: only the four known fields, capped, and only http(s) urls
+    // (a javascript: or data: url in a persisted `src` would be an injection into every later reload).
+    const bodyAttachment = Array.isArray(req.body?.attachment)
+      ? req.body.attachment.slice(0, 12).flatMap((a) => {
+        const name = typeof a?.name === "string" ? a.name.slice(0, 200) : null;
+        if (!name) return [];
+        const url = typeof a?.url === "string" && /^https:\/\//i.test(a.url) ? a.url.slice(0, 2000) : null;
+        return [{
+          name,
+          kind: typeof a?.kind === "string" ? a.kind.slice(0, 60) : "file",
+          size: Number.isFinite(a?.size) && a.size >= 0 ? Math.min(a.size, 5e8) : 0,
+          ...(url ? { url } : {}),
+        }];
+      })
+      : [];
+    const attachment = [...(markerAttachment ?? []), ...bodyAttachment];
     // Card sends carry both a machine prompt (which may embed internal ids for the model) and a
     // human display label — history must persist the label, not the plumbing (a raw card prompt
     // once leaked a bundle UUID into the reloaded transcript).
@@ -1964,7 +1983,7 @@ export async function chatHandler(req, res) {
     const assistantMessageId = await persistTurn(sessionId, cardDisplay ?? userText, assistantOutcome, {
       thinking: thinkingLabels,
       surfaces: emittedSurfaces,
-      attachment,
+      attachment: attachment.length ? attachment : null,
       turnId,
     });
     // Data-change signal: tell the widget which app resources this turn's writes dirtied.

@@ -7,7 +7,8 @@
 // The tool's RETURN value is a tiny ack so the (large) UI payload never re-enters the model's
 // context.
 import { z } from "zod";
-import { asText, loosenToolSchema, roleAreaDenial } from "./tool-helpers.mjs";
+import { asText, loosenToolSchema, payload, roleAreaDenial, writeNorm } from "./tool-helpers.mjs";
+import { callApi } from "./helpers.mjs";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
@@ -421,6 +422,56 @@ export function validateUiFrame(input) {
   };
 }
 
+// ── a design proposal is a NEW design, never an edit (2026-08-04) ─────────────
+// REPORTED LIVE. The user asked, over several turns, to "add picture on the back side of this template"
+// and "add the tag line thank you for shopping". The agent fetched the bundle, then emitted a
+// TemplateProposal with a completely INVENTED front — "BUILDING YOUR VISION" over a dark gradient — and
+// described it as "both sides of the New Builds Construction design". The existing front was gone.
+//
+// That is not a model failure; it is a capability the agent does not have and cannot discover:
+//   * get_template_bundle returns NO html by design (a design runs to 10k+ lines and would swamp the
+//     context), so the model literally cannot see what is on an existing design;
+//   * TemplateProposal requires BOTH sides, so there is no way to submit a back-only change.
+// Asked to edit, its only available move is to invent a whole design — and nothing told it to say so.
+//
+// The deterministic tell is the NAME. A proposal whose name matches a design already SAVED in the
+// library is the model believing it is editing that design. Refusing there converts a silently
+// destructive invention into an honest choice for the user: a differently-named variant, or the visual
+// editor, which is the only thing that can actually edit saved artwork.
+//
+// No false positive on the normal revise loop: while a proposal is unsaved its name matches nothing in
+// the library, so "request changes" → re-emit works exactly as before. Once it IS saved, a further
+// change genuinely cannot be applied — so refusing then is right too.
+//
+// Scoped to LIBRARY proposals (no campaign_id). A campaign proposal is a campaign-specific copy and
+// reusing the source design's name there is normal and harmless.
+/**
+ * Does `name` match a design already in the library? Pure, and exported, because ALL the judgement is
+ * here: a bundle has no name of its own — the display name is a side template's description with a
+ * trailing " Front"/" Back" token (the same rule bundleNameFromDescriptions and the frontend's
+ * stripBundleSuffix apply), and comparison has to survive case and spacing differences.
+ */
+export function designNameClash(name, bundles) {
+  const target = writeNorm(String(name ?? ""));
+  if (!target) return null;
+  for (const b of Array.isArray(bundles) ? bundles : []) {
+    const desc = b?.front?.description ?? b?.back?.description
+      ?? b?.front_template?.description ?? b?.back_template?.description ?? b?.name ?? "";
+    const existing = writeNorm(String(desc).replace(/\s+(front|back)$/i, ""));
+    if (existing && existing === target) return String(name).trim();
+  }
+  return null;
+}
+
+async function savedDesignNameClash(proposalProps, userJwt) {
+  if (!proposalProps || proposalProps.campaign_id) return null;
+  const name = String(proposalProps.name ?? "").trim();
+  if (!name) return null;
+  const res = await callApi("getAllTemplatesBundlesV3", "GET", null, userJwt);
+  if (!res || res.__error) return null; // cannot check → never block on a failed read
+  return designNameClash(name, payload(res) ?? []);
+}
+
 export function registerGenUiTools(server, { userId, userJwt }) {
   server.registerTool("emit_ui", {
     description:
@@ -474,6 +525,18 @@ export function registerGenUiTools(server, { userId, userJwt }) {
     // design FOR a campaign (library saves are template management, which their role excludes).
     const proposal = v.frame.components.find((c) => c.component?.TemplateProposal);
     if (proposal) {
+      // You cannot edit a saved design — see savedDesignNameClash. Checked before the role gate so the
+      // model gets the more specific answer.
+      const clash = await savedDesignNameClash(proposal.component.TemplateProposal, userJwt);
+      if (clash) {
+        return asText({
+          blocked: "cannot_edit_saved_design",
+          verified: false,
+          retry: false,
+          plain: `I can't change "${clash}" itself — I can't see what's already on it, so anything I sent you would be a brand-new design wearing its name, not an edit.`,
+          note: `A design proposal is always a NEW design; there is no way to modify a saved one. You cannot read the artwork of "${clash}" either (get_template_bundle returns no html on purpose). Do NOT re-send this proposal under that name and do NOT describe it as an edit. Offer the user the two things that actually work: (1) you design a fresh variant under a DIFFERENT name, saying plainly it is a new design rather than a change to the old one; or (2) they open "${clash}" in the visual editor, which is the only place saved artwork can be changed. If they pick (1), ask what to carry over, because you cannot see the original.`,
+        });
+      }
       const area = proposal.component.TemplateProposal?.campaign_id ? "campaigns" : "template_management";
       const denial = await roleAreaDenial(userJwt, area);
       if (denial) return asText(denial);
