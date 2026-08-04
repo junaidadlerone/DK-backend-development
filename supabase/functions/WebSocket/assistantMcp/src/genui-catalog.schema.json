@@ -2454,5 +2454,16 @@
     "/team",
     "/settings",
     "/profile"
+  ],
+  "referral_required_fields": [
+    "country",
+    "name",
+    "street",
+    "state",
+    "city",
+    "zip",
+    "jobType",
+    "jobValue",
+    "consent"
   ]
 }
