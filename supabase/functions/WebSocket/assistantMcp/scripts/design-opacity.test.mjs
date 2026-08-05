@@ -146,3 +146,95 @@ test("paint order is preserved — the bands must stay BEFORE their text", () =>
   const textIdx = els.findIndex((e) => e.type === "text");
   assert.ok(bandIdx < textIdx, "the band must precede the text it backs");
 });
+
+// ── the same units mistake, in gradient stops and in EDIT ops (2026-08-05) ────
+// REPORTED LIVE, trace 019fd190. Asked to bring the front's teal-to-orange gradient onto the back of
+// "Winter Roof Repair", the model wrote stops at position 0 and position 1. `position` is a PERCENTAGE,
+// so that gradient finishes inside its first 1% — a flat orange panel, which is not what it described.
+//
+// And the original normaliser only walked spec.front/back.elements, so once a proposal could carry
+// `ops` instead, everything the agent ADDED to an existing design skipped the correction entirely.
+// Both gaps are covered here.
+const gradient = (a, b) => ({ gradient: { direction: 90, stops: [{ color: "#47BAD7", position: a }, { color: "#E36A00", position: b }] } });
+const stopsOf = (fill) => fill.gradient.stops.map((s) => s.position);
+
+test("THE REPORTED CASE: an edit op's gradient stops 0/1 become 0/100", () => {
+  const spec = { bundle_id: "b1", side: "back", ops: [{ op: "set_background", fill: gradient(0, 1) }] };
+  const fixed = normalizeSpecOpacity(spec);
+  assert.deepEqual(stopsOf(spec.ops[0].fill), [0, 100]);
+  assert.equal(fixed.length, 1);
+  assert.match(fixed[0], /set_background gradient stops: 0,1 → 0,100/);
+});
+
+test("a gradient already in percent is left alone", () => {
+  for (const [a, b] of [[0, 100], [0, 50], [10, 90], [0, 2]]) {
+    const fill = gradient(a, b);
+    assert.equal(normalizeSpecOpacity({ ops: [{ op: "set_background", fill }] }).length, 0, `${a},${b}`);
+    assert.deepEqual(stopsOf(fill), [a, b]);
+  }
+});
+
+test("the test is the LIST maximum, so [0, 50, 100] survives its zero first stop", () => {
+  const fill = { gradient: { direction: 0, stops: [{ color: "#000000", position: 0 }, { color: "#888888", position: 50 }, { color: "#FFFFFF", position: 100 }] } };
+  assert.equal(normalizeSpecOpacity({ ops: [{ op: "set_background", fill }] }).length, 0);
+  assert.deepEqual(stopsOf(fill), [0, 50, 100]);
+});
+
+test("a three-stop fractional list scales together", () => {
+  const fill = { gradient: { direction: 0, stops: [{ color: "#000000", position: 0 }, { color: "#888888", position: 0.5 }, { color: "#FFFFFF", position: 1 }] } };
+  normalizeSpecOpacity({ ops: [{ op: "set_background", fill }] });
+  assert.deepEqual(stopsOf(fill), [0, 50, 100]);
+});
+
+test("a partly-positioned list is NOT guessed at", () => {
+  // Positions are optional in the schema; a list mixing set and unset stops is ambiguous, and a wrong
+  // guess there would move a stop the model never mentioned.
+  const fill = { gradient: { direction: 0, stops: [{ color: "#000000" }, { color: "#FFFFFF", position: 1 }] } };
+  assert.equal(normalizeSpecOpacity({ ops: [{ op: "set_background", fill }] }).length, 0);
+  assert.equal(fill.gradient.stops[1].position, 1);
+});
+
+test("an ADDED element's opacity is corrected — the gap that let edits through", () => {
+  const spec = { bundle_id: "b1", side: "back", ops: [
+    { op: "add", element: { type: "shape", shape: "rectangle", fill: { color: "#1D1D20" }, opacity: 0.55, x: 0, y: 0, width: 10, height: 10 } },
+  ] };
+  const fixed = normalizeSpecOpacity(spec);
+  assert.equal(spec.ops[0].element.opacity, 55);
+  assert.match(fixed[0], /ops\[0\] add shape opacity: 0\.55 → 55/);
+});
+
+test("an added element's gradient FILL is corrected too", () => {
+  const spec = { ops: [{ op: "add", element: { type: "shape", shape: "rectangle", fill: gradient(0, 1), x: 0, y: 0, width: 10, height: 10 } }] };
+  normalizeSpecOpacity(spec);
+  assert.deepEqual(stopsOf(spec.ops[0].element.fill), [0, 100]);
+});
+
+test("a NEW design's side background gradient is corrected as well", () => {
+  const spec = { front: { background: gradient(0, 1), elements: [] }, back: { elements: [] } };
+  normalizeSpecOpacity(spec);
+  assert.deepEqual(stopsOf(spec.front.background), [0, 100]);
+});
+
+test("a solid fill and a malformed op never throw", () => {
+  for (const ops of [[{ op: "set_background", fill: { color: "#ffffff" } }], [null], ["x"], [{ op: "remove", element_id: "e" }], []]) {
+    assert.deepEqual(normalizeSpecOpacity({ ops }), []);
+  }
+  assert.deepEqual(normalizeSpecOpacity({ ops: "nope" }), []);
+});
+
+test("the correction reaches the real emit_ui path for an EDIT frame", () => {
+  // End to end: the frame the model actually sends, through validateUiFrame, and the fix is REPORTED
+  // so the model does not go on to describe the design using the number it sent.
+  const v = validateUiFrame({
+    type: "ui", surface_id: "s", mode: "replace", root: "p",
+    components: [{ id: "p", component: { TemplateProposal: {
+      bundle_id: "de7683c4-347d-44b6-ba4d-c5b2598fc0fc", side: "back",
+      ops: [{ op: "set_background", fill: gradient(0, 1) }],
+    } } }],
+    data_model: {},
+  });
+  assert.ok(v.ok, v.error);
+  const stops = v.frame.components[0].component.TemplateProposal.ops[0].fill.gradient.stops;
+  assert.deepEqual(stops.map((s) => s.position), [0, 100]);
+  assert.ok(v.opacityFixes?.length, "the correction must be reported back to the model");
+});
