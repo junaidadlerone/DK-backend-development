@@ -199,21 +199,75 @@ export function derivedSurfaceId(components) {
 // is what the author meant. `opacity: 1` is treated as fully opaque for the same reason — 1% would make
 // an element vanish, and 100 is the default anyway. Refusing instead would cost the user a turn to fix
 // something we can already read correctly; the tool result names the correction so the model learns.
+// THE SAME MISTAKE HAPPENS TO GRADIENT STOPS, and it reached production (trace 019fd190, 2026-08-05).
+// Asked to bring the front's teal-to-orange gradient onto the back, the model wrote
+//   stops: [{color:"#47BAD7", position:0}, {color:"#E36A00", position:1}]
+// `position` is a PERCENTAGE too, so that is a gradient which finishes inside its first 1% — a flat
+// orange panel, not the blend it described. Same silent failure as opacity: the wrong value sits
+// comfortably inside the valid range.
+//
+// Reading them as fractions is unambiguous. A two-stop gradient at 0% and 1% is meaningless, and any
+// stop list whose LARGEST position is <= 1 cannot be a percentage anyone intended — 0..1 is exactly
+// how CSS colour stops are written elsewhere. Note the test is on the maximum across the whole list,
+// not per stop, so a legitimate [0, 50, 100] is untouched even though its first stop is 0.
+//
+// AND IT HAS TO WALK EDIT OPS. The original version only looked at spec.front/back.elements, so once
+// a proposal could carry `ops` instead, every element the agent ADDED to an existing design skipped
+// the correction entirely. Found while reading the trace above, not by a test — which is why the
+// tests below cover the ops path explicitly.
 const OPACITY_HOSTS = ["front", "back"];
-/** Rewrite fractional opacities in place. Returns the labels of the elements it corrected. */
+
+/** Fix one element's opacity in place; returns a description when it changed. */
+function fixOpacity(el, where) {
+  const o = el?.opacity;
+  if (typeof o !== "number" || !Number.isFinite(o) || o <= 0 || o > 1) return null;
+  // Rounded to 2dp: 0.55 * 100 is 55.00000000000001 in binary floating point, and that would ride
+  // into the spec and out into the generated CSS. Two decimals is finer than any display can show.
+  el.opacity = Math.round(o * 10000) / 100;
+  return `${where} ${el.type ?? "element"} opacity: ${o} → ${el.opacity}`;
+}
+
+/** Fix a fill's gradient stop positions in place; returns a description when they changed. */
+function fixFill(fill, where) {
+  const stops = fill?.gradient?.stops;
+  if (!Array.isArray(stops) || stops.length < 2) return null;
+  const positions = stops.map((s) => s?.position).filter((p) => typeof p === "number" && Number.isFinite(p));
+  if (positions.length !== stops.length) return null;      // a partly-positioned list is not ours to guess at
+  const max = Math.max(...positions);
+  if (max <= 0 || max > 1) return null;                    // 0-100 already, or nothing to scale
+  const before = positions.join(",");
+  stops.forEach((s) => { s.position = Math.round(s.position * 10000) / 100; });
+  return `${where} gradient stops: ${before} → ${stops.map((s) => s.position).join(",")}`;
+}
+
+/** Walk anything element-shaped, wherever it lives. */
+function fixElement(el, where, fixed) {
+  const o = fixOpacity(el, where); if (o) fixed.push(o);
+  const f = fixFill(el?.fill, where); if (f) fixed.push(f);
+}
+
+/**
+ * Rewrite fractional opacities and gradient stop positions in place, for BOTH proposal shapes — a new
+ * design's front/back elements and an edit's ops. Returns one label per correction, which the tool
+ * result reports so the model does not describe the design using the number it sent.
+ */
 export function normalizeSpecOpacity(spec) {
   const fixed = [];
   if (!spec || typeof spec !== "object") return fixed;
   for (const side of OPACITY_HOSTS) {
-    const els = spec[side]?.elements;
-    if (!Array.isArray(els)) continue;
-    els.forEach((el, i) => {
-      const o = el?.opacity;
-      if (typeof o !== "number" || !Number.isFinite(o) || o <= 0 || o > 1) return;
-      // Rounded to 2dp: 0.55 * 100 is 55.00000000000001 in binary floating point, and that would ride
-      // into the spec and out into the generated CSS. Two decimals is finer than any display can show.
-      el.opacity = Math.round(o * 10000) / 100;
-      fixed.push(`${side}[${i}] ${el.type ?? "element"}: ${o} → ${el.opacity}`);
+    const s = spec[side];
+    if (!s || typeof s !== "object") continue;
+    const bg = fixFill(s.background, `${side} background`); if (bg) fixed.push(bg);
+    if (!Array.isArray(s.elements)) continue;
+    s.elements.forEach((el, i) => fixElement(el, `${side}[${i}]`, fixed));
+  }
+  if (Array.isArray(spec.ops)) {
+    spec.ops.forEach((op, i) => {
+      if (!op || typeof op !== "object") return;
+      if (op.element) fixElement(op.element, `ops[${i}] add`, fixed);
+      if (op.op === "set_background") {
+        const f = fixFill(op.fill, `ops[${i}] set_background`); if (f) fixed.push(f);
+      }
     });
   }
   return fixed;
@@ -522,7 +576,7 @@ export function registerGenUiTools(server, { userId, userJwt }) {
       "Checklist{title,subtitle?,items[]:{label,status(pass|warn|fail),note?,fixPrompt?}}, GuideSteps{title,subtitle?,steps[]:{title,detail?,prompt,state(done|active|todo)}}, " +
       "ChoiceChips{choices[]:{label,prompt}}, NavButton{label,href(/path)}, " +
       "Text{text,variant?(title|subtitle|body|caption)}, Row{children[ids],gap?}, Column{children[ids],gap?}, Card{title?,children[ids]}, "
-      + "NOTE on postcard designs: element `opacity` is a PERCENTAGE 0-100 (55 means 55%), never a 0-1 fraction — 0.55 means 0.55% and renders invisible. Colours are plain 6-digit hex with no alpha. Elements paint in the order listed, so a band must come BEFORE the text it sits behind. "
+      + "NOTE on postcard designs: element `opacity` AND gradient stop `position` are both PERCENTAGES 0-100 (55 means 55%, and a two-colour gradient runs from position 0 to position 100), never 0-1 fractions — `opacity: 0.55` means 0.55% and renders invisible, and stops at 0 and 1 finish the blend inside the first 1%, giving a flat panel. Colours are plain 6-digit hex with no alpha. Elements paint in the order listed, so a band must come BEFORE the text it sits behind. "
       + "CHANGING a design that already exists is a DIFFERENT shape of TemplateProposal: send `bundle_id`, `side` and `ops` and NOTHING else — no name, no front/back (those mean 'replace the whole design', which is never what 'edit this' means). First call get_template_side_html to read that side; it gives you each element's data-element-id, which is how an op names its target. ops: {op:'add',element,at?} | {op:'set_text',element_id,text,expect_text} | {op:'remove',element_id,expect_text?} | {op:'replace_image',element_id,source} | {op:'set_background',fill}. expect_text is the element's CURRENT words as you read them — if they don't match, nothing is applied and you're told what is really there. Everything you don't name is preserved exactly, and the side you don't name is never written at all. " +
       "Button{label,action,tone?(primary|neutral|ghost)}, Divider{}, Image{url(https),alt?}. " +
       "Button.action = {type:'send',prompt,display?} | {type:'navigate',href:'/path'}. NEVER {type:'openUrl'} — you cannot know this app's web addresses, so any url you write will be wrong; it is refused. " +
