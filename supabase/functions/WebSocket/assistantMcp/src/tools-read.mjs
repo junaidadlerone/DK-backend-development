@@ -7,8 +7,20 @@
 // a friendly "requires an admin role" instead of erroring.
 import { z } from "zod";
 import { callApi } from "./helpers.mjs";
-import { QR_ELEMENT_RE, declaredOnly, loosenToolSchema, makeGuard, payload, roleAreaDenial, wrap as wrapShared } from "./tool-helpers.mjs";
+import { QR_ELEMENT_RE, activeOrgContext, declaredOnly, loosenToolSchema, makeGuard, payload, roleAreaDenial, wrap as wrapShared } from "./tool-helpers.mjs";
+import { designEditability, editabilityNote, elideDataUris } from "./template-html.mjs";
 import { loadActiveContext, buildContextPrompt, buildLiveState } from "./context.mjs";
+
+// Document pixels at 96dpi, the coordinate system every element position is expressed in. Stated
+// once here and in the emit_ui description; the model needs it to place a new element sensibly.
+const POSTCARD_PX = {
+  "4x6": { width: 600, height: 408 },
+  "6x9": { width: 888, height: 600 },
+  "6x11": { width: 1080, height: 600 },
+};
+// Backstop applied only AFTER image data is elided. Every one of the 44 real designs measured comes
+// in under 24 KB once the base64 is gone, so this refuses nothing that exists today.
+const MAX_SIDE_HTML = 64_000;
 
 // Shared plumbing (tool-helpers.mjs) with the read-flavored guard tone.
 // The tool NAME, not a generic tag — see the D5 note on wrap in tool-helpers.
@@ -361,6 +373,50 @@ export function registerReadTools(server, { userId, userJwt }) {
           updated_at: p?.bundle?.updated_at ?? null,
         },
         note: "To show this design in the chat, emit a PostcardPreview with the bundle_id — never describe the HTML.",
+      };
+    }, "templates");
+
+  // Reading the artwork so the agent can EDIT it rather than reinvent it (2026-08-05). See
+  // template-html.mjs for why the payload is elided rather than the design refused on size.
+  t("get_template_side_html",
+    "Read ONE side of a saved design as html, so you can change it instead of designing a new one. Do this BEFORE proposing any edit. The html shows every element and — the part you need — each element's `data-element-id`, which is how an edit op names its target. Embedded image data is replaced by a short marker; you never need the pixels. NEVER send html back to me: describe the change as an emit_ui TemplateProposal carrying `bundle_id`, `side` and `ops`. The reply also tells you whether this design can be changed in place at all (`can_edit_in_place`) — if it cannot, say so and ask the user before duplicating.",
+    { bundle_id: z.string().describe("bundle UUID"), side: z.enum(["front", "back"]).describe("which side you intend to change") },
+    async (a) => {
+      const res = await callApi("getTemplateBundleById", "GET", { bundle_id: a.bundle_id }, userJwt);
+      const g = guard(res); if (g) return g;
+      const p = payload(res);
+      const front = p?.front_template ?? null;
+      const back = p?.back_template ?? null;
+      const tpl = a.side === "back" ? back : front;
+      const raw = typeof tpl?.html === "string" ? tpl.html : "";
+      if (!raw) return { error: `Couldn't read the ${a.side} of that design — no artwork came back.` };
+
+      const { html, elided, bytesRemoved } = elideDataUris(raw);
+      const name = bundleNameFromDescriptions(front, back);
+      // A backstop only, and only AFTER elision: with the base64 gone every real design measured is
+      // well under this. A design that still exceeds it is pathological, and guessing at a truncated
+      // document is worse than saying so.
+      if (html.length > MAX_SIDE_HTML) {
+        return {
+          blocked: "design_too_large",
+          bundle_id: a.bundle_id, side: a.side, bytes: html.length, retry: false,
+          plain: `That design's ${a.side} is too large for me to read reliably.`,
+          note: `The ${a.side} is ${html.length} characters even after image data was removed. Do NOT guess at its contents. Tell the user it needs the visual editor, and offer a NavButton to /templates/${a.bundle_id}.`,
+        };
+      }
+
+      const { role, orgId } = await activeOrgContext(userJwt);
+      const verdict = designEditability({ bundle: p?.bundle, activeOrgId: orgId, role });
+      return {
+        bundle_id: a.bundle_id,
+        side: a.side,
+        name,
+        postcard_size: tpl?.postcard_size ?? tpl?.postcardSize ?? null,
+        canvas: POSTCARD_PX[tpl?.postcard_size ?? tpl?.postcardSize] ?? null,
+        html,
+        ...(elided ? { images_elided: elided, note_on_images: `${elided} embedded image${elided > 1 ? "s were" : " was"} replaced by a marker (${bytesRemoved} characters of image data). The real image is untouched in the design.` } : {}),
+        ...verdict,
+        note: editabilityNote(verdict, name),
       };
     }, "templates");
 

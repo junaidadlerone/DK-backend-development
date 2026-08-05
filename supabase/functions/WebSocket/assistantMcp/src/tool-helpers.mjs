@@ -518,11 +518,18 @@ const ROLE_DENIED_AREAS = {
   TECHNICIAN: new Set(["campaigns", "templates", "template_management", "targeting", "analytics"]),
   MARKETER: new Set(["template_management"]),
 };
-const roleCache = new Map(); // userJwt -> { role, expiresAt }
-export async function activeOrgRole(userJwt) {
+const roleCache = new Map(); // userJwt -> { role, orgId, expiresAt }
+/**
+ * The caller's role AND active organization id, from the same getUser call. The org id is what
+ * decides whether a design is the active org's own or merely shared in — the difference between
+ * an edit the server will accept and a 403 (updateTemplateBundleV3 requires OWNER/ADMIN of the
+ * OWNING org). Fetching it here keeps that verdict on the one cached lookup.
+ */
+export async function activeOrgContext(userJwt) {
   const hit = roleCache.get(userJwt);
-  if (hit && hit.expiresAt > Date.now()) return hit.role;
+  if (hit && hit.expiresAt > Date.now()) return { role: hit.role, orgId: hit.orgId };
   let role = null;
+  let orgId = null;
   try {
     const res = await callApi("getUser", "GET", null, userJwt);
     if (res && !res.__error) {
@@ -530,13 +537,17 @@ export async function activeOrgRole(userJwt) {
       const orgs = Array.isArray(u?.organizations) ? u.organizations : [];
       const active = orgs.find((o) => o?.id === u?.active_organization_id);
       role = (active?.role ?? u?.role ?? null)?.toUpperCase?.() ?? null;
+      orgId = u?.active_organization_id ?? active?.id ?? null;
     }
   } catch (e) {
     console.warn("[role-gate] getUser lookup failed (failing open):", e.message);
   }
-  roleCache.set(userJwt, { role, expiresAt: Date.now() + 60_000 });
+  roleCache.set(userJwt, { role, orgId, expiresAt: Date.now() + 60_000 });
   if (roleCache.size > 5000) roleCache.clear();
-  return role;
+  return { role, orgId };
+}
+export async function activeOrgRole(userJwt) {
+  return (await activeOrgContext(userJwt)).role;
 }
 /** Null when allowed; a friendly {error} when the caller's role lacks the area. */
 export async function roleAreaDenial(userJwt, area) {
