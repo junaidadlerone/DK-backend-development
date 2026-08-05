@@ -139,3 +139,29 @@ test("a missing target id falls back to the model's, rather than deriving a coll
   assert.equal(derivedSurfaceId([]), null);
   assert.equal(derivedSurfaceId(undefined), null);
 });
+
+// ── editing a saved design (2026-08-05) ──────────────────────────────────────
+// An edit card is per bundle-SIDE. Revising the edit (the user says "make it bigger") must replace
+// the card in place; without this the user is left comparing two versions of one change and can
+// approve the stale one.
+test("an edit proposal derives its id from the bundle AND the side", () => {
+  assert.equal(
+    derivedSurfaceId([{ id: "e", type: "TemplateProposal", props: { bundle_id: "b7", side: "back", ops: [] } }]),
+    "TemplateProposal:b7:back",
+  );
+});
+
+test("the two sides of one design are DIFFERENT surfaces", () => {
+  const back = derivedSurfaceId([{ id: "e", type: "TemplateProposal", props: { bundle_id: "b7", side: "back", ops: [] } }]);
+  const front = derivedSurfaceId([{ id: "e", type: "TemplateProposal", props: { bundle_id: "b7", side: "front", ops: [] } }]);
+  assert.notEqual(back, front);
+});
+
+test("a campaign proposal still derives from the campaign, and a library one still keeps the model's id", () => {
+  // The pre-existing behaviour must be untouched: several candidate designs may be shown at once.
+  assert.equal(
+    derivedSurfaceId([{ id: "p", type: "TemplateProposal", props: { name: "X", campaign_id: "c3" } }]),
+    "TemplateProposal:c3",
+  );
+  assert.equal(derivedSurfaceId([{ id: "p", type: "TemplateProposal", props: { name: "X" } }]), null);
+});

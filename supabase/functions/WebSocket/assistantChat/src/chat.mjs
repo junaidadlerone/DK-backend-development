@@ -155,6 +155,7 @@ const THINKING_LABELS = {
   get_notifications: "Checking your notifications…",
   list_template_bundles: "Loading your postcard designs…",
   get_template_bundle: "Fetching the design…",
+  get_template_side_html: "Reading the design…",
   list_templates: "Loading your templates…",
   get_merge_variables: "Reading the postcard's business info…",
   get_targeting_summary: "Summarizing your targeting…",

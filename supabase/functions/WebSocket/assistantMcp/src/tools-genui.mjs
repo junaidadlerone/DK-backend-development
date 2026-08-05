@@ -158,7 +158,9 @@ const SINGLETON_SURFACES = {
   ImageUploader: (p) => (p?.referral_id ? `${p.target}:${p.referral_id}` : p?.target),
   // A proposal for a campaign replaces in place. A LIBRARY proposal has no target id, so it keeps the
   // model's id: the user may well be shown several candidate designs side by side.
-  TemplateProposal: (p) => p?.campaign_id,
+  // An EDIT is per bundle-side — a revised edit of the same side must replace the earlier card, or the
+  // user is left choosing between two versions of one change.
+  TemplateProposal: (p) => (p?.bundle_id && p?.side ? `${p.bundle_id}:${p.side}` : p?.campaign_id),
 };
 
 /**
@@ -428,16 +430,22 @@ export function validateUiFrame(input) {
 // TemplateProposal with a completely INVENTED front — "BUILDING YOUR VISION" over a dark gradient — and
 // described it as "both sides of the New Builds Construction design". The existing front was gone.
 //
-// That is not a model failure; it is a capability the agent does not have and cannot discover:
-//   * get_template_bundle returns NO html by design (a design runs to 10k+ lines and would swamp the
-//     context), so the model literally cannot see what is on an existing design;
-//   * TemplateProposal requires BOTH sides, so there is no way to submit a back-only change.
-// Asked to edit, its only available move is to invent a whole design — and nothing told it to say so.
+// CORRECTION (2026-08-05) — the original version of this comment gave two reasons and one was false:
+//   * FALSE: "get_template_bundle returns no html by design (a design runs to 10k+ lines)".
+//     getTemplateBundleById does return the artwork for both sides — data.front_template.html and
+//     data.back_template.html — and the MCP was projecting it away by choice. Measured against a
+//     44-row dump of the real templates table, a side is 8-16 KB and 35-56 LINES; the "10k+ lines"
+//     figure was wrong by roughly 200x. (What IS true: 11 of those 44 rows exceed 1.4 MB because a
+//     cropped image is inlined as base64 — handled by eliding the payload, see template-html.mjs.)
+//   * TRUE: a TemplateProposal carrying front/back is a WHOLE design, so a back-only change could not
+//     be expressed at all.
 //
-// The deterministic tell is the NAME. A proposal whose name matches a design already SAVED in the
-// library is the model believing it is editing that design. Refusing there converts a silently
-// destructive invention into an honest choice for the user: a differently-named variant, or the visual
-// editor, which is the only thing that can actually edit saved artwork.
+// Both halves are addressed now: get_template_side_html hands over the real html (with element ids),
+// and a proposal may instead carry bundle_id + side + ops.
+//
+// The name check below therefore stays, with a different purpose. A proposal carrying front/back and
+// named after a design that already exists is a REPLACEMENT dressed as an edit — the reported bug
+// exactly — so it is refused and pointed at the edit path, rather than at the visual editor.
 //
 // No false positive on the normal revise loop: while a proposal is unsaved its name matches nothing in
 // the library, so "request changes" → re-emit works exactly as before. Once it IS saved, a further
@@ -463,6 +471,35 @@ export function designNameClash(name, bundles) {
   return null;
 }
 
+/**
+ * A proposal is EITHER a new design (name + size + both sides) or an edit (bundle_id + side + ops).
+ * Sending both is a model that has not decided which it is doing, and it must not be guessed at:
+ * the ambiguity is exactly the reported bug — an "edit" that silently replaced the whole design.
+ *
+ * Checked on the RAW arguments, before validateUiFrame. The catalog schema is a union, and the
+ * strip-parity walker resolves a union by required-key presence: a mixed payload matches the
+ * new-design branch first, so `edit` would be quietly stripped and the proposal would go through as
+ * a brand-new design. Refusing here is what stops that.
+ */
+export function mixedProposalModes(p) {
+  if (!p || typeof p !== "object") return null;
+  const isEdit = Array.isArray(p.ops) || typeof p.bundle_id === "string";
+  const isNew = !!p.front || !!p.back;
+  if (!isEdit || !isNew) return null;
+  return {
+    blocked: "proposal_is_new_or_edit_not_both",
+    verified: false,
+    retry: false,
+    plain: "I got my wires crossed there — let me redo that.",
+    note:
+      "NOTHING was rendered. This proposal carries BOTH an edit (bundle_id/ops) and a whole design "
+      + "(front/back). Those are different actions and I will not guess between them. To CHANGE a saved "
+      + "design: send only bundle_id, side and ops — read the side first with get_template_side_html. To "
+      + "propose a NEW design: send only name, postcard_size, front and back, and never name it after a "
+      + "design that already exists.",
+  };
+}
+
 async function savedDesignNameClash(proposalProps, userJwt) {
   if (!proposalProps || proposalProps.campaign_id) return null;
   const name = String(proposalProps.name ?? "").trim();
@@ -485,7 +522,8 @@ export function registerGenUiTools(server, { userId, userJwt }) {
       "Checklist{title,subtitle?,items[]:{label,status(pass|warn|fail),note?,fixPrompt?}}, GuideSteps{title,subtitle?,steps[]:{title,detail?,prompt,state(done|active|todo)}}, " +
       "ChoiceChips{choices[]:{label,prompt}}, NavButton{label,href(/path)}, " +
       "Text{text,variant?(title|subtitle|body|caption)}, Row{children[ids],gap?}, Column{children[ids],gap?}, Card{title?,children[ids]}, "
-      + "NOTE on postcard designs: element `opacity` is a PERCENTAGE 0-100 (55 means 55%), never a 0-1 fraction — 0.55 means 0.55% and renders invisible. Colours are plain 6-digit hex with no alpha. Elements paint in the order listed, so a band must come BEFORE the text it sits behind. " +
+      + "NOTE on postcard designs: element `opacity` is a PERCENTAGE 0-100 (55 means 55%), never a 0-1 fraction — 0.55 means 0.55% and renders invisible. Colours are plain 6-digit hex with no alpha. Elements paint in the order listed, so a band must come BEFORE the text it sits behind. "
+      + "CHANGING a design that already exists is a DIFFERENT shape of TemplateProposal: send `bundle_id`, `side` and `ops` and NOTHING else — no name, no front/back (those mean 'replace the whole design', which is never what 'edit this' means). First call get_template_side_html to read that side; it gives you each element's data-element-id, which is how an op names its target. ops: {op:'add',element,at?} | {op:'set_text',element_id,text,expect_text} | {op:'remove',element_id,expect_text?} | {op:'replace_image',element_id,source} | {op:'set_background',fill}. expect_text is the element's CURRENT words as you read them — if they don't match, nothing is applied and you're told what is really there. Everything you don't name is preserved exactly, and the side you don't name is never written at all. " +
       "Button{label,action,tone?(primary|neutral|ghost)}, Divider{}, Image{url(https),alt?}. " +
       "Button.action = {type:'send',prompt,display?} | {type:'navigate',href:'/path'}. NEVER {type:'openUrl'} — you cannot know this app's web addresses, so any url you write will be wrong; it is refused. " +
       "fixPrompt/GuideSteps.prompt/ChoiceChips.prompt/Button send prompt = the literal user message to receive when clicked. "
@@ -515,6 +553,12 @@ export function registerGenUiTools(server, { userId, userJwt }) {
     }),
     annotations: { readOnlyHint: false, destructiveHint: false },
   }, async (a) => {
+    // Before validation: validateUiFrame STRIPS unknown keys, and for a mixed new-design/edit
+    // payload that stripping would silently discard the edit half. See mixedProposalModes.
+    for (const c of Array.isArray(a?.components) ? a.components : []) {
+      const mixed = mixedProposalModes(c?.component?.TemplateProposal ?? (c?.componentType === "TemplateProposal" ? c?.properties : null));
+      if (mixed) return asText(mixed);
+    }
     const v = validateUiFrame(a);
     if (!v.ok) {
       return { isError: true, content: [{ type: "text", text: `emit_ui rejected: ${v.error}. Fix the payload and call emit_ui again.` }] };
@@ -533,8 +577,8 @@ export function registerGenUiTools(server, { userId, userJwt }) {
           blocked: "cannot_edit_saved_design",
           verified: false,
           retry: false,
-          plain: `I can't change "${clash}" itself — I can't see what's already on it, so anything I sent you would be a brand-new design wearing its name, not an edit.`,
-          note: `A design proposal is always a NEW design; there is no way to modify a saved one. You cannot read the artwork of "${clash}" either (get_template_bundle returns no html on purpose). Do NOT re-send this proposal under that name and do NOT describe it as an edit. Offer the user the two things that actually work: (1) you design a fresh variant under a DIFFERENT name, saying plainly it is a new design rather than a change to the old one; or (2) they open "${clash}" in the visual editor, which is the only place saved artwork can be changed. If they pick (1), ask what to carry over, because you cannot see the original.`,
+          plain: `That would have replaced "${clash}" with a brand-new design rather than changing it. Let me do it properly.`,
+          note: `A proposal carrying front/back is a NEW design — sending one named after a design that already exists REPLACES it wholesale, which is not what "change this design" means. To actually edit "${clash}": call get_template_side_html with its bundle_id and the side you want to change, read what is there, then send a proposal carrying ONLY bundle_id, side and ops (targeting elements by their data-element-id). Everything you do not name is preserved exactly, and the other side is never touched. If you genuinely meant a NEW design inspired by this one, give it a DIFFERENT name and say plainly that it is a new design.`,
         });
       }
       const area = proposal.component.TemplateProposal?.campaign_id ? "campaigns" : "template_management";
