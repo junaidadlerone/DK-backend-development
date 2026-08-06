@@ -29,7 +29,7 @@ import assert from "node:assert/strict";
 process.env.SUPABASE_URL ??= "http://127.0.0.1:9999";
 process.env.SUPABASE_SERVICE_ROLE_KEY ??= "test-service-role-key";
 process.env.SUPABASE_ANON_KEY ??= "test-anon-key";
-const { normalizeSpecOpacity, validateUiFrame } = await import("../src/tools-genui.mjs");
+const { normalizeSpecOpacity, validateUiFrame, registerGenUiTools, CATALOG_ARTIFACT } = await import("../src/tools-genui.mjs");
 
 /** The reported spec, reduced to the elements that matter, with the real values from the trace. */
 const reportedSpec = () => ({
@@ -237,4 +237,47 @@ test("the correction reaches the real emit_ui path for an EDIT frame", () => {
   const stops = v.frame.components[0].component.TemplateProposal.ops[0].fill.gradient.stops;
   assert.deepEqual(stops.map((s) => s.position), [0, 100]);
   assert.ok(v.opacityFixes?.length, "the correction must be reported back to the model");
+});
+
+// ── what the model is TOLD about the postcard, not just corrected on (2026-08-06) ─────────────
+// REPORTED BY QA: "the back side of the postcard is not created according to the user's request", and
+// separately that designs printed a literal {{business_name}}. Both were silence rather than error:
+// the model was never told the back has a reserved postal strip that the print service masks WHITE,
+// and never told that business_name/phone/website/logo are filled in from the organisation on save.
+// These assert the guidance actually reaches the tool description, derived from the artifact.
+const emitUiDescription = () => {
+  let found = null;
+  const server = { registerTool: (name, config = {}) => { if (name === "emit_ui") found = config.description; } };
+  registerGenUiTools(server, { userId: "t", userJwt: "t" });
+  return found ?? "";
+};
+
+test("the emit_ui description states the back's reserved postal area", () => {
+  const d = emitUiDescription();
+  assert.match(d, /BACK SIDE/);
+  assert.match(d, /barcode/i);
+  assert.match(d, /MASKS IT WHITE|masked white/i);
+});
+
+test("…with the real usable rectangle for every size, taken from the artifact", () => {
+  // Derived, never restated: if the app's zones change and the artifact is re-copied, this follows.
+  const zones = CATALOG_ARTIFACT.postcard_zones;
+  assert.ok(zones, "the artifact must carry postcard_zones — re-run npm run genui:catalog and re-copy");
+  const d = emitUiDescription();
+  for (const [size, z] of Object.entries(zones)) {
+    assert.ok(d.includes(size), `${size} missing from the guidance`);
+    assert.ok(d.includes(`x 0-${z.back_art.width}`), `${size} usable width missing from the guidance`);
+    // The trap this guards: quoting the CARD's width would tell the model the whole back is safe.
+    assert.ok(z.back_art.width < z.document.width, `${size} back area is not narrower than the card`);
+  }
+});
+
+test("the description explains which merge fields resolve WHEN", () => {
+  const d = emitUiDescription();
+  assert.match(d, /business_name[^.]*organisation|organisation[^.]*business_name/i);
+  assert.match(d, /disclaimer_text/);
+  assert.match(d, /qr_url/);
+  // The failure mode this prevents: pasting a business name read from the conversation instead of
+  // using the variable element, which would bake one org's details into a design for good.
+  assert.match(d, /do NOT paste|never paste/i);
 });

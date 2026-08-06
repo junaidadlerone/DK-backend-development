@@ -3272,5 +3272,43 @@
     "jobType",
     "jobValue",
     "consent"
-  ]
+  ],
+  "postcard_zones": {
+    "4x6": {
+      "document": {
+        "width": 600,
+        "height": 408
+      },
+      "back_art": {
+        "x": 0,
+        "y": 0,
+        "width": 132,
+        "height": 408
+      }
+    },
+    "6x9": {
+      "document": {
+        "width": 888,
+        "height": 600
+      },
+      "back_art": {
+        "x": 0,
+        "y": 0,
+        "width": 420,
+        "height": 600
+      }
+    },
+    "6x11": {
+      "document": {
+        "width": 1080,
+        "height": 600
+      },
+      "back_art": {
+        "x": 0,
+        "y": 0,
+        "width": 612,
+        "height": 600
+      }
+    }
+  }
 }
